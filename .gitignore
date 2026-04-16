@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.DS_Store
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# uv/cache and generated extraction outputs
+.uv-cache/
+output/
+
+# Local source documents; keep the folder placeholder only.
+original/*
+!original/.gitkeep
