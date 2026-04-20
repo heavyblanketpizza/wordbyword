@@ -9,6 +9,7 @@ class PageText:
     source: Path
     page: int | None
     text: str
+    raw_text: str = ""
 
 
 @dataclass

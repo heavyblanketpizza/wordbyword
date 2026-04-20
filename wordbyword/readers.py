@@ -30,14 +30,15 @@ def read_document(path: Path) -> Iterable[PageText]:
     if suffix == ".pdf":
         yield from read_pdf(path)
     elif suffix in {".txt", ".md"}:
-        yield PageText(path, None, normalize_text(read_text_file(path)))
+        raw_text = read_text_file(path)
+        yield PageText(path, None, normalize_text(raw_text), raw_text)
 
 
 def read_pdf(path: Path) -> Iterable[PageText]:
     with fitz.open(path) as document:
         for page_number, page in enumerate(document, start=1):
-            text = page.get_text("text", sort=True)
-            yield PageText(path, page_number, normalize_text(text))
+            raw_text = page.get_text("text", sort=True)
+            yield PageText(path, page_number, normalize_text(raw_text), raw_text)
 
 
 def read_text_file(path: Path) -> str:

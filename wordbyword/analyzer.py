@@ -8,11 +8,14 @@ from typing import Iterable
 from kiwipiepy import Kiwi
 
 from wordbyword.models import CountEntry, PageText
+from wordbyword.text import clean_example_text
 
 PUNCTUATION_TAGS = {"SF", "SP", "SS", "SSO", "SSC", "SE", "SO", "SW", "SB"}
 LEXICAL_PREFIXES = ("N", "V", "M", "XR", "SL", "SH")
 EXCLUDED_VOCABULARY_TAGS = {"SN", "VCP", "VCN", "VX", "XPN", "XSN", "XSV", "XSA"}
 SURFACE_WORD_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9一-龥]+(?:[.'’_/-][가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9一-龥]+)*")
+SENTENCE_CONTENT_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9一-龥]")
+SINGLE_HANGUL_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
 
 
 class KoreanAnalyzer:
@@ -21,28 +24,35 @@ class KoreanAnalyzer:
         *,
         include_punctuation: bool = False,
         include_numbers: bool = False,
-        min_expression_size: int = 2,
-        max_expression_size: int = 5,
     ) -> None:
         self.kiwi = Kiwi()
         self.include_punctuation = include_punctuation
         self.include_numbers = include_numbers
-        self.min_expression_size = min_expression_size
-        self.max_expression_size = max_expression_size
 
     def analyze_pages(self, pages: Iterable[PageText]) -> dict[str, object]:
+        sentences: list[dict[str, object]] = []
         tokens: list[dict[str, object]] = []
         vocabulary: dict[tuple[str, str], CountEntry] = defaultdict(CountEntry)
         surface_words: dict[str, CountEntry] = defaultdict(CountEntry)
-        expressions: dict[tuple[str, int], CountEntry] = defaultdict(CountEntry)
         document_totals: Counter[str] = Counter()
 
         for page in pages:
             source = page.source.name
-            for sentence_index, sentence in enumerate(self._split_sentences(page.text), start=1):
-                sentence_text = sentence.strip()
-                if not sentence_text:
+            sentence_index = 0
+            for sentence in self._split_sentences(page.text):
+                sentence_text = clean_example_text(sentence)
+                if is_noise_sentence(sentence_text):
                     continue
+
+                sentence_index += 1
+                sentences.append(
+                    {
+                        "document": source,
+                        "page": page.page or "",
+                        "sentence_index": sentence_index,
+                        "sentence": sentence_text,
+                    }
+                )
 
                 surface_forms = [
                     match.group(0)
@@ -50,7 +60,6 @@ class KoreanAnalyzer:
                     if self.include_numbers or not is_number_only(match.group(0))
                 ]
                 self._record_surface_words(surface_words, surface_forms, source, page.page, sentence_text)
-                self._record_expressions(expressions, surface_forms, source, page.page, sentence_text)
 
                 token_index = 0
                 for token in self.kiwi.tokenize(sentence_text):
@@ -76,10 +85,10 @@ class KoreanAnalyzer:
                         vocabulary[(token.form, token.tag)].seen(source, page.page, sentence_text)
 
         return {
+            "sentences": sentences,
             "tokens": tokens,
             "vocabulary": vocabulary,
             "surface_words": surface_words,
-            "expressions": expressions,
             "document_totals": document_totals,
         }
 
@@ -107,21 +116,6 @@ class KoreanAnalyzer:
         for form in forms:
             surface_words[form].seen(source, page, sentence)
 
-    def _record_expressions(
-        self,
-        expressions: dict[tuple[str, int], CountEntry],
-        forms: list[str],
-        source: str,
-        page: int | None,
-        sentence: str,
-    ) -> None:
-        upper_bound = min(self.max_expression_size, len(forms))
-        for size in range(self.min_expression_size, upper_bound + 1):
-            for start in range(0, len(forms) - size + 1):
-                expression = " ".join(forms[start : start + size])
-                expressions[(expression, size)].seen(source, page, sentence)
-
-
 def is_vocabulary_token(form: str, pos: str, *, include_numbers: bool = False) -> bool:
     if not include_numbers and (pos == "SN" or is_number_only(form)):
         return False
@@ -139,8 +133,19 @@ def is_number_only(value: str) -> bool:
     return bool(compact) and compact.isdigit()
 
 
+def is_noise_sentence(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return True
+    if is_number_only(text):
+        return True
+    if not SENTENCE_CONTENT_RE.search(text):
+        return True
+    return bool(SINGLE_HANGUL_RE.fullmatch(text))
+
+
 def filter_entries_by_count(
-    entries: dict[str, CountEntry] | dict[tuple[str, int], CountEntry] | dict[tuple[str, str], CountEntry],
+    entries: dict[str, CountEntry] | dict[tuple[str, str], CountEntry],
     minimum: int,
 ) -> dict:
     return {key: value for key, value in entries.items() if value.count >= minimum}
