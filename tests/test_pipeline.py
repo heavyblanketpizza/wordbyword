@@ -106,6 +106,8 @@ class PipelineTest(unittest.TestCase):
             ]
             self.assertTrue(dictionary_rows)
             self.assertTrue(all(row["kind"] == "term" for row in dictionary_rows))
+            self.assertTrue(all("first_source" not in row for row in dictionary_rows))
+            self.assertTrue(all("first_page" not in row for row in dictionary_rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["document_count"], 1)

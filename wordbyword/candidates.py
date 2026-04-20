@@ -13,6 +13,24 @@ from wordbyword.text import clean_example_text
 TEXT_RE = re.compile(r"[가-힣A-Za-z一-龥]")
 LOW_VALUE_BOUND_NOUNS = {"것", "거", "수", "등", "데", "바", "뿐", "채", "척", "줄", "리", "만"}
 PARTICLE_OR_ENDING_PREFIXES = ("J", "E")
+FREQUENCY_RATE_SCALE = 10_000
+IDEAL_FREQUENCY_RATE = 10.0
+OVERUSED_FREQUENCY_RATE = 40.0
+EXTREME_FREQUENCY_RATE = 100.0
+EXTREME_FREQUENCY_PENALTY = -0.5
+DEFAULT_ROI_SCORE = 0.5
+POS_WEIGHTS = {
+    "noun": 0.9,
+    "verb": 0.72,
+    "adjective": 0.7,
+    "modifier_or_adverb": 0.55,
+    "root": 0.86,
+    "pronoun": 0.4,
+    "proper_or_specific_noun": 0.45,
+    "bound_noun": 0.2,
+    "foreign_or_hanja": 0.86,
+}
+DEFAULT_POS_WEIGHT = 0.45
 
 # TODO: Split candidate heuristics into smaller, tested pieces
 # wordbyword/candidates.py is doing a lot: canonicalization, rejection, scoring, aggregation, dictionary packet generation. It is okay for now, but I would gradually split it into:
@@ -75,11 +93,15 @@ def build_candidate_outputs(
     *,
     vocabulary: dict[tuple[str, str], CountEntry],
     surface_words: dict[str, CountEntry],
+    total_document_count: int = 0,
+    total_token_occurrences: int = 0,
 ) -> CandidateOutputs:
     builder = CandidateBuilder()
     return builder.build(
         vocabulary=vocabulary,
         surface_words=surface_words,
+        total_document_count=total_document_count,
+        total_token_occurrences=total_token_occurrences,
     )
 
 
@@ -92,12 +114,28 @@ class CandidateBuilder:
         *,
         vocabulary: dict[tuple[str, str], CountEntry],
         surface_words: dict[str, CountEntry],
+        total_document_count: int = 0,
+        total_token_occurrences: int = 0,
     ) -> CandidateOutputs:
         rejected: list[dict[str, object]] = []
         term_aggregates = self._build_term_aggregates(vocabulary, surface_words, rejected)
-        term_rows = [term_row(aggregate) for aggregate in term_aggregates.values()]
+        term_rows = [
+            term_row(
+                aggregate,
+                total_document_count=total_document_count,
+                total_token_occurrences=total_token_occurrences,
+            )
+            for aggregate in term_aggregates.values()
+        ]
 
-        term_rows.sort(key=lambda row: (-float(row["roi_score"]), -int(row["count"]), str(row["canonical_key"])))
+        term_rows.sort(
+            key=lambda row: (
+                -float(row["roi_score"]),
+                -float(row["quality_score"]),
+                -int(row["count"]),
+                str(row["canonical_key"]),
+            )
+        )
 
         dictionary_entries = [dictionary_entry(row) for row in term_rows]
 
@@ -255,10 +293,19 @@ def rejected_row(kind: str, candidate: str, canonical_key: str, reason: str, ent
     }
 
 
-def term_row(aggregate: CandidateAggregate) -> dict[str, object]:
+def term_row(
+    aggregate: CandidateAggregate,
+    *,
+    total_document_count: int = 0,
+    total_token_occurrences: int = 0,
+) -> dict[str, object]:
     count = aggregate.count or aggregate.surface_count
-    quality = term_quality_score(aggregate)
-    roi = roi_score(quality, aggregate.document_count, count)
+    quality = term_quality_score(
+        aggregate,
+        total_document_count=total_document_count,
+        total_token_occurrences=total_token_occurrences,
+    )
+    roi = roi_score()
     return {
         "canonical_key": aggregate.canonical_key,
         "display": aggregate.display,
@@ -287,42 +334,64 @@ def dictionary_entry(row: dict[str, object]) -> dict[str, object]:
         "document_count": row["document_count"],
         "quality_score": row["quality_score"],
         "roi_score": row["roi_score"],
-        "first_source": row["first_source"],
-        "first_page": row["first_page"],
         "example": row["example"],
         "curation_status": "candidate",
     }
 
 
-def term_quality_score(aggregate: CandidateAggregate) -> float:
+def term_quality_score(
+    aggregate: CandidateAggregate,
+    *,
+    total_document_count: int = 0,
+    total_token_occurrences: int = 0,
+) -> float:
     count = aggregate.count or aggregate.surface_count
-    frequency = bounded_log_score(count, 1000)
-    dispersion = min(aggregate.document_count / 2, 1.0)
+    frequency_count = max(count, aggregate.surface_count)
+    frequency = frequency_usefulness_score(frequency_count, total_token_occurrences)
+    dispersion = dispersion_score(aggregate.document_count, total_document_count)
     variant_signal = bounded_log_score(len(aggregate.variants), 20)
     pos = aggregate.pos_groups.most_common(1)[0][0] if aggregate.pos_groups else "unknown"
-    pos_weight = {
-        "noun": 0.92,
-        "verb": 0.9,
-        "adjective": 0.88,
-        "modifier_or_adverb": 0.8,
-        "root": 0.74,
-        "pronoun": 0.65,
-        "proper_or_specific_noun": 0.58,
-        "bound_noun": 0.35,
-        "foreign_or_hanja": 0.45,
-    }.get(pos, 0.5)
-    return round((0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos_weight) + (0.14 * variant_signal), 3)
+    pos_weight = POS_WEIGHTS.get(pos, DEFAULT_POS_WEIGHT)
+    score = (0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos_weight) + (0.14 * variant_signal)
+    return round(clamp(score, 0.0, 1.0), 3)
 
 
-def roi_score(quality: float, document_count: int, count: int) -> float:
-    transfer = 0.35 + min(document_count / 4, 0.25) + min(math.log1p(count) / math.log1p(200), 0.3)
-    return round(min(quality * transfer, 1.0), 3)
+def frequency_usefulness_score(count: int, total_token_occurrences: int) -> float:
+    if count <= 0 or total_token_occurrences <= 0:
+        return 0.0
+
+    rate = count / total_token_occurrences * FREQUENCY_RATE_SCALE
+    if rate <= IDEAL_FREQUENCY_RATE:
+        return rate / IDEAL_FREQUENCY_RATE
+    if rate <= OVERUSED_FREQUENCY_RATE:
+        return 1.0 - ((rate - IDEAL_FREQUENCY_RATE) / (OVERUSED_FREQUENCY_RATE - IDEAL_FREQUENCY_RATE))
+    if rate <= EXTREME_FREQUENCY_RATE:
+        penalty_ratio = (rate - OVERUSED_FREQUENCY_RATE) / (EXTREME_FREQUENCY_RATE - OVERUSED_FREQUENCY_RATE)
+        return EXTREME_FREQUENCY_PENALTY * penalty_ratio
+    return EXTREME_FREQUENCY_PENALTY
+
+
+def dispersion_score(document_count: int, total_document_count: int) -> float:
+    if document_count <= 0:
+        return 0.0
+
+    denominator = total_document_count if total_document_count > 0 else document_count
+    return min(document_count / denominator, 1.0)
+
+
+# roi_score: Is this candidate worth prioritizing now for study, curation, or dictionary generation?
+def roi_score() -> float:
+    return DEFAULT_ROI_SCORE
 
 
 def bounded_log_score(value: int, midpoint: int) -> float:
     if value <= 0:
         return 0.0
     return min(math.log1p(value) / math.log1p(midpoint), 1.0)
+
+
+def clamp(value: float, minimum: float, maximum: float) -> float:
+    return min(max(value, minimum), maximum)
 
 
 def join_counter_keys(counter: Counter[str]) -> str:

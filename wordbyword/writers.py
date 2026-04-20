@@ -106,6 +106,8 @@ def write_outputs(
     candidate_outputs = build_candidate_outputs(
         vocabulary=vocabulary,
         surface_words=surface_words,
+        total_document_count=parsed_document_count(pages, documents),
+        total_token_occurrences=len(tokens),
     )
 
     write_rows(output_dir / "01_extracted_pages.csv", page_rows(pages), fieldnames=page_fields())
@@ -160,6 +162,13 @@ def page_rows(pages: list[PageText]) -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def parsed_document_count(pages: list[PageText], documents: list[Path]) -> int:
+    parsed_sources = {page.source.name for page in pages}
+    if parsed_sources:
+        return len(parsed_sources)
+    return len({document.name for document in documents})
 
 
 def sentence_fields() -> list[str]:
