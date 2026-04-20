@@ -59,7 +59,7 @@ class KoreanAnalyzer:
                     for match in SURFACE_WORD_RE.finditer(sentence_text)
                     if self.include_numbers or not is_number_only(match.group(0))
                 ]
-                self._record_surface_words(surface_words, surface_forms, source, page.page, sentence_text)
+                self._record_surface_words(surface_words, surface_forms, source, sentence_text)
 
                 token_index = 0
                 for token in self.kiwi.tokenize(sentence_text):
@@ -82,7 +82,7 @@ class KoreanAnalyzer:
                     document_totals[source] += 1
 
                     if is_vocabulary_token(token.form, token.tag, include_numbers=self.include_numbers):
-                        vocabulary[(token.form, token.tag)].seen(source, page.page, sentence_text)
+                        vocabulary[(token.form, token.tag)].seen(source, sentence_text)
 
         return {
             "sentences": sentences,
@@ -110,11 +110,10 @@ class KoreanAnalyzer:
         surface_words: dict[str, CountEntry],
         forms: Iterable[str],
         source: str,
-        page: int | None,
         sentence: str,
     ) -> None:
         for form in forms:
-            surface_words[form].seen(source, page, sentence)
+            surface_words[form].seen(source, sentence)
 
 def is_vocabulary_token(form: str, pos: str, *, include_numbers: bool = False) -> bool:
     if not include_numbers and (pos == "SN" or is_number_only(form)):

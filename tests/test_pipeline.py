@@ -47,6 +47,8 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "06_candidate_terms.csv").exists())
             self.assertTrue((output_dir / "07_rejected_terms.csv").exists())
             self.assertTrue((output_dir / "08_dictionary_candidates.jsonl").exists())
+            self.assertTrue((output_dir / "09_example_sentences.csv").exists())
+            self.assertTrue((output_dir / "filtered_example_sentence.csv").exists())
             self.assertTrue((output_dir / "README.md").exists())
             self.assertFalse((output_dir / "tokens.csv").exists())
             self.assertFalse((output_dir / "expressions.csv").exists())
@@ -81,6 +83,8 @@ class PipelineTest(unittest.TestCase):
 
             with (output_dir / "05_vocabulary_raw.csv").open(encoding="utf-8-sig") as handle:
                 vocabulary = list(csv.DictReader(handle))
+            self.assertNotIn("first_source", vocabulary[0])
+            self.assertNotIn("first_page", vocabulary[0])
             self.assertIn("한국어", {row["term"] for row in vocabulary})
             examples = [row["example"] for row in vocabulary]
             self.assertTrue(all("\n" not in example for example in examples))
@@ -88,8 +92,15 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all("●" not in example for example in examples))
             self.assertNotIn("●", {row["term"] for row in vocabulary})
 
+            with (output_dir / "04_surface_words.csv").open(encoding="utf-8-sig") as handle:
+                surface_words = list(csv.DictReader(handle))
+            self.assertNotIn("first_source", surface_words[0])
+            self.assertNotIn("first_page", surface_words[0])
+
             with (output_dir / "06_candidate_terms.csv").open(encoding="utf-8-sig") as handle:
                 candidate_terms = list(csv.DictReader(handle))
+            self.assertNotIn("first_source", candidate_terms[0])
+            self.assertNotIn("first_page", candidate_terms[0])
             term_by_key = {row["canonical_key"]: row for row in candidate_terms}
             self.assertIn("공부하다", term_by_key)
             self.assertIn("공부하고", term_by_key["공부하다"]["variants"])
@@ -97,6 +108,8 @@ class PipelineTest(unittest.TestCase):
 
             with (output_dir / "07_rejected_terms.csv").open(encoding="utf-8-sig") as handle:
                 rejected = list(csv.DictReader(handle))
+            self.assertTrue(all("first_source" not in row for row in rejected))
+            self.assertTrue(all("first_page" not in row for row in rejected))
             self.assertTrue(all(row["kind"] == "term" for row in rejected))
             self.assertNotIn("single_character_low_frequency", {row["reason"] for row in rejected})
 
@@ -109,19 +122,70 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all("first_source" not in row for row in dictionary_rows))
             self.assertTrue(all("first_page" not in row for row in dictionary_rows))
 
+            with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
+                example_sentences = list(csv.DictReader(handle))
+            self.assertLessEqual(len(example_sentences), len(sentences))
+            self.assertEqual(
+                list(example_sentences[0].keys()),
+                [
+                    "document",
+                    "page",
+                    "sentence_index",
+                    "sentence",
+                    "quality_score",
+                    "matched_canonical_key_count",
+                    "covered_canonical_key_count",
+                    "covered_canonical_keys",
+                    "matched_canonical_keys",
+                ],
+            )
+            matched_counts = [int(row["matched_canonical_key_count"]) for row in example_sentences]
+            covered_counts = [int(row["covered_canonical_key_count"]) for row in example_sentences]
+            quality_scores = [float(row["quality_score"]) for row in example_sentences]
+            quality_density_scores = [
+                float(row["quality_score"]) / int(row["matched_canonical_key_count"])
+                for row in example_sentences
+            ]
+            matched_key_sets = [row["matched_canonical_keys"] for row in example_sentences]
+            self.assertEqual(len(matched_key_sets), len(set(matched_key_sets)))
+            self.assertNotIn(1, covered_counts)
+            self.assertNotIn(0, covered_counts)
+            self.assertTrue(all(matched >= covered for matched, covered in zip(matched_counts, covered_counts)))
+            self.assertTrue(all(0 <= score <= 1 for score in quality_scores))
+            self.assertEqual(max(quality_scores), 1.0)
+            self.assertEqual(quality_density_scores, sorted(quality_density_scores, reverse=True))
+
+            with (output_dir / "filtered_example_sentence.csv").open(encoding="utf-8-sig") as handle:
+                filtered_example_sentences = list(csv.DictReader(handle))
+            self.assertLessEqual(len(filtered_example_sentences), len(example_sentences))
+            self.assertEqual(list(filtered_example_sentences[0].keys()), list(example_sentences[0].keys()))
+            for row in filtered_example_sentences:
+                density = float(row["quality_score"]) / int(row["matched_canonical_key_count"])
+                sentence = row["sentence"].strip()
+                self.assertGreaterEqual(density, 0.0135)
+                self.assertTrue(sentence.endswith((".", "?", "!", '"')))
+                self.assertFalse(sentence.rstrip('"').strip().endswith("봅시다."))
+
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["document_count"], 1)
             self.assertEqual(summary["extracted_page_count"], len(pages))
             self.assertEqual(summary["sentence_count"], len(sentences))
             self.assertIn("01_extracted_pages.csv", summary["outputs"])
             self.assertIn("02_sentences.csv", summary["outputs"])
+            self.assertIn("09_example_sentences.csv", summary["outputs"])
+            self.assertIn("filtered_example_sentence.csv", summary["outputs"])
             self.assertNotIn("06_expressions_raw.csv", summary["outputs"])
             self.assertNotIn("08_candidate_expressions.csv", summary["outputs"])
             self.assertIn("pipeline_stages", summary)
             self.assertGreater(summary["clean_candidate_terms"], 0)
+            self.assertEqual(summary["example_sentences"], len(example_sentences))
+            self.assertEqual(summary["filtered_example_sentences"], len(filtered_example_sentences))
             self.assertNotIn("clean_candidate_expressions", summary)
             for path in output_dir.iterdir():
-                self.assertNotIn("●", path.read_text(encoding="utf-8-sig"))
+                output_text = path.read_text(encoding="utf-8-sig")
+                self.assertNotIn("first_source", output_text)
+                self.assertNotIn("first_page", output_text)
+                self.assertNotIn("●", output_text)
 
 
 if __name__ == "__main__":

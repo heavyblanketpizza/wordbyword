@@ -16,18 +16,14 @@ class PageText:
 class CountEntry:
     count: int = 0
     documents: set[str] = field(default_factory=set)
-    first_source: str = ""
-    first_page: int | None = None
     example: str = ""
 
     @property
     def document_count(self) -> int:
         return len(self.documents)
 
-    def seen(self, source: str, page: int | None, example: str, amount: int = 1) -> None:
+    def seen(self, source: str, example: str, amount: int = 1) -> None:
         self.count += amount
         self.documents.add(source)
-        if not self.first_source:
-            self.first_source = source
-            self.first_page = page
+        if not self.example:
             self.example = example

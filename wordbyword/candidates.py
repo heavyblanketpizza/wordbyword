@@ -46,8 +46,6 @@ class CandidateAggregate:
     kind: str
     count: int = 0
     documents: set[str] = field(default_factory=set)
-    first_source: str = ""
-    first_page: int | None = None
     example: str = ""
     variants: Counter[str] = field(default_factory=Counter)
     pos_groups: Counter[str] = field(default_factory=Counter)
@@ -76,9 +74,7 @@ class CandidateAggregate:
         self.variants[variant] += count
         if pos_group:
             self.pos_groups[pos_group] += count
-        if not self.first_source:
-            self.first_source = entry.first_source
-            self.first_page = entry.first_page
+        if not self.example:
             self.example = entry.example
 
 
@@ -287,8 +283,6 @@ def rejected_row(kind: str, candidate: str, canonical_key: str, reason: str, ent
         "reason": reason,
         "count": entry.count,
         "document_count": entry.document_count,
-        "first_source": entry.first_source,
-        "first_page": entry.first_page or "",
         "example": clean_example_text(entry.example),
     }
 
@@ -318,8 +312,6 @@ def term_row(
         "variants": join_counter_keys(aggregate.variants),
         "quality_score": quality,
         "roi_score": roi,
-        "first_source": aggregate.first_source,
-        "first_page": aggregate.first_page or "",
         "example": clean_example_text(aggregate.example),
     }
 

@@ -6,9 +6,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from wordbyword.candidates import build_candidate_outputs
+from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
 from wordbyword.models import CountEntry, PageText
 from wordbyword.text import clean_example_text
+
+FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM = 0.0135
+EXAMPLE_SENTENCE_FINAL_PUNCTUATION = (".", "?", "!", '"')
 
 OUTPUT_FILES = [
     "00_summary.json",
@@ -20,6 +23,8 @@ OUTPUT_FILES = [
     "06_candidate_terms.csv",
     "07_rejected_terms.csv",
     "08_dictionary_candidates.jsonl",
+    "09_example_sentences.csv",
+    "filtered_example_sentence.csv",
     "README.md",
 ]
 
@@ -87,6 +92,16 @@ PIPELINE_STAGES = [
         "file": "08_dictionary_candidates.jsonl",
         "description": "Vocabulary candidate packets for later manual or LLM curation.",
     },
+    {
+        "stage": "09",
+        "file": "09_example_sentences.csv",
+        "description": "Filtered sentence catalog with candidate canonical-key coverage and normalized quality scores.",
+    },
+    {
+        "stage": "10",
+        "file": "filtered_example_sentence.csv",
+        "description": "High-signal example sentences filtered from the normalized sentence catalog.",
+    },
 ]
 
 
@@ -122,6 +137,14 @@ def write_outputs(
         fieldnames=rejected_candidate_fields(),
     )
     write_jsonl(output_dir / "08_dictionary_candidates.jsonl", candidate_outputs.dictionary_entries)
+    example_sentences = example_sentence_rows(sentences, tokens, candidate_outputs.terms)
+    write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
+    filtered_example_sentences = filtered_high_signal_example_sentence_rows(example_sentences)
+    write_rows(
+        output_dir / "filtered_example_sentence.csv",
+        filtered_example_sentences,
+        fieldnames=example_sentence_fields(),
+    )
     write_summary(
         output_dir / "00_summary.json",
         pages=pages,
@@ -131,6 +154,8 @@ def write_outputs(
         surface_words=surface_words,
         candidate_term_count=len(candidate_outputs.terms),
         rejected_candidate_count=len(candidate_outputs.rejected),
+        example_sentence_count=len(example_sentences),
+        filtered_example_sentence_count=len(filtered_example_sentences),
         document_totals=document_totals,
         documents=documents,
     )
@@ -209,6 +234,165 @@ def write_surface_words(path: Path, surface_words: dict[str, CountEntry]) -> Non
     write_rows(path, rows, fieldnames=["surface", *entry_fields()])
 
 
+def example_sentence_rows(
+    sentences: list[dict[str, object]],
+    tokens: list[dict[str, object]],
+    candidate_terms: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    quality_by_key = {
+        str(row["canonical_key"]): float(row["quality_score"])
+        for row in candidate_terms
+        if row.get("canonical_key")
+    }
+    tokens_by_sentence: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    for token in tokens:
+        tokens_by_sentence.setdefault(sentence_row_key(token), []).append(token)
+
+    rows: list[dict[str, object]] = []
+    for sentence in sentences:
+        token_rows = sorted(
+            tokens_by_sentence.get(sentence_row_key(sentence), []),
+            key=lambda token: int(token.get("token_index") or 0),
+        )
+        matched_keys = sentence_candidate_keys(token_rows, quality_by_key)
+        covered_keys = ordered_unique(matched_keys)
+        quality_score = round(sum(quality_by_key[key] for key in covered_keys), 3)
+        rows.append(
+            {
+                "document": sentence["document"],
+                "page": sentence["page"],
+                "sentence_index": sentence["sentence_index"],
+                "sentence": clean_example_text(str(sentence["sentence"])),
+                "quality_score": quality_score,
+                "matched_canonical_key_count": len(matched_keys),
+                "covered_canonical_key_count": len(covered_keys),
+                "covered_canonical_keys": join_keys(covered_keys),
+                "matched_canonical_keys": join_keys(matched_keys),
+            }
+        )
+
+    return sort_example_sentence_rows(normalize_example_sentence_quality_scores(filtered_example_sentence_rows(rows)))
+
+
+def filtered_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    filtered_rows: list[dict[str, object]] = []
+    seen_matched_key_sets: set[str] = set()
+    for row in rows:
+        covered_count = int(row["covered_canonical_key_count"])
+        if covered_count <= 1:
+            continue
+
+        matched_keys = str(row["matched_canonical_keys"])
+        if matched_keys in seen_matched_key_sets:
+            continue
+
+        seen_matched_key_sets.add(matched_keys)
+        filtered_rows.append(row)
+
+    return filtered_rows
+
+
+def normalize_example_sentence_quality_scores(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    if not rows:
+        return rows
+
+    max_quality = max(float(row["quality_score"]) for row in rows)
+    if max_quality <= 0:
+        for row in rows:
+            row["quality_score"] = 0.0
+        return rows
+
+    for row in rows:
+        row["quality_score"] = round(float(row["quality_score"]) / max_quality, 3)
+    return rows
+
+
+def sort_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            -example_sentence_sort_score(row),
+            -float(row["quality_score"]),
+            -int(row["covered_canonical_key_count"]),
+            -int(row["matched_canonical_key_count"]),
+            str(row["document"]),
+            int(row["page"] or 0),
+            int(row["sentence_index"]),
+            str(row["sentence"]),
+        ),
+    )
+
+
+def example_sentence_sort_score(row: dict[str, object]) -> float:
+    matched_count = int(row["matched_canonical_key_count"])
+    if matched_count <= 0:
+        return 0.0
+    return float(row["quality_score"]) / matched_count
+
+
+def filtered_high_signal_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [
+        row
+        for row in rows
+        if example_sentence_sort_score(row) >= FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM
+        and has_example_sentence_terminal_punctuation(row)
+        and not ends_with_bopsida(row)
+    ]
+
+
+def has_example_sentence_terminal_punctuation(row: dict[str, object]) -> bool:
+    sentence = str(row["sentence"]).strip()
+    return bool(sentence) and sentence.endswith(EXAMPLE_SENTENCE_FINAL_PUNCTUATION)
+
+
+def ends_with_bopsida(row: dict[str, object]) -> bool:
+    sentence = str(row["sentence"]).strip().rstrip('"').strip()
+    return sentence.endswith("봅시다.")
+
+
+def sentence_candidate_keys(token_rows: list[dict[str, object]], quality_by_key: dict[str, float]) -> list[str]:
+    matched_keys: list[str] = []
+    index = 0
+    while index < len(token_rows):
+        token = token_rows[index]
+        form = str(token.get("form", ""))
+        pos = str(token.get("pos", ""))
+
+        if pos.startswith("N") and index + 1 < len(token_rows):
+            next_pos = str(token_rows[index + 1].get("pos", ""))
+            if next_pos in {"XSV", "XSA"}:
+                canonical_key = form + "하다"
+                if canonical_key in quality_by_key:
+                    matched_keys.append(canonical_key)
+                    index += 2
+                    continue
+
+        canonical_key = token_canonical_key(form, pos)
+        if canonical_key in quality_by_key:
+            matched_keys.append(canonical_key)
+        index += 1
+
+    return matched_keys
+
+
+def token_canonical_key(form: str, pos: str) -> str | None:
+    if pos.startswith(("VV", "VA")) or is_surface_head(pos):
+        return canonicalize_term(form, pos)
+    return None
+
+
+def sentence_row_key(row: dict[str, object]) -> tuple[str, str, str]:
+    return (str(row.get("document", "")), str(row.get("page", "")), str(row.get("sentence_index", "")))
+
+
+def ordered_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def join_keys(values: list[str]) -> str:
+    return " | ".join(values)
+
+
 def write_summary(
     path: Path,
     *,
@@ -219,6 +403,8 @@ def write_summary(
     surface_words: dict[str, CountEntry],
     candidate_term_count: int,
     rejected_candidate_count: int,
+    example_sentence_count: int,
+    filtered_example_sentence_count: int,
     document_totals: Counter[str],
     documents: list[Path],
 ) -> None:
@@ -232,6 +418,8 @@ def write_summary(
         "unique_surface_words": len(surface_words),
         "clean_candidate_terms": candidate_term_count,
         "rejected_terms": rejected_candidate_count,
+        "example_sentences": example_sentence_count,
+        "filtered_example_sentences": filtered_example_sentence_count,
         "tokens_by_document": dict(document_totals),
         "outputs": OUTPUT_FILES,
         "pipeline_stages": PIPELINE_STAGES,
@@ -263,7 +451,7 @@ def write_output_readme(path: Path) -> None:
 
 
 def entry_fields() -> list[str]:
-    return ["count", "document_count", "first_source", "first_page", "example"]
+    return ["count", "document_count", "example"]
 
 
 def candidate_term_fields() -> list[str]:
@@ -279,8 +467,6 @@ def candidate_term_fields() -> list[str]:
         "variants",
         "quality_score",
         "roi_score",
-        "first_source",
-        "first_page",
         "example",
     ]
 
@@ -293,9 +479,21 @@ def rejected_candidate_fields() -> list[str]:
         "reason",
         "count",
         "document_count",
-        "first_source",
-        "first_page",
         "example",
+    ]
+
+
+def example_sentence_fields() -> list[str]:
+    return [
+        "document",
+        "page",
+        "sentence_index",
+        "sentence",
+        "quality_score",
+        "matched_canonical_key_count",
+        "covered_canonical_key_count",
+        "covered_canonical_keys",
+        "matched_canonical_keys",
     ]
 
 
@@ -309,7 +507,5 @@ def entry_row(entry: CountEntry) -> dict[str, object]:
     return {
         "count": entry.count,
         "document_count": entry.document_count,
-        "first_source": entry.first_source,
-        "first_page": entry.first_page or "",
         "example": clean_example_text(entry.example),
     }
