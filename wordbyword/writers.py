@@ -197,7 +197,7 @@ def parsed_document_count(pages: list[PageText], documents: list[Path]) -> int:
     parsed_sources = {page.document_id or page.source.name for page in pages}
     if parsed_sources:
         return len(parsed_sources)
-    return len({document.name for document in documents})
+    return len(documents)
 
 
 def sentence_fields() -> list[str]:

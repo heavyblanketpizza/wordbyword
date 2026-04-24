@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from wordbyword.pipeline import run_pipeline
+from wordbyword.writers import parsed_document_count
 
 
 class PipelineTest(unittest.TestCase):
@@ -229,6 +230,10 @@ class PipelineTest(unittest.TestCase):
                 tokens = list(csv.DictReader(handle))
             self.assertEqual({row["document"] for row in tokens}, {grade_id, mock_id})
 
+            with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
+                example_sentences = list(csv.DictReader(handle))
+            self.assertEqual({row["document"] for row in example_sentences}, {grade_id, mock_id})
+
             with (output_dir / "06_candidate_terms.csv").open(encoding="utf-8-sig") as handle:
                 candidate_terms = list(csv.DictReader(handle))
             term_by_key = {row["canonical_key"]: row for row in candidate_terms}
@@ -265,6 +270,27 @@ class PipelineTest(unittest.TestCase):
             self.assertNotIn("사과", mock_tokens)
             self.assertIn("사과", grade_first["sentence"])
             self.assertIn("바나나", mock_first["sentence"])
+
+            grade_example = next(
+                row for row in example_sentences
+                if row["document"] == grade_id and row["sentence_index"] == "1"
+            )
+            mock_example = next(
+                row for row in example_sentences
+                if row["document"] == mock_id and row["sentence_index"] == "1"
+            )
+            self.assertIn("사과", grade_example["matched_canonical_keys"])
+            self.assertNotIn("바나나", grade_example["matched_canonical_keys"])
+            self.assertIn("바나나", mock_example["matched_canonical_keys"])
+            self.assertNotIn("사과", mock_example["matched_canonical_keys"])
+
+    def test_parsed_document_count_fallback_uses_full_document_list(self) -> None:
+        documents = [
+            Path("/tmp/original/grade2/unit1/lesson.txt"),
+            Path("/tmp/original/mock-exams/unit1/lesson.txt"),
+        ]
+
+        self.assertEqual(parsed_document_count([], documents), 2)
 
 
 if __name__ == "__main__":
