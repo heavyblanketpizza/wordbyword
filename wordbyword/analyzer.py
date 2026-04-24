@@ -24,8 +24,9 @@ class KoreanAnalyzer:
         *,
         include_punctuation: bool = False,
         include_numbers: bool = False,
+        kiwi: Kiwi | None = None,
     ) -> None:
-        self.kiwi = Kiwi()
+        self.kiwi = kiwi if kiwi is not None else Kiwi()
         self.include_punctuation = include_punctuation
         self.include_numbers = include_numbers
 
@@ -37,7 +38,7 @@ class KoreanAnalyzer:
         document_totals: Counter[str] = Counter()
 
         for page in pages:
-            source = page.source.name
+            source = page.document_id or page.source.name
             sentence_index = 0
             for sentence in self._split_sentences(page.text):
                 sentence_text = clean_example_text(sentence)

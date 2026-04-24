@@ -91,8 +91,9 @@ def build_candidate_outputs(
     surface_words: dict[str, CountEntry],
     total_document_count: int = 0,
     total_token_occurrences: int = 0,
+    kiwi: Kiwi | None = None,
 ) -> CandidateOutputs:
-    builder = CandidateBuilder()
+    builder = CandidateBuilder(kiwi=kiwi)
     return builder.build(
         vocabulary=vocabulary,
         surface_words=surface_words,
@@ -102,8 +103,8 @@ def build_candidate_outputs(
 
 
 class CandidateBuilder:
-    def __init__(self) -> None:
-        self.kiwi = Kiwi()
+    def __init__(self, kiwi: Kiwi | None = None) -> None:
+        self.kiwi = kiwi if kiwi is not None else Kiwi()
 
     def build(
         self,

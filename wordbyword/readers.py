@@ -25,20 +25,27 @@ def discover_documents(input_dir: Path) -> list[Path]:
     )
 
 
-def read_document(path: Path) -> Iterable[PageText]:
+def document_id_for(path: Path, input_dir: Path) -> str:
+    try:
+        return path.relative_to(input_dir).as_posix()
+    except ValueError:
+        return path.name
+
+
+def read_document(path: Path, document_id: str) -> Iterable[PageText]:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        yield from read_pdf(path)
+        yield from read_pdf(path, document_id)
     elif suffix in {".txt", ".md"}:
         raw_text = read_text_file(path)
-        yield PageText(path, None, normalize_text(raw_text), raw_text)
+        yield PageText(path, None, normalize_text(raw_text), raw_text, document_id)
 
 
-def read_pdf(path: Path) -> Iterable[PageText]:
+def read_pdf(path: Path, document_id: str) -> Iterable[PageText]:
     with fitz.open(path) as document:
         for page_number, page in enumerate(document, start=1):
             raw_text = page.get_text("text", sort=True)
-            yield PageText(path, page_number, normalize_text(raw_text), raw_text)
+            yield PageText(path, page_number, normalize_text(raw_text), raw_text, document_id)
 
 
 def read_text_file(path: Path) -> str:

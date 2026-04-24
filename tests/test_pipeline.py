@@ -188,5 +188,84 @@ class PipelineTest(unittest.TestCase):
                 self.assertNotIn("●", output_text)
 
 
+    def test_same_basename_in_different_subdirs_stays_distinct(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            (input_dir / "grade2" / "unit1").mkdir(parents=True)
+            (input_dir / "mock-exams" / "unit1").mkdir(parents=True)
+            (input_dir / "grade2" / "unit1" / "lesson.txt").write_text(
+                "사과를 먹었다. 공부를 했다.",
+                encoding="utf-8",
+            )
+            (input_dir / "mock-exams" / "unit1" / "lesson.txt").write_text(
+                "바나나를 먹었다. 공부를 했다.",
+                encoding="utf-8",
+            )
+
+            result = run_pipeline(input_dir=input_dir, output_dir=output_dir)
+
+            self.assertEqual(result.documents, 2)
+
+            grade_id = "grade2/unit1/lesson.txt"
+            mock_id = "mock-exams/unit1/lesson.txt"
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["document_count"], 2)
+            self.assertEqual(set(summary["tokens_by_document"].keys()), {grade_id, mock_id})
+            self.assertGreater(summary["tokens_by_document"][grade_id], 0)
+            self.assertGreater(summary["tokens_by_document"][mock_id], 0)
+
+            with (output_dir / "01_extracted_pages.csv").open(encoding="utf-8-sig") as handle:
+                pages = list(csv.DictReader(handle))
+            self.assertEqual({row["document"] for row in pages}, {grade_id, mock_id})
+
+            with (output_dir / "02_sentences.csv").open(encoding="utf-8-sig") as handle:
+                sentences = list(csv.DictReader(handle))
+            self.assertEqual({row["document"] for row in sentences}, {grade_id, mock_id})
+
+            with (output_dir / "03_tokens.csv").open(encoding="utf-8-sig") as handle:
+                tokens = list(csv.DictReader(handle))
+            self.assertEqual({row["document"] for row in tokens}, {grade_id, mock_id})
+
+            with (output_dir / "06_candidate_terms.csv").open(encoding="utf-8-sig") as handle:
+                candidate_terms = list(csv.DictReader(handle))
+            term_by_key = {row["canonical_key"]: row for row in candidate_terms}
+            # Shared term appears in both files → document_count must be 2, not 1.
+            self.assertIn("먹다", term_by_key)
+            self.assertEqual(int(term_by_key["먹다"]["document_count"]), 2)
+            # Unique terms stay pinned to their single source.
+            self.assertIn("사과", term_by_key)
+            self.assertEqual(int(term_by_key["사과"]["document_count"]), 1)
+            self.assertIn("바나나", term_by_key)
+            self.assertEqual(int(term_by_key["바나나"]["document_count"]), 1)
+
+            # Join integrity: a sentence row's (document, page, sentence_index) must only
+            # bind to tokens from the same file, even though both share sentence_index=1.
+            grade_first = next(
+                row for row in sentences
+                if row["document"] == grade_id and row["sentence_index"] == "1"
+            )
+            mock_first = next(
+                row for row in sentences
+                if row["document"] == mock_id and row["sentence_index"] == "1"
+            )
+            grade_tokens = {
+                token["form"] for token in tokens
+                if token["document"] == grade_id and token["sentence_index"] == "1"
+            }
+            mock_tokens = {
+                token["form"] for token in tokens
+                if token["document"] == mock_id and token["sentence_index"] == "1"
+            }
+            self.assertIn("사과", grade_tokens)
+            self.assertNotIn("바나나", grade_tokens)
+            self.assertIn("바나나", mock_tokens)
+            self.assertNotIn("사과", mock_tokens)
+            self.assertIn("사과", grade_first["sentence"])
+            self.assertIn("바나나", mock_first["sentence"])
+
+
 if __name__ == "__main__":
     unittest.main()
