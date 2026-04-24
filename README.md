@@ -51,6 +51,47 @@ Pure numbers are ignored in vocabulary and surface word outputs unless `--includ
 
 The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, and assign rough deterministic quality and ROI scores for downstream review.
 
+## LLM Providers
+
+The package now exposes a small provider layer for the next rewrite and dictionary-curation stage:
+
+- `openai`
+- `claude`
+- `google`
+- `ollama`
+
+Set credentials with environment variables before calling the LLM helpers:
+
+```bash
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export GOOGLE_API_KEY=...
+export OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Optional model overrides:
+
+```bash
+export WORDBYWORD_OPENAI_MODEL=gpt-4o
+export WORDBYWORD_CLAUDE_MODEL=claude-3-5-sonnet-20240620
+export WORDBYWORD_GOOGLE_MODEL=gemini-1.5-pro
+export WORDBYWORD_OLLAMA_MODEL=llama3.1
+```
+
+Programmatic example:
+
+```python
+from wordbyword import build_dictionary_entry, openai_client, rewrite_sentence
+
+client = openai_client()
+rewritten = rewrite_sentence(client, sentence="학생이 책을 읽고 있다.", focus_terms=["책", "읽다"])
+entry = build_dictionary_entry(
+    client,
+    candidate={"canonical_key": "읽다", "display": "읽다", "pos_group": "verb"},
+    example_sentences=[rewritten],
+)
+```
+
 ## Verify
 
 ```bash
