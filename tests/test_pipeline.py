@@ -22,6 +22,7 @@ class PipelineTest(unittest.TestCase):
             (output_dir / "expressions.csv").write_text("old output", encoding="utf-8")
             (output_dir / "06_expressions_raw.csv").write_text("old output", encoding="utf-8")
             (output_dir / "08_candidate_expressions.csv").write_text("old output", encoding="utf-8")
+            (output_dir / "filtered_example_sentence.csv").write_text("old output", encoding="utf-8")
             (input_dir / "sample.txt").write_text(
                 "● 1 2 한국어 표현을\u2003공부하고 있다. ●\n"
                 "?\n\n"
@@ -49,12 +50,12 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "07_rejected_terms.csv").exists())
             self.assertTrue((output_dir / "08_dictionary_candidates.jsonl").exists())
             self.assertTrue((output_dir / "09_example_sentences.csv").exists())
-            self.assertTrue((output_dir / "filtered_example_sentence.csv").exists())
             self.assertTrue((output_dir / "README.md").exists())
             self.assertFalse((output_dir / "tokens.csv").exists())
             self.assertFalse((output_dir / "expressions.csv").exists())
             self.assertFalse((output_dir / "06_expressions_raw.csv").exists())
             self.assertFalse((output_dir / "08_candidate_expressions.csv").exists())
+            self.assertFalse((output_dir / "filtered_example_sentence.csv").exists())
 
             with (output_dir / "01_extracted_pages.csv").open(encoding="utf-8-sig") as handle:
                 pages = list(csv.DictReader(handle))
@@ -125,6 +126,7 @@ class PipelineTest(unittest.TestCase):
 
             with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
                 example_sentences = list(csv.DictReader(handle))
+            self.assertTrue(example_sentences)
             self.assertLessEqual(len(example_sentences), len(sentences))
             self.assertEqual(
                 list(example_sentences[0].keys()),
@@ -149,18 +151,12 @@ class PipelineTest(unittest.TestCase):
             ]
             matched_key_sets = [row["matched_canonical_keys"] for row in example_sentences]
             self.assertEqual(len(matched_key_sets), len(set(matched_key_sets)))
-            self.assertNotIn(1, covered_counts)
-            self.assertNotIn(0, covered_counts)
+            self.assertTrue(all(5 <= covered <= 15 for covered in covered_counts))
             self.assertTrue(all(matched >= covered for matched, covered in zip(matched_counts, covered_counts)))
             self.assertTrue(all(0 <= score <= 1 for score in quality_scores))
             self.assertEqual(max(quality_scores), 1.0)
             self.assertEqual(quality_density_scores, sorted(quality_density_scores, reverse=True))
-
-            with (output_dir / "filtered_example_sentence.csv").open(encoding="utf-8-sig") as handle:
-                filtered_example_sentences = list(csv.DictReader(handle))
-            self.assertLessEqual(len(filtered_example_sentences), len(example_sentences))
-            self.assertEqual(list(filtered_example_sentences[0].keys()), list(example_sentences[0].keys()))
-            for row in filtered_example_sentences:
+            for row in example_sentences:
                 density = float(row["quality_score"]) / int(row["matched_canonical_key_count"])
                 sentence = row["sentence"].strip()
                 self.assertGreaterEqual(density, 0.0135)
@@ -174,13 +170,13 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("01_extracted_pages.csv", summary["outputs"])
             self.assertIn("02_sentences.csv", summary["outputs"])
             self.assertIn("09_example_sentences.csv", summary["outputs"])
-            self.assertIn("filtered_example_sentence.csv", summary["outputs"])
+            self.assertNotIn("filtered_example_sentence.csv", summary["outputs"])
             self.assertNotIn("06_expressions_raw.csv", summary["outputs"])
             self.assertNotIn("08_candidate_expressions.csv", summary["outputs"])
             self.assertIn("pipeline_stages", summary)
             self.assertGreater(summary["clean_candidate_terms"], 0)
             self.assertEqual(summary["example_sentences"], len(example_sentences))
-            self.assertEqual(summary["filtered_example_sentences"], len(filtered_example_sentences))
+            self.assertNotIn("filtered_example_sentences", summary)
             self.assertNotIn("clean_candidate_expressions", summary)
             for path in output_dir.iterdir():
                 output_text = path.read_text(encoding="utf-8-sig")
@@ -197,11 +193,11 @@ class PipelineTest(unittest.TestCase):
             (input_dir / "grade2" / "unit1").mkdir(parents=True)
             (input_dir / "mock-exams" / "unit1").mkdir(parents=True)
             (input_dir / "grade2" / "unit1" / "lesson.txt").write_text(
-                "사과를 먹었다. 공부를 했다.",
+                "사과 친구 학교 책 연필을 먹었다. 공부를 했다.",
                 encoding="utf-8",
             )
             (input_dir / "mock-exams" / "unit1" / "lesson.txt").write_text(
-                "바나나를 먹었다. 공부를 했다.",
+                "바나나 친구 학교 책 연필을 먹었다. 공부를 했다.",
                 encoding="utf-8",
             )
 

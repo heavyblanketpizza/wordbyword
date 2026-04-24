@@ -27,8 +27,7 @@ The pipeline writes these files:
 - `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, quality scores, and ROI scores.
 - `07_rejected_terms.csv`: vocabulary terms removed by deterministic cleanup, with rejection reasons.
 - `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for a later LLM curation stage.
-- `09_example_sentences.csv`: filtered sentence catalog with candidate canonical-key coverage and normalized quality scores.
-- `filtered_example_sentence.csv`: high-signal example sentences filtered from `09_example_sentences.csv`.
+- `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
 - `README.md`: a generated guide for reading the output folder in pipeline order.
 
 When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.

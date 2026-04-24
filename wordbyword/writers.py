@@ -14,6 +14,8 @@ from wordbyword.text import clean_example_text
 
 FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM = 0.0135
 EXAMPLE_SENTENCE_FINAL_PUNCTUATION = (".", "?", "!", '"')
+EXAMPLE_SENTENCE_COVERED_KEY_MINIMUM = 5
+EXAMPLE_SENTENCE_COVERED_KEY_MAXIMUM = 15
 
 OUTPUT_FILES = [
     "00_summary.json",
@@ -26,7 +28,6 @@ OUTPUT_FILES = [
     "07_rejected_terms.csv",
     "08_dictionary_candidates.jsonl",
     "09_example_sentences.csv",
-    "filtered_example_sentence.csv",
     "README.md",
 ]
 
@@ -46,6 +47,7 @@ LEGACY_OUTPUT_FILES = [
     "08_candidate_expressions.csv",
     "09_rejected_candidates.csv",
     "10_dictionary_candidates.jsonl",
+    "filtered_example_sentence.csv",
 ]
 
 PIPELINE_STAGES = [
@@ -97,12 +99,7 @@ PIPELINE_STAGES = [
     {
         "stage": "09",
         "file": "09_example_sentences.csv",
-        "description": "Filtered sentence catalog with candidate canonical-key coverage and normalized quality scores.",
-    },
-    {
-        "stage": "10",
-        "file": "filtered_example_sentence.csv",
-        "description": "High-signal example sentences filtered from the normalized sentence catalog.",
+        "description": "High-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.",
     },
 ]
 
@@ -143,12 +140,6 @@ def write_outputs(
     write_jsonl(output_dir / "08_dictionary_candidates.jsonl", candidate_outputs.dictionary_entries)
     example_sentences = example_sentence_rows(sentences, tokens, candidate_outputs.terms)
     write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
-    filtered_example_sentences = filtered_high_signal_example_sentence_rows(example_sentences)
-    write_rows(
-        output_dir / "filtered_example_sentence.csv",
-        filtered_example_sentences,
-        fieldnames=example_sentence_fields(),
-    )
     write_summary(
         output_dir / "00_summary.json",
         pages=pages,
@@ -159,7 +150,6 @@ def write_outputs(
         candidate_term_count=len(candidate_outputs.terms),
         rejected_candidate_count=len(candidate_outputs.rejected),
         example_sentence_count=len(example_sentences),
-        filtered_example_sentence_count=len(filtered_example_sentences),
         document_totals=document_totals,
         documents=documents,
     )
@@ -275,7 +265,8 @@ def example_sentence_rows(
             }
         )
 
-    return sort_example_sentence_rows(normalize_example_sentence_quality_scores(filtered_example_sentence_rows(rows)))
+    filtered_rows = sort_example_sentence_rows(normalize_example_sentence_quality_scores(filtered_example_sentence_rows(rows)))
+    return filtered_high_signal_example_sentence_rows(filtered_rows)
 
 
 def filtered_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -283,7 +274,10 @@ def filtered_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[s
     seen_matched_key_sets: set[str] = set()
     for row in rows:
         covered_count = int(row["covered_canonical_key_count"])
-        if covered_count <= 1:
+        if (
+            covered_count < EXAMPLE_SENTENCE_COVERED_KEY_MINIMUM
+            or covered_count > EXAMPLE_SENTENCE_COVERED_KEY_MAXIMUM
+        ):
             continue
 
         matched_keys = str(row["matched_canonical_keys"])
@@ -335,13 +329,15 @@ def example_sentence_sort_score(row: dict[str, object]) -> float:
 
 
 def filtered_high_signal_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [
-        row
-        for row in rows
-        if example_sentence_sort_score(row) >= FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM
+    return [row for row in rows if is_high_signal_example_sentence_row(row)]
+
+
+def is_high_signal_example_sentence_row(row: dict[str, object]) -> bool:
+    return (
+        example_sentence_sort_score(row) >= FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM
         and has_example_sentence_terminal_punctuation(row)
         and not ends_with_bopsida(row)
-    ]
+    )
 
 
 def has_example_sentence_terminal_punctuation(row: dict[str, object]) -> bool:
@@ -408,7 +404,6 @@ def write_summary(
     candidate_term_count: int,
     rejected_candidate_count: int,
     example_sentence_count: int,
-    filtered_example_sentence_count: int,
     document_totals: Counter[str],
     documents: list[Path],
 ) -> None:
@@ -423,7 +418,6 @@ def write_summary(
         "clean_candidate_terms": candidate_term_count,
         "rejected_terms": rejected_candidate_count,
         "example_sentences": example_sentence_count,
-        "filtered_example_sentences": filtered_example_sentence_count,
         "tokens_by_document": dict(document_totals),
         "outputs": OUTPUT_FILES,
         "pipeline_stages": PIPELINE_STAGES,
