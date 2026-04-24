@@ -10,6 +10,7 @@ class PageText:
     page: int | None
     text: str
     raw_text: str = ""
+    document_id: str = ""
 
 
 @dataclass

@@ -6,6 +6,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from kiwipiepy import Kiwi
+
 from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
 from wordbyword.models import CountEntry, PageText
 from wordbyword.text import clean_example_text
@@ -115,6 +117,7 @@ def write_outputs(
     surface_words: dict[str, CountEntry],
     document_totals: Counter[str],
     documents: list[Path],
+    kiwi: Kiwi | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(output_dir)
@@ -123,6 +126,7 @@ def write_outputs(
         surface_words=surface_words,
         total_document_count=parsed_document_count(pages, documents),
         total_token_occurrences=len(tokens),
+        kiwi=kiwi,
     )
 
     write_rows(output_dir / "01_extracted_pages.csv", page_rows(pages), fieldnames=page_fields())
@@ -179,7 +183,7 @@ def page_rows(pages: list[PageText]) -> list[dict[str, object]]:
         text = clean_example_text(page.text)
         rows.append(
             {
-                "document": page.source.name,
+                "document": page.document_id or page.source.name,
                 "page": page.page or "",
                 "raw_character_count": len(page.raw_text),
                 "clean_character_count": len(text),
@@ -190,7 +194,7 @@ def page_rows(pages: list[PageText]) -> list[dict[str, object]]:
 
 
 def parsed_document_count(pages: list[PageText], documents: list[Path]) -> int:
-    parsed_sources = {page.source.name for page in pages}
+    parsed_sources = {page.document_id or page.source.name for page in pages}
     if parsed_sources:
         return len(parsed_sources)
     return len({document.name for document in documents})

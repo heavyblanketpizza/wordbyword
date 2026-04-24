@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from kiwipiepy import Kiwi
+
 from wordbyword.analyzer import KoreanAnalyzer
-from wordbyword.readers import discover_documents, read_document
+from wordbyword.readers import discover_documents, document_id_for, read_document
 from wordbyword.writers import write_outputs
 
 
@@ -27,12 +29,18 @@ def run_pipeline(
     include_numbers: bool = False,
 ) -> PipelineResult:
     documents = discover_documents(input_dir)
+    kiwi = Kiwi()
     analyzer = KoreanAnalyzer(
         include_punctuation=include_punctuation,
         include_numbers=include_numbers,
+        kiwi=kiwi,
     )
 
-    pages = [page for document in documents for page in read_document(document)]
+    pages = [
+        page
+        for document in documents
+        for page in read_document(document, document_id_for(document, input_dir))
+    ]
     analysis = analyzer.analyze_pages(pages)
 
     write_outputs(
@@ -44,6 +52,7 @@ def run_pipeline(
         surface_words=analysis["surface_words"],
         document_totals=analysis["document_totals"],
         documents=documents,
+        kiwi=kiwi,
     )
 
     return PipelineResult(
