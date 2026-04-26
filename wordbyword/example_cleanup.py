@@ -141,6 +141,7 @@ def build_cleaned_example_sentence_outputs(
     client: SupportsCompletion,
     kiwi: Kiwi | None = None,
     on_progress: CleanupProgressCallback | None = None,
+    on_batch_rows: Callable[[list[dict[str, object]]], None] | None = None,
 ) -> CleanedExampleOutputs:
     resolved_kiwi = kiwi if kiwi is not None else Kiwi()
     quality_by_key = {
@@ -149,7 +150,6 @@ def build_cleaned_example_sentence_outputs(
         if row.get("canonical_key")
     }
     indexed_rows = [(f"r{index:04d}", row) for index, row in enumerate(example_sentences, start=1)]
-    reviews = review_cleanup_batches(client, indexed_rows, on_progress=on_progress)
 
     rows: list[dict[str, object]] = []
     seen_cleaned_sentences: set[str] = set()
@@ -161,60 +161,52 @@ def build_cleaned_example_sentence_outputs(
         "reject": 0,
     }
 
-    for row_id, row in indexed_rows:
-        source_sentence = clean_example_text(str(row["sentence"]))
-        review = reviews[row_id]
-        action = review.action
-        if action == "reject":
-            rejected_count += 1
-            action_counts["reject"] += 1
-            continue
-
-        cleaned_sentence = source_sentence if action == "keep" else review.cleaned_sentence
-        similarity = source_similarity(source_sentence, cleaned_sentence)
-        if action == "light_fix" and similarity < LIGHT_FIX_MINIMUM_SIMILARITY:
-            rejected_count += 1
-            action_counts["reject"] += 1
-            continue
-        if not is_acceptable_cleaned_sentence(cleaned_sentence):
-            rejected_count += 1
-            action_counts["reject"] += 1
-            continue
-        if cleaned_sentence in seen_cleaned_sentences:
-            continue
-
-        matched_keys = sentence_candidate_keys(tokenize_sentence(cleaned_sentence, resolved_kiwi), quality_by_key)
-        covered_keys = ordered_unique(matched_keys)
-        if len(covered_keys) < MINIMUM_CLEANED_COVERED_KEY_COUNT:
-            rejected_count += 1
-            action_counts["reject"] += 1
-            continue
-
-        seen_cleaned_sentences.add(cleaned_sentence)
-        action_counts[action] += 1
-        rows.append(
-            {
-                "document": row["document"],
-                "page": row["page"],
-                "sentence_index": row["sentence_index"],
-                "source_sentence": source_sentence,
-                "cleaned_sentence": cleaned_sentence,
-                "cleanup_action": action,
-                "cleanup_reason": review.reason,
-                "model_confidence": review.confidence,
-                "source_similarity": similarity,
-                "source_quality_score": float(row["quality_score"]),
-                "source_matched_canonical_key_count": int(row["matched_canonical_key_count"]),
-                "source_covered_canonical_key_count": int(row["covered_canonical_key_count"]),
-                "source_covered_canonical_keys": row["covered_canonical_keys"],
-                "source_matched_canonical_keys": row["matched_canonical_keys"],
-                "cleaned_quality_score": round(sum(quality_by_key[key] for key in covered_keys), 3),
-                "cleaned_matched_canonical_key_count": len(matched_keys),
-                "cleaned_covered_canonical_key_count": len(covered_keys),
-                "cleaned_covered_canonical_keys": join_keys(covered_keys),
-                "cleaned_matched_canonical_keys": join_keys(matched_keys),
-            }
+    sizes = cleanup_batch_sizes(len(indexed_rows))
+    total_batches = len(sizes)
+    total_rows = len(indexed_rows)
+    completed_rows = 0
+    offset = 0
+    for index, size in enumerate(sizes):
+        if on_progress is not None:
+            on_progress(
+                CleanupBatchProgress(
+                    phase="start",
+                    batch_index=index + 1,
+                    total_batches=total_batches,
+                    completed_batches=index,
+                    completed_rows=completed_rows,
+                    total_rows=total_rows,
+                    current_batch_size=size,
+                )
+            )
+        batch = indexed_rows[offset : offset + size]
+        reviews = review_cleanup_batch_with_fallback(client, batch)
+        batch_rows, batch_rejected_count = build_cleaned_example_batch_rows(
+            batch,
+            reviews,
+            quality_by_key,
+            resolved_kiwi,
+            seen_cleaned_sentences,
+            action_counts,
         )
+        rejected_count += batch_rejected_count
+        rows.extend(batch_rows)
+        if on_batch_rows is not None and batch_rows:
+            on_batch_rows(batch_rows)
+        offset += size
+        completed_rows += size
+        if on_progress is not None:
+            on_progress(
+                CleanupBatchProgress(
+                    phase="complete",
+                    batch_index=index + 1,
+                    total_batches=total_batches,
+                    completed_batches=index + 1,
+                    completed_rows=completed_rows,
+                    total_rows=total_rows,
+                    current_batch_size=size,
+                )
+            )
 
     normalize_cleaned_quality_scores(rows)
     return CleanedExampleOutputs(
@@ -267,6 +259,75 @@ def review_cleanup_batches(
                 )
             )
     return reviews
+
+
+def build_cleaned_example_batch_rows(
+    batch: Sequence[tuple[str, Mapping[str, object]]],
+    reviews: Mapping[str, BatchReviewRow],
+    quality_by_key: Mapping[str, float],
+    kiwi: Kiwi,
+    seen_cleaned_sentences: set[str],
+    action_counts: dict[str, int],
+) -> tuple[list[dict[str, object]], int]:
+    batch_rows: list[dict[str, object]] = []
+    rejected_count = 0
+
+    for row_id, row in batch:
+        source_sentence = clean_example_text(str(row["sentence"]))
+        review = reviews[row_id]
+        action = review.action
+        if action == "reject":
+            rejected_count += 1
+            action_counts["reject"] += 1
+            continue
+
+        cleaned_sentence = source_sentence if action == "keep" else review.cleaned_sentence
+        similarity = source_similarity(source_sentence, cleaned_sentence)
+        if action == "light_fix" and similarity < LIGHT_FIX_MINIMUM_SIMILARITY:
+            rejected_count += 1
+            action_counts["reject"] += 1
+            continue
+        if not is_acceptable_cleaned_sentence(cleaned_sentence):
+            rejected_count += 1
+            action_counts["reject"] += 1
+            continue
+        if cleaned_sentence in seen_cleaned_sentences:
+            continue
+
+        matched_keys = sentence_candidate_keys(tokenize_sentence(cleaned_sentence, kiwi), dict(quality_by_key))
+        covered_keys = ordered_unique(matched_keys)
+        if len(covered_keys) < MINIMUM_CLEANED_COVERED_KEY_COUNT:
+            rejected_count += 1
+            action_counts["reject"] += 1
+            continue
+
+        seen_cleaned_sentences.add(cleaned_sentence)
+        action_counts[action] += 1
+        batch_rows.append(
+            {
+                "document": row["document"],
+                "page": row["page"],
+                "sentence_index": row["sentence_index"],
+                "source_sentence": source_sentence,
+                "cleaned_sentence": cleaned_sentence,
+                "cleanup_action": action,
+                "cleanup_reason": review.reason,
+                "model_confidence": review.confidence,
+                "source_similarity": similarity,
+                "source_quality_score": float(row["quality_score"]),
+                "source_matched_canonical_key_count": int(row["matched_canonical_key_count"]),
+                "source_covered_canonical_key_count": int(row["covered_canonical_key_count"]),
+                "source_covered_canonical_keys": row["covered_canonical_keys"],
+                "source_matched_canonical_keys": row["matched_canonical_keys"],
+                "cleaned_quality_score": round(sum(quality_by_key[key] for key in covered_keys), 3),
+                "cleaned_matched_canonical_key_count": len(matched_keys),
+                "cleaned_covered_canonical_key_count": len(covered_keys),
+                "cleaned_covered_canonical_keys": join_keys(covered_keys),
+                "cleaned_matched_canonical_keys": join_keys(matched_keys),
+            }
+        )
+
+    return batch_rows, rejected_count
 
 
 def cleanup_batch_sizes(

@@ -163,17 +163,25 @@ def write_outputs(
     write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
     cleaned_example_outputs: CleanedExampleOutputs | None = None
     if sentence_cleanup_client is not None:
+        cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
+        cleaned_example_sentence_fieldnames = cleaned_example_sentence_fields()
+        initialize_rows_file(cleaned_example_sentence_path, fieldnames=cleaned_example_sentence_fieldnames)
         cleaned_example_outputs = build_cleaned_example_sentence_outputs(
             example_sentences,
             candidate_outputs.terms,
             client=sentence_cleanup_client,
             kiwi=kiwi,
             on_progress=sentence_cleanup_progress,
+            on_batch_rows=lambda batch_rows: append_rows(
+                cleaned_example_sentence_path,
+                batch_rows,
+                fieldnames=cleaned_example_sentence_fieldnames,
+            ),
         )
         write_rows(
-            output_dir / "10_cleaned_example_sentences.csv",
+            cleaned_example_sentence_path,
             cleaned_example_outputs.rows,
-            fieldnames=cleaned_example_sentence_fields(),
+            fieldnames=cleaned_example_sentence_fieldnames,
         )
     write_summary(
         output_dir / "00_summary.json",
@@ -239,6 +247,21 @@ def write_rows(path: Path, rows: list[dict[str, object]], *, fieldnames: list[st
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def initialize_rows_file(path: Path, *, fieldnames: list[str]) -> None:
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+
+
+def append_rows(path: Path, rows: list[dict[str, object]], *, fieldnames: list[str]) -> None:
+    if not rows:
+        return
+    with path.open("a", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writerows(rows)
+        handle.flush()
 
 
 def write_vocabulary(path: Path, vocabulary: dict[tuple[str, str], CountEntry]) -> None:

@@ -9,7 +9,7 @@ from wordbyword.example_cleanup import (
     cleanup_batch_sizes,
     review_cleanup_batches,
 )
-from wordbyword.llm import CompletionResult
+from wordbyword.llm import CompletionResult, LLMRequestError
 
 
 class ExampleCleanupTest(unittest.TestCase):
@@ -128,6 +128,40 @@ class ExampleCleanupTest(unittest.TestCase):
         self.assertIn("아프다", str(outputs.rows[1]["cleaned_covered_canonical_keys"]))
         self.assertEqual(max(float(row["cleaned_quality_score"]) for row in outputs.rows), 1.0)
 
+    def test_build_cleaned_example_sentence_outputs_streams_completed_batches_before_failure(self) -> None:
+        streamed_rows: list[dict[str, object]] = []
+
+        with self.assertRaises(LLMRequestError):
+            build_cleaned_example_sentence_outputs(
+                [
+                    example_row(
+                        "sample.txt",
+                        index,
+                        f"학생이 책을 읽고 있다 r{index:04d}.",
+                        0.8,
+                        "학생 | 책 | 읽다",
+                    )
+                    for index in range(1, 61)
+                ],
+                [
+                    candidate("학생", 0.7),
+                    candidate("책", 0.6),
+                    candidate("읽다", 0.8),
+                ],
+                client=BatchCompletionClient(
+                    [
+                        "EMPTY",
+                    ],
+                    failure_index=1,
+                ),
+                on_batch_rows=lambda batch_rows: streamed_rows.extend(batch_rows),
+            )
+
+        self.assertEqual(len(streamed_rows), 50)
+        self.assertTrue(all(row["cleanup_action"] == "keep" for row in streamed_rows))
+        self.assertEqual(streamed_rows[0]["sentence_index"], 1)
+        self.assertEqual(streamed_rows[-1]["sentence_index"], 50)
+
 
     def test_review_cleanup_batches_emits_start_and_complete_progress_per_batch(self) -> None:
         indexed_rows = [
@@ -189,11 +223,14 @@ def candidate(canonical_key: str, quality_score: float) -> dict[str, object]:
 
 
 class BatchCompletionClient:
-    def __init__(self, payloads: list[str]) -> None:
+    def __init__(self, payloads: list[str], failure_index: int | None = None) -> None:
         self.payloads = payloads
         self.index = 0
+        self.failure_index = failure_index
 
     def complete(self, *args, **kwargs) -> CompletionResult:
+        if self.failure_index is not None and self.index == self.failure_index:
+            raise LLMRequestError("simulated batch failure")
         payload = self.payloads[self.index]
         self.index += 1
         return CompletionResult(
