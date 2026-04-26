@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Mapping, Sequence
@@ -87,6 +87,7 @@ class CleanupBatchProgress:
 
 
 CleanupProgressCallback = Callable[[CleanupBatchProgress], None]
+IndexedCleanupRow = tuple[str, Mapping[str, object]]
 
 
 def cleaned_example_sentence_fields() -> list[str]:
@@ -152,7 +153,7 @@ def build_cleaned_example_sentence_outputs(
         for row in candidate_terms
         if row.get("canonical_key")
     }
-    indexed_rows = [(f"r{index:04d}", row) for index, row in enumerate(example_sentences, start=1)]
+    indexed_rows: list[IndexedCleanupRow] = [(f"r{index:04d}", row) for index, row in enumerate(example_sentences, start=1)]
 
     rows: list[dict[str, object]] = []
     seen_cleaned_sentences: set[str] = set()
@@ -164,25 +165,7 @@ def build_cleaned_example_sentence_outputs(
         "reject": 0,
     }
 
-    sizes = cleanup_batch_sizes(len(indexed_rows))
-    total_batches = len(sizes)
-    total_rows = len(indexed_rows)
-    completed_rows = 0
-    offset = 0
-    for index, size in enumerate(sizes):
-        if on_progress is not None:
-            on_progress(
-                CleanupBatchProgress(
-                    phase="start",
-                    batch_index=index + 1,
-                    total_batches=total_batches,
-                    completed_batches=index,
-                    completed_rows=completed_rows,
-                    total_rows=total_rows,
-                    current_batch_size=size,
-                )
-            )
-        batch = indexed_rows[offset : offset + size]
+    for batch in iter_cleanup_batches(indexed_rows, on_progress=on_progress):
         reviews = review_cleanup_batch_with_fallback(client, batch)
         batch_rows, batch_rejected_count = build_cleaned_example_batch_rows(
             batch,
@@ -196,20 +179,6 @@ def build_cleaned_example_sentence_outputs(
         rows.extend(batch_rows)
         if on_batch_rows is not None and batch_rows:
             on_batch_rows(batch_rows)
-        offset += size
-        completed_rows += size
-        if on_progress is not None:
-            on_progress(
-                CleanupBatchProgress(
-                    phase="complete",
-                    batch_index=index + 1,
-                    total_batches=total_batches,
-                    completed_batches=index + 1,
-                    completed_rows=completed_rows,
-                    total_rows=total_rows,
-                    current_batch_size=size,
-                )
-            )
 
     normalize_cleaned_quality_scores(rows)
     return CleanedExampleOutputs(
@@ -222,50 +191,81 @@ def build_cleaned_example_sentence_outputs(
 
 def review_cleanup_batches(
     client: SupportsCompletion,
-    indexed_rows: Sequence[tuple[str, Mapping[str, object]]],
+    indexed_rows: Sequence[IndexedCleanupRow],
     *,
     on_progress: CleanupProgressCallback | None = None,
 ) -> dict[str, BatchReviewRow]:
     reviews: dict[str, BatchReviewRow] = {}
+    for batch in iter_cleanup_batches(indexed_rows, on_progress=on_progress):
+        reviews.update(review_cleanup_batch_with_fallback(client, batch))
+    return reviews
+
+
+def iter_cleanup_batches(
+    indexed_rows: Sequence[IndexedCleanupRow],
+    *,
+    on_progress: CleanupProgressCallback | None = None,
+) -> Iterator[Sequence[IndexedCleanupRow]]:
     sizes = cleanup_batch_sizes(len(indexed_rows))
     total_batches = len(sizes)
     total_rows = len(indexed_rows)
     completed_rows = 0
     offset = 0
     for index, size in enumerate(sizes):
-        if on_progress is not None:
-            on_progress(
-                CleanupBatchProgress(
-                    phase="start",
-                    batch_index=index + 1,
-                    total_batches=total_batches,
-                    completed_batches=index,
-                    completed_rows=completed_rows,
-                    total_rows=total_rows,
-                    current_batch_size=size,
-                )
-            )
+        emit_cleanup_batch_progress(
+            on_progress,
+            phase="start",
+            batch_index=index + 1,
+            total_batches=total_batches,
+            completed_batches=index,
+            completed_rows=completed_rows,
+            total_rows=total_rows,
+            current_batch_size=size,
+        )
         batch = indexed_rows[offset : offset + size]
-        reviews.update(review_cleanup_batch_with_fallback(client, batch))
+        yield batch
         offset += size
         completed_rows += size
-        if on_progress is not None:
-            on_progress(
-                CleanupBatchProgress(
-                    phase="complete",
-                    batch_index=index + 1,
-                    total_batches=total_batches,
-                    completed_batches=index + 1,
-                    completed_rows=completed_rows,
-                    total_rows=total_rows,
-                    current_batch_size=size,
-                )
-            )
-    return reviews
+        emit_cleanup_batch_progress(
+            on_progress,
+            phase="complete",
+            batch_index=index + 1,
+            total_batches=total_batches,
+            completed_batches=index + 1,
+            completed_rows=completed_rows,
+            total_rows=total_rows,
+            current_batch_size=size,
+        )
+
+
+def emit_cleanup_batch_progress(
+    on_progress: CleanupProgressCallback | None,
+    *,
+    phase: str,
+    batch_index: int,
+    total_batches: int,
+    completed_batches: int,
+    completed_rows: int,
+    total_rows: int,
+    current_batch_size: int,
+) -> None:
+    if on_progress is None:
+        return
+    on_progress(
+        CleanupBatchProgress(
+            phase=phase,
+            batch_index=batch_index,
+            total_batches=total_batches,
+            completed_batches=completed_batches,
+            completed_rows=completed_rows,
+            total_rows=total_rows,
+            current_batch_size=current_batch_size,
+        )
+    )
 
 
 def build_cleaned_example_batch_rows(
-    batch: Sequence[tuple[str, Mapping[str, object]]],
+    batch: Sequence[IndexedCleanupRow],
     reviews: Mapping[str, BatchReviewRow],
     quality_by_key: Mapping[str, float],
     kiwi: Kiwi,
@@ -297,7 +297,7 @@ def build_cleaned_example_batch_rows(
         if cleaned_sentence in seen_cleaned_sentences:
             continue
 
-        matched_keys = sentence_candidate_keys(tokenize_sentence(cleaned_sentence, kiwi), dict(quality_by_key))
+        matched_keys = sentence_candidate_keys(tokenize_sentence(cleaned_sentence, kiwi), quality_by_key)
         covered_keys = ordered_unique(matched_keys)
         if len(covered_keys) < MINIMUM_CLEANED_COVERED_KEY_COUNT:
             rejected_count += 1
@@ -452,7 +452,7 @@ def tokenize_sentence(sentence: str, kiwi: Kiwi) -> list[dict[str, object]]:
     return rows
 
 
-def sentence_candidate_keys(token_rows: list[dict[str, object]], quality_by_key: dict[str, float]) -> list[str]:
+def sentence_candidate_keys(token_rows: list[dict[str, object]], quality_by_key: Mapping[str, float]) -> list[str]:
     matched_keys: list[str] = []
     index = 0
     while index < len(token_rows):

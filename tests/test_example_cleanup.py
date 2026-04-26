@@ -10,7 +10,7 @@ from wordbyword.example_cleanup import (
     review_cleanup_batch,
     review_cleanup_batches,
 )
-from wordbyword.llm import CompletionResult, LLMRequestError
+from wordbyword.llm import CompletionResult, LLMRequestError, LLMResponseError
 
 
 class ExampleCleanupTest(unittest.TestCase):
@@ -174,6 +174,30 @@ class ExampleCleanupTest(unittest.TestCase):
         self.assertEqual(streamed_rows[0]["sentence_index"], 1)
         self.assertEqual(streamed_rows[-1]["sentence_index"], 50)
 
+    def test_review_cleanup_batch_raises_for_missing_light_fix_sentence(self) -> None:
+        client = ScriptedCompletionClient(["r0001\tlight_fix\t"])
+
+        with self.assertRaises(LLMResponseError):
+            review_cleanup_batch(client, [("r0001", "학생이 책을 읽는다.")])
+
+    def test_review_cleanup_batches_falls_back_to_smaller_batches_after_failure(self) -> None:
+        indexed_rows = [
+            (f"r{index:04d}", {"sentence": f"문장 {index}."})
+            for index in range(1, 5)
+        ]
+        client = ScriptedCompletionClient(
+            [
+                LLMRequestError("simulated top-level batch failure"),
+                "EMPTY",
+                "EMPTY",
+            ]
+        )
+
+        reviews = review_cleanup_batches(client, indexed_rows)
+
+        self.assertEqual(client.batch_sizes, [4, 2, 2])
+        self.assertEqual(set(reviews.keys()), {row_id for row_id, _ in indexed_rows})
+        self.assertTrue(all(review.action == "keep" for review in reviews.values()))
 
     def test_review_cleanup_batches_emits_start_and_complete_progress_per_batch(self) -> None:
         indexed_rows = [
@@ -263,6 +287,27 @@ class PromptCapturingCompletionClient:
             provider="ollama",
             model="gemma4:31b",
             content=self.content,
+        )
+
+
+class ScriptedCompletionClient:
+    def __init__(self, outcomes: list[str | Exception]) -> None:
+        self.outcomes = outcomes
+        self.call_index = 0
+        self.batch_sizes: list[int] = []
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        user_message = list(messages)[1].content
+        self.batch_sizes.append(max(len(user_message.splitlines()) - 1, 0))
+
+        outcome = self.outcomes[self.call_index]
+        self.call_index += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content=outcome,
         )
 
 
