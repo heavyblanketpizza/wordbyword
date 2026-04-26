@@ -33,17 +33,45 @@ PHASE_COLORS = {
 }
 
 ASCII_ART = [
-    "         ____________________",
-    "      .-\"                    \"-.",
-    "     /   RELIC LINK // ACTIVE   \\",
-    "    /   ______________________   \\",
-    "   |   / ____  ____  ____  __ \\   |",
-    "   |  / / __ \\/ __ \\/ __ \\/ / /   |",
-    "   | / / /_/ / /_/ / /_/ / /_/    |",
-    "   | \\ \\____/\\____/\\____/\\____    |",
-    "   |  \\________________________   |",
-    "    \\     NIGHT CITY SIGNAL      /",
-    "     \\__________________________/",
+    "╔═══════════════════════════════════════════════╗",
+    "║  ░▒▓█  NIGHT CITY SIGNAL // RELIC LINK  █▓▒░  ║",
+    "╠═══════════════════════════════════════════════╣",
+    "║                       ▓▓                      ║",
+    "║          ▓▓         ██████        ▓▓          ║",
+    "║    ▓▓   ████      ██████████    ████   ▓▓     ║",
+    "║   ████ ██████▓▓  ████████████  ██████ ████    ║",
+    "║   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   ║",
+    "║                                               ║",
+    "║   ╭───────╮  ░▒▓ A-SIDE // 90 ▓▒░  ╭───────╮  ║",
+    "║   │ ◉ ▣ ◉ │  ▓▒░░░▒▒▓▓▒▒▒░░░▒▓     │ ◉ ▣ ◉ │  ║",
+    "║   ╰───────╯  ╶─╴╶─╴╶─╴╶─╴╶─╴╶─╴    ╰───────╯  ║",
+    "║                                               ║",
+    "║      ░▒▓█  RELIC LINK // ACTIVE  █▓▒░         ║",
+    "╚═══════════════════════════════════════════════╝",
+]
+
+ASCII_ART_PALETTE = [
+    TOKYO_NIGHT["purple"],
+    TOKYO_NIGHT["cyan"],
+    TOKYO_NIGHT["purple"],
+    TOKYO_NIGHT["blue"],
+    TOKYO_NIGHT["pink"],
+    TOKYO_NIGHT["pink"],
+    TOKYO_NIGHT["orange"],
+    TOKYO_NIGHT["yellow"],
+    TOKYO_NIGHT["comment"],
+    TOKYO_NIGHT["green"],
+    TOKYO_NIGHT["cyan"],
+    TOKYO_NIGHT["green"],
+    TOKYO_NIGHT["comment"],
+    TOKYO_NIGHT["pink"],
+    TOKYO_NIGHT["purple"],
+]
+
+BOOT_GLYPH = [
+    "  ▄▄▄▄ ▄▄▄▄ ▄▄▄▄    ░▒▓█▓▒░    ▄▄▄▄ ▄▄▄▄ ▄▄▄▄  ",
+    "  █▄▄█ █▄▄█ █▄▄█  ░▒▓ wbw ▓▒░  █▄▄█ █▄▄█ █▄▄█  ",
+    "  ────────────────────────────────────────────  ",
 ]
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -136,14 +164,24 @@ def render_boot_screen(
         bold=True,
         color=color,
     )
+    glyph_palette = (TOKYO_NIGHT["pink"], TOKYO_NIGHT["purple"], TOKYO_NIGHT["cyan"])
+    glyph = [
+        _paint(line, fg=glyph_palette[index], bold=index == 1, color=color)
+        for index, line in enumerate(BOOT_GLYPH)
+    ]
     underline = _paint("=" * min(width, 72), fg=TOKYO_NIGHT["comment"], color=color)
-    steps = _paint("scan -> extract -> analyze -> write", fg=TOKYO_NIGHT["purple"], bold=True, color=color)
+    steps = _paint(
+        "▶ scan ─► extract ─► analyze ─► write ─► relic",
+        fg=TOKYO_NIGHT["purple"],
+        bold=True,
+        color=color,
+    )
     details = [
         f"input   :: {input_dir}",
         f"output  :: {output_dir}",
         f"mode    :: {mode}",
     ]
-    lines = [banner, underline, steps]
+    lines = [*glyph, banner, underline, steps]
     lines.extend(_paint(line, fg=TOKYO_NIGHT["fg"], color=color) for line in details)
     return "\n".join(lines)
 
@@ -151,8 +189,9 @@ def render_boot_screen(
 def render_stage_update(phase: str, detail: str, *, color: bool) -> str:
     phase_color = PHASE_COLORS.get(phase, TOKYO_NIGHT["blue"])
     tag = _paint(f" {phase.upper():<8} ", fg=TOKYO_NIGHT["bg"], bg=phase_color, bold=True, color=color)
+    arrow = _paint("▶", fg=phase_color, bold=True, color=color)
     message = _paint(detail, fg=TOKYO_NIGHT["fg"], color=color)
-    return f"{tag} {message}"
+    return f"{tag} {arrow} {message}"
 
 
 def render_completion_screen(
@@ -188,17 +227,22 @@ def render_completion_screen(
         _info_line("switches", " ".join(switches), color=color),
     ]
 
-    composed = _compose_columns(
-        [_paint(line, fg=TOKYO_NIGHT["pink"], color=color) for line in ASCII_ART],
-        info_lines,
-        width=width,
-    )
+    painted_art = [
+        _paint(line, fg=ASCII_ART_PALETTE[index], bold=index in (1, 13), color=color)
+        for index, line in enumerate(ASCII_ART)
+    ]
+    composed = _compose_columns(painted_art, info_lines, width=width)
     lines = [
         _paint(
             "  RELIC LINK STABLE // OUTPUT STACK WRITTEN  ",
             fg=TOKYO_NIGHT["bg"],
             bg=TOKYO_NIGHT["pink"],
             bold=True,
+            color=color,
+        ),
+        _paint(
+            "  ░▒▓█ ▓▒░  signal locked  ░▒▓ ▓▒░  cassette spinning  ░▒▓█",
+            fg=TOKYO_NIGHT["comment"],
             color=color,
         ),
         composed,
