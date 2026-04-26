@@ -5,6 +5,7 @@ from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.pipeline import run_pipeline
+from wordbyword.terminal_ui import emit_boot_screen, emit_completion_screen, emit_stage_update
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    emit_boot_screen(
+        input_dir=args.input,
+        output_dir=args.output,
+        clean_example_sentences=args.clean_example_sentences,
+        sentence_cleanup_model=args.ollama_model,
+    )
+
     result = run_pipeline(
         input_dir=args.input,
         output_dir=args.output,
@@ -67,13 +75,15 @@ def main(argv: list[str] | None = None) -> int:
         clean_example_sentences=args.clean_example_sentences,
         sentence_cleanup_model=args.ollama_model,
         sentence_cleanup_base_url=args.ollama_base_url,
+        progress=emit_stage_update,
     )
 
-    print(f"Documents scanned: {result.documents}")
-    print(f"Page/text units extracted: {result.extracted_pages}")
-    print(f"Sentences parsed: {result.sentences}")
-    print(f"Token occurrences: {result.token_occurrences}")
-    print(f"Unique vocabulary terms: {result.vocabulary_terms}")
-    print(f"Unique surface words: {result.surface_words}")
-    print(f"Output written to: {result.output_dir}")
+    emit_completion_screen(
+        result,
+        input_dir=args.input,
+        include_punctuation=args.include_punctuation,
+        include_numbers=args.include_numbers,
+        clean_example_sentences=args.clean_example_sentences,
+        sentence_cleanup_model=args.ollama_model,
+    )
     return 0

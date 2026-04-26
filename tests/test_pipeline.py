@@ -12,6 +12,26 @@ from wordbyword.writers import parsed_document_count
 
 
 class PipelineTest(unittest.TestCase):
+    def test_pipeline_reports_major_run_phases(self) -> None:
+        phases: list[tuple[str, str]] = []
+
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text("한국어 책을 읽고 있다.", encoding="utf-8")
+
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                progress=lambda phase, detail: phases.append((phase, detail)),
+            )
+
+        self.assertEqual([phase for phase, _ in phases], ["scan", "extract", "analyze", "write"])
+        self.assertTrue(all(detail for _, detail in phases))
+
     def test_extracts_korean_tokens_and_vocabulary_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
