@@ -43,6 +43,9 @@ Preserve the original wording, structure, tense, register, and rich context when
 Use light_fix only for obvious OCR noise, spacing, punctuation, or typo repair.
 Use rebuild only when the sentence is clearly broken but the intended meaning is still recoverable from the source.
 Reject low-signal, low-value, list-like, instructional, fragmentary, or guess-heavy sentences.
+Reject textbook, workbook, and school-test directions or comprehension questions, even when they are grammatical Korean.
+Reject numbered prompts, answer-eliciting questions, and classroom tasks such as "(3) 장기려 선생님의 이야기를 듣고 기오는 어떤 마음을 가지게 되었나요?" or "일이 일어난 차례에 맞게 번호를 써 보세요."
+Reject fill-in-the-blank, matching, ordering, choosing, explaining, and write/say/discuss prompts unless they are clearly natural dialogue instead of classroom instructions.
 Return TSV lines only for rows that are not keep.
 Columns: id<TAB>action<TAB>cleaned_sentence
 Rules:

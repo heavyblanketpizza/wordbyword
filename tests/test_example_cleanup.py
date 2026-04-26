@@ -7,6 +7,7 @@ from wordbyword.example_cleanup import (
     build_cleaned_example_sentence_outputs,
     clean_example_sentence,
     cleanup_batch_sizes,
+    review_cleanup_batch,
     review_cleanup_batches,
 )
 from wordbyword.llm import CompletionResult, LLMRequestError
@@ -40,6 +41,17 @@ class ExampleCleanupTest(unittest.TestCase):
         self.assertEqual(result["cleaned_sentence"], "점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다.")
         self.assertEqual(result["reason"], "")
         self.assertEqual(result["confidence"], 0.0)
+
+    def test_review_cleanup_batch_prompt_rejects_textbook_questions_and_instructions(self) -> None:
+        client = PromptCapturingCompletionClient("EMPTY")
+
+        review_cleanup_batch(client, [("r0001", "학생이 책을 읽는다.")])
+
+        self.assertEqual(len(client.messages), 1)
+        system_prompt = client.messages[0][0].content
+        self.assertIn("Reject textbook, workbook, and school-test directions or comprehension questions", system_prompt)
+        self.assertIn("어떤 마음을 가지게 되었나요?", system_prompt)
+        self.assertIn("번호를 써 보세요.", system_prompt)
 
     def test_build_cleaned_example_sentence_outputs_keeps_fixes_and_drops_rejects(self) -> None:
         outputs = build_cleaned_example_sentence_outputs(
@@ -237,6 +249,20 @@ class BatchCompletionClient:
             provider="ollama",
             model="gemma4:31b",
             content=payload,
+        )
+
+
+class PromptCapturingCompletionClient:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.messages: list[list[object]] = []
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        self.messages.append(list(messages))
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content=self.content,
         )
 
 
