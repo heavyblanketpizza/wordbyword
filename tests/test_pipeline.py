@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from wordbyword.llm import CompletionResult
 from wordbyword.pipeline import run_pipeline
 from wordbyword.writers import parsed_document_count
 
@@ -50,6 +51,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "07_rejected_terms.csv").exists())
             self.assertTrue((output_dir / "08_dictionary_candidates.jsonl").exists())
             self.assertTrue((output_dir / "09_example_sentences.csv").exists())
+            self.assertFalse((output_dir / "10_cleaned_example_sentences.csv").exists())
             self.assertTrue((output_dir / "README.md").exists())
             self.assertFalse((output_dir / "tokens.csv").exists())
             self.assertFalse((output_dir / "expressions.csv").exists())
@@ -170,12 +172,14 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("01_extracted_pages.csv", summary["outputs"])
             self.assertIn("02_sentences.csv", summary["outputs"])
             self.assertIn("09_example_sentences.csv", summary["outputs"])
+            self.assertNotIn("10_cleaned_example_sentences.csv", summary["outputs"])
             self.assertNotIn("filtered_example_sentence.csv", summary["outputs"])
             self.assertNotIn("06_expressions_raw.csv", summary["outputs"])
             self.assertNotIn("08_candidate_expressions.csv", summary["outputs"])
             self.assertIn("pipeline_stages", summary)
             self.assertGreater(summary["clean_candidate_terms"], 0)
             self.assertEqual(summary["example_sentences"], len(example_sentences))
+            self.assertNotIn("cleaned_example_sentences", summary)
             self.assertNotIn("filtered_example_sentences", summary)
             self.assertNotIn("clean_candidate_expressions", summary)
             for path in output_dir.iterdir():
@@ -184,6 +188,68 @@ class PipelineTest(unittest.TestCase):
                 self.assertNotIn("first_page", output_text)
                 self.assertNotIn("●", output_text)
 
+    def test_pipeline_can_write_cleaned_example_sentences_with_stub_client(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text(
+                "한국어 표현을 공부하고 있다. 한국어 책을 읽고 있다. 점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다.",
+                encoding="utf-8",
+            )
+
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                clean_example_sentences=True,
+                sentence_cleanup_client=AlwaysKeepCleanupClient(),
+            )
+
+            self.assertTrue((output_dir / "10_cleaned_example_sentences.csv").exists())
+
+            with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
+                example_sentences = list(csv.DictReader(handle))
+            with (output_dir / "10_cleaned_example_sentences.csv").open(encoding="utf-8-sig") as handle:
+                cleaned_example_sentences = list(csv.DictReader(handle))
+
+            self.assertEqual(len(cleaned_example_sentences), len(example_sentences))
+            self.assertEqual(
+                list(cleaned_example_sentences[0].keys()),
+                [
+                    "document",
+                    "page",
+                    "sentence_index",
+                    "source_sentence",
+                    "cleaned_sentence",
+                    "cleanup_action",
+                    "cleanup_reason",
+                    "model_confidence",
+                    "source_similarity",
+                    "source_quality_score",
+                    "source_matched_canonical_key_count",
+                    "source_covered_canonical_key_count",
+                    "source_covered_canonical_keys",
+                    "source_matched_canonical_keys",
+                    "cleaned_quality_score",
+                    "cleaned_matched_canonical_key_count",
+                    "cleaned_covered_canonical_key_count",
+                    "cleaned_covered_canonical_keys",
+                    "cleaned_matched_canonical_keys",
+                ],
+            )
+            self.assertTrue(all(row["cleanup_action"] == "keep" for row in cleaned_example_sentences))
+            self.assertTrue(all(row["source_sentence"] == row["cleaned_sentence"] for row in cleaned_example_sentences))
+            self.assertTrue(all(float(row["source_similarity"]) == 1.0 for row in cleaned_example_sentences))
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("10_cleaned_example_sentences.csv", summary["outputs"])
+            self.assertEqual(summary["reviewed_example_sentences"], len(example_sentences))
+            self.assertEqual(summary["cleaned_example_sentences"], len(cleaned_example_sentences))
+            self.assertEqual(summary["rejected_cleaned_example_sentences"], 0)
+            self.assertEqual(summary["cleaned_example_sentence_actions"]["keep"], len(cleaned_example_sentences))
+            self.assertEqual(summary["cleaned_example_sentence_actions"]["reject"], 0)
 
     def test_same_basename_in_different_subdirs_stays_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -287,6 +353,15 @@ class PipelineTest(unittest.TestCase):
         ]
 
         self.assertEqual(parsed_document_count([], documents), 2)
+
+
+class AlwaysKeepCleanupClient:
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content="EMPTY",
+        )
 
 
 if __name__ == "__main__":

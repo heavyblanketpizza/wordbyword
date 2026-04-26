@@ -9,6 +9,12 @@ from typing import Any
 from kiwipiepy import Kiwi
 
 from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
+from wordbyword.example_cleanup import (
+    CleanedExampleOutputs,
+    build_cleaned_example_sentence_outputs,
+    cleaned_example_sentence_fields,
+)
+from wordbyword.llm import SupportsCompletion
 from wordbyword.models import CountEntry, PageText
 from wordbyword.text import clean_example_text
 
@@ -17,7 +23,7 @@ EXAMPLE_SENTENCE_FINAL_PUNCTUATION = (".", "?", "!", '"')
 EXAMPLE_SENTENCE_COVERED_KEY_MINIMUM = 5
 EXAMPLE_SENTENCE_COVERED_KEY_MAXIMUM = 15
 
-OUTPUT_FILES = [
+BASE_OUTPUT_FILES = [
     "00_summary.json",
     "01_extracted_pages.csv",
     "02_sentences.csv",
@@ -29,6 +35,10 @@ OUTPUT_FILES = [
     "08_dictionary_candidates.jsonl",
     "09_example_sentences.csv",
     "README.md",
+]
+
+OPTIONAL_OUTPUT_FILES = [
+    "10_cleaned_example_sentences.csv",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -50,7 +60,7 @@ LEGACY_OUTPUT_FILES = [
     "filtered_example_sentence.csv",
 ]
 
-PIPELINE_STAGES = [
+BASE_PIPELINE_STAGES = [
     {
         "stage": "00",
         "file": "00_summary.json",
@@ -103,6 +113,14 @@ PIPELINE_STAGES = [
     },
 ]
 
+OPTIONAL_PIPELINE_STAGES = [
+    {
+        "stage": "10",
+        "file": "10_cleaned_example_sentences.csv",
+        "description": "Ollama-curated source sentences kept, lightly fixed, rebuilt, or deleted with minimal-edit bias.",
+    },
+]
+
 
 def write_outputs(
     output_dir: Path,
@@ -115,6 +133,7 @@ def write_outputs(
     document_totals: Counter[str],
     documents: list[Path],
     kiwi: Kiwi | None = None,
+    sentence_cleanup_client: SupportsCompletion | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(output_dir)
@@ -140,6 +159,19 @@ def write_outputs(
     write_jsonl(output_dir / "08_dictionary_candidates.jsonl", candidate_outputs.dictionary_entries)
     example_sentences = example_sentence_rows(sentences, tokens, candidate_outputs.terms)
     write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
+    cleaned_example_outputs: CleanedExampleOutputs | None = None
+    if sentence_cleanup_client is not None:
+        cleaned_example_outputs = build_cleaned_example_sentence_outputs(
+            example_sentences,
+            candidate_outputs.terms,
+            client=sentence_cleanup_client,
+            kiwi=kiwi,
+        )
+        write_rows(
+            output_dir / "10_cleaned_example_sentences.csv",
+            cleaned_example_outputs.rows,
+            fieldnames=cleaned_example_sentence_fields(),
+        )
     write_summary(
         output_dir / "00_summary.json",
         pages=pages,
@@ -152,12 +184,13 @@ def write_outputs(
         example_sentence_count=len(example_sentences),
         document_totals=document_totals,
         documents=documents,
+        cleaned_example_outputs=cleaned_example_outputs,
     )
-    write_output_readme(output_dir / "README.md")
+    write_output_readme(output_dir / "README.md", include_cleaned_example_sentences=cleaned_example_outputs is not None)
 
 
 def cleanup_previous_outputs(output_dir: Path) -> None:
-    for filename in {*OUTPUT_FILES, *LEGACY_OUTPUT_FILES}:
+    for filename in {*all_output_files(include_cleaned_example_sentences=True), *LEGACY_OUTPUT_FILES}:
         path = output_dir / filename
         if path.is_file():
             path.unlink()
@@ -406,7 +439,9 @@ def write_summary(
     example_sentence_count: int,
     document_totals: Counter[str],
     documents: list[Path],
+    cleaned_example_outputs: CleanedExampleOutputs | None = None,
 ) -> None:
+    include_cleaned_example_sentences = cleaned_example_outputs is not None
     summary: dict[str, Any] = {
         "documents": [str(path) for path in documents],
         "document_count": len(documents),
@@ -419,13 +454,18 @@ def write_summary(
         "rejected_terms": rejected_candidate_count,
         "example_sentences": example_sentence_count,
         "tokens_by_document": dict(document_totals),
-        "outputs": OUTPUT_FILES,
-        "pipeline_stages": PIPELINE_STAGES,
+        "outputs": all_output_files(include_cleaned_example_sentences=include_cleaned_example_sentences),
+        "pipeline_stages": pipeline_stages(include_cleaned_example_sentences=include_cleaned_example_sentences),
     }
+    if cleaned_example_outputs is not None:
+        summary["reviewed_example_sentences"] = cleaned_example_outputs.reviewed_count
+        summary["cleaned_example_sentences"] = len(cleaned_example_outputs.rows)
+        summary["rejected_cleaned_example_sentences"] = cleaned_example_outputs.rejected_count
+        summary["cleaned_example_sentence_actions"] = dict(cleaned_example_outputs.action_counts)
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def write_output_readme(path: Path) -> None:
+def write_output_readme(path: Path, *, include_cleaned_example_sentences: bool = False) -> None:
     lines = [
         "# wordbyword output",
         "",
@@ -434,7 +474,7 @@ def write_output_readme(path: Path) -> None:
         "| Stage | File | Purpose |",
         "| --- | --- | --- |",
     ]
-    for stage in PIPELINE_STAGES:
+    for stage in pipeline_stages(include_cleaned_example_sentences=include_cleaned_example_sentences):
         lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
 
     lines.extend(
@@ -492,6 +532,20 @@ def example_sentence_fields() -> list[str]:
         "covered_canonical_key_count",
         "covered_canonical_keys",
         "matched_canonical_keys",
+    ]
+
+
+def all_output_files(*, include_cleaned_example_sentences: bool = False) -> list[str]:
+    return [
+        *BASE_OUTPUT_FILES,
+        *(OPTIONAL_OUTPUT_FILES if include_cleaned_example_sentences else []),
+    ]
+
+
+def pipeline_stages(*, include_cleaned_example_sentences: bool = False) -> list[dict[str, str]]:
+    return [
+        *BASE_PIPELINE_STAGES,
+        *(OPTIONAL_PIPELINE_STAGES if include_cleaned_example_sentences else []),
     ]
 
 

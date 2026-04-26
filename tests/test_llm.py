@@ -10,6 +10,7 @@ from wordbyword.llm import (
     build_dictionary_entry,
     build_provider_client,
     load_provider_config,
+    ollama_client,
     rewrite_sentence,
 )
 
@@ -154,6 +155,7 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(result.content, "ollama output")
         self.assertEqual(transport.url, "http://localhost:11434/api/chat")
         self.assertEqual(transport.body["format"], "json")
+        self.assertFalse(transport.body["think"])
         self.assertEqual(transport.body["options"]["num_predict"], 1024)
         self.assertEqual(transport.body["messages"][0]["content"], "hello")
 
@@ -193,6 +195,29 @@ class TaskHelperTest(unittest.TestCase):
         self.assertEqual(entry["rewritten_examples"], ["학생이 책을 읽는다."])
         self.assertEqual(entry["confidence"], 0.82)
         self.assertEqual(entry["source_candidate"]["canonical_key"], "읽다")
+
+
+@unittest.skipUnless(
+    os.environ.get("WORDBYWORD_RUN_OLLAMA_LIVE_TESTS") == "1",
+    "Set WORDBYWORD_RUN_OLLAMA_LIVE_TESTS=1 to run live Ollama integration tests.",
+)
+class LiveOllamaIntegrationTest(unittest.TestCase):
+    def test_gemma4_rewrites_single_broken_example_sentence(self) -> None:
+        broken_sentence = "이가 아픈 여우가 드소토 선생님을 찾아옴."
+        client = ollama_client(model="gemma4:31b", timeout_seconds=120.0)
+
+        rewritten = rewrite_sentence(
+            client,
+            sentence=broken_sentence,
+            focus_terms=["여우", "드소토"],
+            instruction="Rewrite the broken example sentence into natural Korean for learners.",
+        )
+
+        self.assertTrue(rewritten.strip())
+        self.assertNotEqual(rewritten, broken_sentence)
+        self.assertIn("여우", rewritten)
+        self.assertIn("드소토", rewritten)
+        self.assertNotIn("```", rewritten)
 
 
 class FakeTransport:

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from kiwipiepy import Kiwi
 
+from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
+from wordbyword.llm import SupportsCompletion, ollama_client
 from wordbyword.analyzer import KoreanAnalyzer
 from wordbyword.readers import discover_documents, document_id_for, read_document
 from wordbyword.writers import write_outputs
@@ -27,6 +29,10 @@ def run_pipeline(
     output_dir: Path,
     include_punctuation: bool = False,
     include_numbers: bool = False,
+    clean_example_sentences: bool = False,
+    sentence_cleanup_client: SupportsCompletion | None = None,
+    sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
+    sentence_cleanup_base_url: str | None = None,
 ) -> PipelineResult:
     documents = discover_documents(input_dir)
     kiwi = Kiwi()
@@ -42,6 +48,16 @@ def run_pipeline(
         for page in read_document(document, document_id_for(document, input_dir))
     ]
     analysis = analyzer.analyze_pages(pages)
+    cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
+    cleanup_client = sentence_cleanup_client
+    if cleanup_requested and cleanup_client is None:
+        cleanup_client = ollama_client(
+            model=sentence_cleanup_model,
+            base_url=sentence_cleanup_base_url,
+            timeout_seconds=300.0,
+            default_temperature=0.0,
+            max_output_tokens=256,
+        )
 
     write_outputs(
         output_dir,
@@ -53,6 +69,7 @@ def run_pipeline(
         document_totals=analysis["document_totals"],
         documents=documents,
         kiwi=kiwi,
+        sentence_cleanup_client=cleanup_client if cleanup_requested else None,
     )
 
     return PipelineResult(

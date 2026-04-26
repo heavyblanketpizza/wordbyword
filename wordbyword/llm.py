@@ -337,6 +337,10 @@ class OllamaChatClient(BaseChatClient):
             "model": self.config.model,
             "messages": [message_row(message) for message in messages],
             "stream": False,
+            # The current helper layer expects final answer text in message.content.
+            # Disable Ollama reasoning traces by default so thinking-capable models
+            # do not consume the token budget in message.thinking instead.
+            "think": False,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_output_tokens,
