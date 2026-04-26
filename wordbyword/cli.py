@@ -3,9 +3,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
+from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
 from wordbyword.pipeline import run_pipeline
-from wordbyword.terminal_ui import emit_boot_screen, emit_completion_screen, emit_stage_update
+from wordbyword.terminal_ui import (
+    emit_boot_screen,
+    emit_cleanup_progress,
+    emit_completion_screen,
+    emit_stage_update,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
         sentence_cleanup_model=args.ollama_model,
     )
 
+    def cleanup_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(progress, model=args.ollama_model)
+
     result = run_pipeline(
         input_dir=args.input,
         output_dir=args.output,
@@ -76,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         sentence_cleanup_model=args.ollama_model,
         sentence_cleanup_base_url=args.ollama_base_url,
         progress=emit_stage_update,
+        cleanup_progress=cleanup_progress,
     )
 
     emit_completion_screen(
