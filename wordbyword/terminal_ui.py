@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
+    from wordbyword.example_cleanup import CleanupBatchProgress
     from wordbyword.pipeline import PipelineResult
 
 TOKYO_NIGHT = {
@@ -111,6 +112,25 @@ def emit_stage_update(phase: str, detail: str, stream: TextIO | None = None) -> 
     stream.flush()
 
 
+def emit_cleanup_progress(
+    progress: "CleanupBatchProgress",
+    *,
+    model: str | None = None,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    color = _supports_color(stream)
+    width = _terminal_width()
+    line = render_cleanup_progress(progress, model=model, color=color, width=width)
+    stream.write("\033[2K\r")
+    stream.write(line)
+    if progress.phase == "complete" and progress.completed_batches >= progress.total_batches:
+        stream.write("\n")
+    stream.flush()
+
+
 def emit_completion_screen(
     result: "PipelineResult",
     *,
@@ -192,6 +212,52 @@ def render_stage_update(phase: str, detail: str, *, color: bool) -> str:
     arrow = _paint("▶", fg=phase_color, bold=True, color=color)
     message = _paint(detail, fg=TOKYO_NIGHT["fg"], color=color)
     return f"{tag} {arrow} {message}"
+
+
+def render_cleanup_progress(
+    progress: "CleanupBatchProgress",
+    *,
+    model: str | None = None,
+    color: bool,
+    width: int = 100,
+) -> str:
+    phase_color = PHASE_COLORS["cleanup"]
+    tag = _paint(
+        " CLEANUP  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=phase_color,
+        bold=True,
+        color=color,
+    )
+    arrow_glyph = "▶" if progress.phase == "start" else "▣"
+    arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
+
+    total_rows = max(progress.total_rows, 1)
+    ratio = max(0.0, min(1.0, progress.completed_rows / total_rows))
+
+    suffix_plain = f" :: {model}" if model else ""
+    head_plain = (
+        f"batch {progress.batch_index:02d}/{max(progress.total_batches, 1):02d}  "
+        f"rows {progress.completed_rows}/{progress.total_rows}  "
+    )
+    tail_plain = f"  {ratio * 100:5.1f}%{suffix_plain}"
+    overhead = len(" CLEANUP  ") + 1 + 1 + 1 + len(head_plain) + len(tail_plain) + 2
+    bar_width = max(8, min(28, width - overhead))
+    filled = int(round(bar_width * ratio))
+    filled = max(0, min(bar_width, filled))
+    bar_filled = _paint("█" * filled, fg=phase_color, bold=True, color=color)
+    bar_empty = _paint("░" * (bar_width - filled), fg=TOKYO_NIGHT["comment"], color=color)
+    bracket_open = _paint("[", fg=TOKYO_NIGHT["comment"], color=color)
+    bracket_close = _paint("]", fg=TOKYO_NIGHT["comment"], color=color)
+
+    head_text = _paint(head_plain, fg=TOKYO_NIGHT["fg"], color=color)
+    pct_text = _paint(f"{ratio * 100:5.1f}%", fg=TOKYO_NIGHT["yellow"], bold=True, color=color)
+    suffix_text = _paint(suffix_plain, fg=TOKYO_NIGHT["comment"], color=color) if suffix_plain else ""
+
+    return (
+        f"{tag} {arrow} {head_text}{bracket_open}{bar_filled}{bar_empty}{bracket_close}  "
+        f"{pct_text}{suffix_text}"
+    )
 
 
 def render_completion_screen(

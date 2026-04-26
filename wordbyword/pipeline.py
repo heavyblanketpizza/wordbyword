@@ -6,7 +6,7 @@ from pathlib import Path
 
 from kiwipiepy import Kiwi
 
-from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
+from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
 from wordbyword.llm import SupportsCompletion, ollama_client
 from wordbyword.analyzer import KoreanAnalyzer
 from wordbyword.readers import discover_documents, document_id_for, read_document
@@ -37,6 +37,7 @@ def run_pipeline(
     sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
     sentence_cleanup_base_url: str | None = None,
     progress: ProgressCallback | None = None,
+    cleanup_progress: CleanupProgressCallback | None = None,
 ) -> PipelineResult:
     _report(progress, "scan", f"discovering source documents in {input_dir}")
     documents = discover_documents(input_dir)
@@ -80,6 +81,7 @@ def run_pipeline(
         documents=documents,
         kiwi=kiwi,
         sentence_cleanup_client=cleanup_client if cleanup_requested else None,
+        sentence_cleanup_progress=cleanup_progress if cleanup_requested else None,
     )
 
     return PipelineResult(

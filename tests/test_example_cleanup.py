@@ -3,9 +3,11 @@ from __future__ import annotations
 import unittest
 
 from wordbyword.example_cleanup import (
+    CleanupBatchProgress,
     build_cleaned_example_sentence_outputs,
     clean_example_sentence,
     cleanup_batch_sizes,
+    review_cleanup_batches,
 )
 from wordbyword.llm import CompletionResult
 
@@ -125,6 +127,37 @@ class ExampleCleanupTest(unittest.TestCase):
         self.assertGreaterEqual(int(outputs.rows[1]["cleaned_covered_canonical_key_count"]), 5)
         self.assertIn("아프다", str(outputs.rows[1]["cleaned_covered_canonical_keys"]))
         self.assertEqual(max(float(row["cleaned_quality_score"]) for row in outputs.rows), 1.0)
+
+
+    def test_review_cleanup_batches_emits_start_and_complete_progress_per_batch(self) -> None:
+        indexed_rows = [
+            (f"r{index:04d}", {"sentence": f"문장 {index}."})
+            for index in range(1, 121)
+        ]
+        client = BatchCompletionClient(["EMPTY", "EMPTY", "EMPTY"])
+        events: list[CleanupBatchProgress] = []
+
+        review_cleanup_batches(client, indexed_rows, on_progress=events.append)
+
+        self.assertEqual(len(events), 6)
+        self.assertEqual([event.phase for event in events], [
+            "start",
+            "complete",
+            "start",
+            "complete",
+            "start",
+            "complete",
+        ])
+        self.assertEqual(events[0].batch_index, 1)
+        self.assertEqual(events[0].total_batches, 3)
+        self.assertEqual(events[0].completed_rows, 0)
+        self.assertEqual(events[0].current_batch_size, 50)
+        self.assertEqual(events[1].completed_rows, 50)
+        self.assertEqual(events[3].completed_rows, 100)
+        self.assertEqual(events[5].batch_index, 3)
+        self.assertEqual(events[5].completed_batches, 3)
+        self.assertEqual(events[5].completed_rows, 120)
+        self.assertEqual(events[5].total_rows, 120)
 
 
 def example_row(

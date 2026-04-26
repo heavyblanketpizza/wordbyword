@@ -3,8 +3,14 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from wordbyword.example_cleanup import CleanupBatchProgress
 from wordbyword.pipeline import PipelineResult
-from wordbyword.terminal_ui import render_boot_screen, render_completion_screen, render_stage_update
+from wordbyword.terminal_ui import (
+    render_boot_screen,
+    render_cleanup_progress,
+    render_completion_screen,
+    render_stage_update,
+)
 
 
 class TerminalUiTest(unittest.TestCase):
@@ -88,6 +94,46 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("\x1b[", rendered)
         self.assertIn("RELIC LINK // ACTIVE", rendered)
         self.assertIn("gemma4:31b", rendered)
+
+
+    def test_render_cleanup_progress_plain_includes_bar_and_counts(self) -> None:
+        progress = CleanupBatchProgress(
+            phase="complete",
+            batch_index=3,
+            total_batches=8,
+            completed_batches=3,
+            completed_rows=150,
+            total_rows=400,
+            current_batch_size=50,
+        )
+
+        rendered = render_cleanup_progress(progress, model="gemma4:31b", color=False, width=120)
+
+        self.assertIn("CLEANUP", rendered)
+        self.assertIn("batch 03/08", rendered)
+        self.assertIn("rows 150/400", rendered)
+        self.assertIn(" 37.5%", rendered)
+        self.assertIn("gemma4:31b", rendered)
+        self.assertIn("█", rendered)
+        self.assertIn("░", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_cleanup_progress_color_includes_ansi(self) -> None:
+        progress = CleanupBatchProgress(
+            phase="start",
+            batch_index=1,
+            total_batches=4,
+            completed_batches=0,
+            completed_rows=0,
+            total_rows=200,
+            current_batch_size=50,
+        )
+
+        rendered = render_cleanup_progress(progress, model="gemma4:31b", color=True, width=120)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("CLEANUP", rendered)
+        self.assertIn("batch 01/04", rendered)
 
 
 if __name__ == "__main__":

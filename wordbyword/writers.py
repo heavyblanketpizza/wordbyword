@@ -11,6 +11,7 @@ from kiwipiepy import Kiwi
 from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
 from wordbyword.example_cleanup import (
     CleanedExampleOutputs,
+    CleanupProgressCallback,
     build_cleaned_example_sentence_outputs,
     cleaned_example_sentence_fields,
 )
@@ -134,6 +135,7 @@ def write_outputs(
     documents: list[Path],
     kiwi: Kiwi | None = None,
     sentence_cleanup_client: SupportsCompletion | None = None,
+    sentence_cleanup_progress: CleanupProgressCallback | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(output_dir)
@@ -166,6 +168,7 @@ def write_outputs(
             candidate_outputs.terms,
             client=sentence_cleanup_client,
             kiwi=kiwi,
+            on_progress=sentence_cleanup_progress,
         )
         write_rows(
             output_dir / "10_cleaned_example_sentences.csv",
