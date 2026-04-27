@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
 from wordbyword.pipeline import run_pipeline
 from wordbyword.terminal_ui import (
+    emit_artifact_drop,
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
@@ -93,6 +95,29 @@ def main(argv: list[str] | None = None) -> int:
             item_label="terms",
         )
 
+    def artifact_callback(stage: str, entries: Sequence[Mapping[str, object]]) -> None:
+        if stage == "09_example_sentences":
+            emit_artifact_drop(
+                stage,
+                file_label="09_example_sentences.csv",
+                summary=(
+                    ("relics", f"{len(entries):,} sentences"),
+                    ("status", "signal locked"),
+                ),
+            )
+            return
+        if stage == "11_cleaned_dictionary_candidates":
+            emit_artifact_drop(
+                stage,
+                entries=entries,
+                file_label="11_cleaned_dictionary_candidates.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("model", args.ollama_model),
+                    ("status", "cache locked"),
+                ),
+            )
+
     result = run_pipeline(
         input_dir=args.input,
         output_dir=args.output,
@@ -105,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         progress=emit_stage_update,
         cleanup_progress=example_cleanup_progress,
         dictionary_cleanup_progress=dictionary_cleanup_progress,
+        artifact_callback=artifact_callback,
     )
 
     emit_completion_screen(

@@ -3,8 +3,11 @@ from __future__ import annotations
 import csv
 import json
 from collections import Counter
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
 
 from kiwipiepy import Kiwi
 
@@ -145,6 +148,7 @@ def write_outputs(
     sentence_cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(output_dir)
@@ -170,6 +174,8 @@ def write_outputs(
     write_jsonl(output_dir / "08_dictionary_candidates.jsonl", candidate_outputs.dictionary_entries)
     example_sentences = example_sentence_rows(sentences, tokens, candidate_outputs.terms)
     write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
+    if artifact_callback is not None:
+        artifact_callback("09_example_sentences", example_sentences)
     cleaned_example_outputs: CleanedExampleOutputs | None = None
     if sentence_cleanup_client is not None:
         cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
@@ -216,6 +222,11 @@ def write_outputs(
             cleaned_dictionary_candidate_path,
             cleaned_dictionary_outputs.rows,
         )
+        if artifact_callback is not None:
+            artifact_callback(
+                "11_cleaned_dictionary_candidates",
+                cleaned_dictionary_outputs.rows,
+            )
     write_summary(
         output_dir / "00_summary.json",
         pages=pages,

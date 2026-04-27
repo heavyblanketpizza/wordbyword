@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
@@ -326,6 +328,340 @@ def render_completion_screen(
         composed,
     ]
     return "\n".join(lines)
+
+
+HISTOGRAM_FRACTIONS = " ▁▂▃▄▅▆▇█"
+
+RELIC_DROP_ART_QUALITY = [
+    "    ░▒▓█▓▒░  ░▒▓ DICTIONARY RELIC // CACHE LOCKED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 11_cleaned_dictionary_candidates.jsonl ▓▒░  ░▒▓  │  ",
+    "  │   ◉─◉─◉   ▟▙ headword stack online ▟▙   ◉─◉─◉   ░░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────╯  ",
+]
+
+RELIC_DROP_ART_SENTENCES = [
+    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE STREAM // SIGNAL FIXED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────╮  ",
+    "  │   ▓▒░  ░▒▓ 09_example_sentences.csv ▓▒░  ░░▒▒▓▓▒▒░░░░░░   │  ",
+    "  │   ◉─◉─◉   ▟▙ sentence stack online ▟▙   ◉─◉─◉   ░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────╯  ",
+]
+
+RELIC_DROP_PALETTE = (
+    TOKYO_NIGHT["pink"],
+    TOKYO_NIGHT["purple"],
+    TOKYO_NIGHT["cyan"],
+    TOKYO_NIGHT["yellow"],
+    TOKYO_NIGHT["pink"],
+)
+
+
+def emit_artifact_drop(
+    stage: str,
+    *,
+    entries: Sequence[Mapping[str, object]] | None = None,
+    file_label: str | None = None,
+    summary: Sequence[tuple[str, str]] = (),
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    stream.write(
+        render_artifact_drop(
+            stage,
+            entries=entries,
+            file_label=file_label,
+            summary=summary,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+
+
+def emit_dictionary_distribution(
+    entries: Sequence[Mapping[str, object]],
+    *,
+    bins: int = 24,
+    height: int = 10,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    stream.write(
+        render_dictionary_distribution(
+            entries,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+            bins=bins,
+            height=height,
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+
+
+def render_artifact_drop(
+    stage: str,
+    *,
+    entries: Sequence[Mapping[str, object]] | None = None,
+    file_label: str | None = None,
+    summary: Sequence[tuple[str, str]] = (),
+    color: bool,
+    width: int = 100,
+) -> str:
+    art = RELIC_DROP_ART_QUALITY if stage == "11_cleaned_dictionary_candidates" else RELIC_DROP_ART_SENTENCES
+    accent = TOKYO_NIGHT["pink"] if stage == "11_cleaned_dictionary_candidates" else TOKYO_NIGHT["cyan"]
+    label = file_label or _stage_default_label(stage)
+
+    banner = _paint(
+        f"  ░▒▓█  RELIC DROP // {label}  █▓▒░  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=accent,
+        bold=True,
+        color=color,
+    )
+    glyph_lines = [
+        _paint(line, fg=RELIC_DROP_PALETTE[index % len(RELIC_DROP_PALETTE)], bold=index in (0, 2), color=color)
+        for index, line in enumerate(art)
+    ]
+    rule = _paint(
+        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
+        fg=TOKYO_NIGHT["comment"],
+        color=color,
+    )
+
+    info_lines: list[str] = []
+    for key, value in summary:
+        info_lines.append(_info_line(key, value, color=color))
+
+    parts: list[str] = [banner, *glyph_lines, rule]
+    if info_lines:
+        parts.extend(info_lines)
+        parts.append(rule)
+    if entries is not None and stage == "11_cleaned_dictionary_candidates":
+        parts.append(render_dictionary_distribution(entries, color=color, width=width))
+    return "\n".join(parts)
+
+
+def render_dictionary_distribution(
+    entries: Sequence[Mapping[str, object]],
+    *,
+    color: bool,
+    width: int = 100,
+    bins: int = 24,
+    height: int = 10,
+) -> str:
+    """Render two cyberpunk Tokyo Night histograms for the dictionary candidates.
+
+    First chart: x-axis quality_score (0.000 .. 1.000), y-axis count of vocab in each bin.
+    Second chart: x-axis occurrence count (log-spaced), y-axis count of vocab in each bin.
+    """
+
+    safe_bins = max(8, min(bins, max(8, width - 12)))
+    safe_height = max(4, height)
+
+    quality_scores = [_safe_float(entry.get("quality_score")) for entry in entries]
+    counts = [_safe_int(entry.get("count")) for entry in entries]
+
+    header = _paint(
+        "  ░▒▓█  RELIC // DICTIONARY DISTRIBUTION SCAN  █▓▒░  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=TOKYO_NIGHT["purple"],
+        bold=True,
+        color=color,
+    )
+    rule = _paint(
+        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
+        fg=TOKYO_NIGHT["comment"],
+        color=color,
+    )
+
+    quality_panel = _render_histogram_panel(
+        title="quality_score distribution",
+        subtitle=_quality_subtitle(quality_scores, bins=safe_bins),
+        bin_counts=_quality_score_bin_counts(quality_scores, bins=safe_bins),
+        x_axis_labels=("0.00", "0.50", "1.00"),
+        height=safe_height,
+        color=color,
+        bar_color=TOKYO_NIGHT["cyan"],
+        accent_color=TOKYO_NIGHT["pink"],
+    )
+    count_panel = _render_histogram_panel(
+        title="occurrence count distribution",
+        subtitle=_count_subtitle(counts, bins=safe_bins),
+        bin_counts=_log_count_bin_counts(counts, bins=safe_bins),
+        x_axis_labels=_log_count_axis_labels(counts),
+        height=safe_height,
+        color=color,
+        bar_color=TOKYO_NIGHT["green"],
+        accent_color=TOKYO_NIGHT["purple"],
+    )
+
+    return "\n".join([header, rule, quality_panel, "", count_panel, rule])
+
+
+def _render_histogram_panel(
+    *,
+    title: str,
+    subtitle: str,
+    bin_counts: list[int],
+    x_axis_labels: tuple[str, str, str],
+    height: int,
+    color: bool,
+    bar_color: str,
+    accent_color: str,
+) -> str:
+    title_line = _paint(f"┃ {title}", fg=accent_color, bold=True, color=color)
+    subtitle_line = _paint(f"┃   {subtitle}", fg=TOKYO_NIGHT["comment"], color=color)
+
+    if not bin_counts or all(value == 0 for value in bin_counts):
+        empty = _paint("┃   ░▒▓ no signal // empty cache ▓▒░", fg=TOKYO_NIGHT["comment"], color=color)
+        return "\n".join([title_line, subtitle_line, empty])
+
+    max_count = max(bin_counts)
+    y_label_width = max(3, len(f"{max_count}"))
+    bar_count = len(bin_counts)
+
+    rows: list[str] = [title_line, subtitle_line]
+    for row_index in range(height, 0, -1):
+        threshold_high = max_count * row_index / height
+        threshold_low = max_count * (row_index - 1) / height
+        chars: list[str] = []
+        for value in bin_counts:
+            if value >= threshold_high:
+                chars.append("█")
+            elif value <= threshold_low:
+                chars.append(" ")
+            else:
+                fraction = (value - threshold_low) / max(threshold_high - threshold_low, 1e-9)
+                index = max(0, min(8, int(round(fraction * 8))))
+                chars.append(HISTOGRAM_FRACTIONS[index])
+        bar_segment = _paint("".join(chars), fg=bar_color, color=color)
+        if row_index == height:
+            label_text = f"{max_count:>{y_label_width}}"
+        elif row_index == 1:
+            label_text = f"{0:>{y_label_width}}"
+        else:
+            label_text = " " * y_label_width
+        gutter = _paint(f"  {label_text} ▕", fg=TOKYO_NIGHT["comment"], color=color)
+        rows.append(f"{gutter}{bar_segment}")
+
+    axis_prefix = "  " + " " * y_label_width + " ╰"
+    axis_line = _paint(axis_prefix + "─" * bar_count + "╴", fg=TOKYO_NIGHT["comment"], color=color)
+    rows.append(axis_line)
+
+    label_offset = len(axis_prefix)
+    label_chars = [" "] * (label_offset + bar_count + 1)
+    left, mid, right = x_axis_labels
+    _place_label(label_chars, label_offset, left)
+    mid_position = label_offset + max(0, (bar_count - len(mid)) // 2)
+    _place_label(label_chars, mid_position, mid)
+    right_position = label_offset + max(0, bar_count - len(right))
+    _place_label(label_chars, right_position, right)
+    rows.append(_paint("".join(label_chars).rstrip(), fg=TOKYO_NIGHT["comment"], color=color))
+
+    return "\n".join(rows)
+
+
+def _quality_score_bin_counts(scores: Sequence[float], *, bins: int) -> list[int]:
+    bin_counts = [0] * bins
+    for score in scores:
+        clamped = min(max(score, 0.0), 1.0)
+        index = min(int(clamped * bins), bins - 1)
+        bin_counts[index] += 1
+    return bin_counts
+
+
+def _log_count_bin_counts(counts: Sequence[int], *, bins: int) -> list[int]:
+    bin_counts = [0] * bins
+    if not counts:
+        return bin_counts
+    positive = [value for value in counts if value > 0]
+    if not positive:
+        bin_counts[0] = len(counts)
+        return bin_counts
+    max_count = max(positive)
+    log_max = math.log(max_count) if max_count > 1 else 0.0
+    for value in counts:
+        if value <= 0 or log_max <= 0:
+            bin_counts[0] += 1
+            continue
+        ratio = math.log(value) / log_max
+        index = max(0, min(bins - 1, int(ratio * (bins - 1))))
+        bin_counts[index] += 1
+    return bin_counts
+
+
+def _quality_subtitle(scores: Sequence[float], *, bins: int) -> str:
+    if not scores:
+        return f"0 relics // bins={bins} // span 0.000 → 1.000"
+    return (
+        f"{len(scores):,} relics // bins={bins} // "
+        f"min {min(scores):.3f}  median {_median(scores):.3f}  max {max(scores):.3f}"
+    )
+
+
+def _count_subtitle(counts: Sequence[int], *, bins: int) -> str:
+    if not counts:
+        return f"0 relics // bins={bins} // log-spaced span 1 → 1"
+    positive = [value for value in counts if value > 0]
+    if not positive:
+        return f"{len(counts):,} relics // bins={bins} // all-zero counts"
+    return (
+        f"{len(counts):,} relics // bins={bins} // log-spaced "
+        f"min {min(positive):,}  median {int(_median(positive)):,}  max {max(positive):,}"
+    )
+
+
+def _log_count_axis_labels(counts: Sequence[int]) -> tuple[str, str, str]:
+    positive = [value for value in counts if value > 0]
+    if not positive:
+        return ("0", "·", "0")
+    max_count = max(positive)
+    if max_count <= 1:
+        return ("1", "1", "1")
+    midpoint = int(round(math.exp(math.log(max_count) / 2)))
+    return ("1", f"{midpoint:,}", f"{max_count:,}")
+
+
+def _place_label(buffer: list[str], position: int, text: str) -> None:
+    for offset, character in enumerate(text):
+        index = position + offset
+        if 0 <= index < len(buffer):
+            buffer[index] = character
+
+
+def _median(values: Sequence[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return float(ordered[midpoint])
+    return (float(ordered[midpoint - 1]) + float(ordered[midpoint])) / 2.0
+
+
+def _safe_float(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _stage_default_label(stage: str) -> str:
+    return stage.replace("_", " ").upper()
 
 
 def _compose_columns(left: list[str], right: list[str], *, width: int) -> str:

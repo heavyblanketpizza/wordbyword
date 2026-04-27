@@ -6,9 +6,11 @@ from pathlib import Path
 from wordbyword.example_cleanup import CleanupBatchProgress
 from wordbyword.pipeline import PipelineResult
 from wordbyword.terminal_ui import (
+    render_artifact_drop,
     render_boot_screen,
     render_cleanup_progress,
     render_completion_screen,
+    render_dictionary_distribution,
     render_stage_update,
 )
 
@@ -159,6 +161,84 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("batch 02/05", rendered)
         self.assertIn("terms 50/120", rendered)
         self.assertIn("gemma4:31b", rendered)
+
+
+    def test_render_dictionary_distribution_includes_two_histograms(self) -> None:
+        entries = [
+            {"quality_score": 0.05, "count": 1},
+            {"quality_score": 0.18, "count": 4},
+            {"quality_score": 0.24, "count": 12},
+            {"quality_score": 0.32, "count": 22},
+            {"quality_score": 0.41, "count": 51},
+            {"quality_score": 0.55, "count": 88},
+            {"quality_score": 0.62, "count": 144},
+            {"quality_score": 0.78, "count": 220},
+            {"quality_score": 0.91, "count": 412},
+            {"quality_score": 0.97, "count": 980},
+        ]
+
+        rendered = render_dictionary_distribution(entries, color=False, width=100, bins=20, height=8)
+
+        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
+        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("occurrence count distribution", rendered)
+        self.assertIn("0.00", rendered)
+        self.assertIn("1.00", rendered)
+        self.assertIn("█", rendered)
+        self.assertIn("10 relics", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_dictionary_distribution_handles_empty_entries(self) -> None:
+        rendered = render_dictionary_distribution([], color=False, width=80, bins=12, height=6)
+
+        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
+        self.assertIn("0 relics", rendered)
+        self.assertIn("no signal // empty cache", rendered)
+
+    def test_render_dictionary_distribution_color_mode_emits_ansi(self) -> None:
+        entries = [{"quality_score": 0.5, "count": 10}]
+
+        rendered = render_dictionary_distribution(entries, color=True, width=80, bins=12, height=6)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
+
+    def test_render_artifact_drop_for_dictionary_includes_distribution(self) -> None:
+        entries = [
+            {"quality_score": 0.21, "count": 7},
+            {"quality_score": 0.62, "count": 88},
+            {"quality_score": 0.94, "count": 612},
+        ]
+
+        rendered = render_artifact_drop(
+            "11_cleaned_dictionary_candidates",
+            entries=entries,
+            file_label="11_cleaned_dictionary_candidates.jsonl",
+            summary=(("relics", "3 headwords"), ("status", "cache locked")),
+            color=False,
+            width=100,
+        )
+
+        self.assertIn("RELIC DROP // 11_cleaned_dictionary_candidates.jsonl", rendered)
+        self.assertIn("DICTIONARY RELIC // CACHE LOCKED", rendered)
+        self.assertIn("relics     :: 3 headwords", rendered)
+        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("occurrence count distribution", rendered)
+
+    def test_render_artifact_drop_for_example_sentences_skips_distribution(self) -> None:
+        rendered = render_artifact_drop(
+            "09_example_sentences",
+            file_label="09_example_sentences.csv",
+            summary=(("relics", "12 sentences"),),
+            color=False,
+            width=100,
+        )
+
+        self.assertIn("RELIC DROP // 09_example_sentences.csv", rendered)
+        self.assertIn("EXAMPLE STREAM // SIGNAL FIXED", rendered)
+        self.assertIn("relics     :: 12 sentences", rendered)
+        self.assertNotIn("quality_score distribution", rendered)
+        self.assertNotIn("occurrence count distribution", rendered)
 
 
 if __name__ == "__main__":
