@@ -14,7 +14,7 @@ from wordbyword.example_cleanup import (
 from wordbyword.llm import ChatMessage, LLMRequestError, LLMResponseError, SupportsCompletion, strip_markdown_fence
 from wordbyword.text import clean_example_text
 
-DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE = 25
+DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE = 40
 MAX_SUPPORT_SENTENCES = 3
 MAX_PROMPT_VARIANTS = 8
 ACTION_ALIASES = {
