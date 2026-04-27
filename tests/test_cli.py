@@ -148,10 +148,12 @@ class ShowDistributionCliTest(unittest.TestCase):
             ).splitlines()[0]
             row = json.loads(raw_line)
             self.assertTrue(row["example_replaced_with_cleaned_sentence"])
-            self.assertEqual(row["example"], "점심을 먹었다.")
+            self.assertEqual(row["example"], "")
+            self.assertEqual(row["curation_status"], "rewrite_ready")
             self.assertTrue(raw_line.startswith('{"canonical_key":'))
-            self.assertNotIn("example_needs_rewrite", row)
-            self.assertNotIn("example_assignment_source", row)
+            self.assertTrue(raw_line.endswith('"example_replaced_with_cleaned_sentence": true}'))
+            self.assertNotIn("original_example", row)
+            self.assertNotIn("cleaned_example_document", row)
 
     def test_main_with_link_cleaned_examples_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

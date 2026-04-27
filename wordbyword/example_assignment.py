@@ -98,53 +98,20 @@ def build_linked_dictionary_row(
     matched_sentence: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {}
-    base_field_order = (
-        "canonical_key",
-        "display",
-        "kind",
-        "variants",
-        "count",
-        "document_count",
-        "quality_score",
-        "roi_score",
-        "curation_status",
-    )
-    for field in base_field_order:
-        if field in entry:
-            row[field] = entry[field]
-
     for key, value in entry.items():
-        if key in row or key == "example":
+        if key == "example":
+            row[key] = "" if matched_sentence is not None else original_example
+            continue
+        if key == "curation_status":
+            row[key] = "rewrite_ready"
             continue
         row[key] = value
 
-    row["example"] = (
-        str(matched_sentence.get("cleaned_sentence", ""))
-        if matched_sentence is not None
-        else original_example
-    )
-    row["original_example"] = original_example
+    if "curation_status" not in row:
+        row["curation_status"] = "rewrite_ready"
+    if "example" not in row:
+        row["example"] = "" if matched_sentence is not None else original_example
     row["example_replaced_with_cleaned_sentence"] = matched_sentence is not None
-    row["cleaned_example_document"] = (
-        str(matched_sentence.get("document", ""))
-        if matched_sentence is not None
-        else ""
-    )
-    row["cleaned_example_sentence_index"] = (
-        str(matched_sentence.get("sentence_index", ""))
-        if matched_sentence is not None
-        else ""
-    )
-    row["cleaned_example_quality_score"] = (
-        safe_float(matched_sentence.get("cleaned_quality_score"))
-        if matched_sentence is not None
-        else 0.0
-    )
-    row["cleaned_example_covered_canonical_keys"] = (
-        str(matched_sentence.get("cleaned_covered_canonical_keys", ""))
-        if matched_sentence is not None
-        else ""
-    )
     return row
 
 

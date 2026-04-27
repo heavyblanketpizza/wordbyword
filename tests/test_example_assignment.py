@@ -30,13 +30,14 @@ class ExampleAssignmentTest(unittest.TestCase):
         self.assertEqual(outputs.linked_count, 2)
         self.assertEqual(outputs.unlinked_count, 1)
         self.assertEqual([row["canonical_key"] for row in outputs.rows], ["가다", "먹다", "보다"])
-        self.assertEqual(outputs.rows[0]["example"], "학생이 학교에 간다.")
+        self.assertEqual(outputs.rows[0]["example"], "")
         self.assertTrue(outputs.rows[0]["example_replaced_with_cleaned_sentence"])
-        self.assertEqual(outputs.rows[0]["original_example"], "원래 예문 1")
-        self.assertEqual(outputs.rows[1]["example"], "점심을 맛있게 먹었다.")
+        self.assertEqual(outputs.rows[0]["curation_status"], "rewrite_ready")
+        self.assertEqual(outputs.rows[1]["example"], "")
         self.assertTrue(outputs.rows[1]["example_replaced_with_cleaned_sentence"])
         self.assertEqual(outputs.rows[2]["example"], "원래 예문 3")
         self.assertFalse(outputs.rows[2]["example_replaced_with_cleaned_sentence"])
+        self.assertEqual(outputs.rows[2]["curation_status"], "rewrite_ready")
         self.assertEqual(
             list(outputs.rows[0].keys())[:6],
             [
@@ -48,27 +49,26 @@ class ExampleAssignmentTest(unittest.TestCase):
                 "document_count",
             ],
         )
-        self.assertNotIn("example_needs_rewrite", outputs.rows[0])
-        self.assertNotIn("example_assignment_source", outputs.rows[0])
-        self.assertNotIn("assigned_cleaned_sentence", outputs.rows[0])
-        self.assertNotIn("assigned_cleaned_sentence_cleanup_action", outputs.rows[0])
-        self.assertNotIn("assigned_cleaned_sentence_page", outputs.rows[0])
-        self.assertEqual(outputs.rows[0]["cleaned_example_document"], "sample.txt")
-        self.assertEqual(outputs.rows[0]["cleaned_example_sentence_index"], "1")
+        self.assertEqual(list(outputs.rows[0].keys())[-1], "example_replaced_with_cleaned_sentence")
+        self.assertNotIn("original_example", outputs.rows[0])
+        self.assertNotIn("cleaned_example_document", outputs.rows[0])
+        self.assertNotIn("cleaned_example_sentence_index", outputs.rows[0])
+        self.assertNotIn("cleaned_example_quality_score", outputs.rows[0])
+        self.assertNotIn("cleaned_example_covered_canonical_keys", outputs.rows[0])
 
 
 def dictionary_candidate(canonical_key: str, *, quality_score: float, example: str) -> dict[str, object]:
     return {
         "canonical_key": canonical_key,
         "display": canonical_key,
-        "quality_score": quality_score,
-        "roi_score": 0.5,
         "kind": "term",
         "variants": [canonical_key],
         "count": 10,
         "document_count": 1,
-        "curation_status": "candidate",
+        "quality_score": quality_score,
+        "roi_score": 0.5,
         "example": example,
+        "curation_status": "candidate",
     }
 
 

@@ -55,6 +55,7 @@ class ProviderConfigTest(unittest.TestCase):
         self.assertEqual(config.provider, "ollama")
         self.assertEqual(config.base_url, "http://localhost:11434")
         self.assertIsNone(config.api_key)
+        self.assertEqual(config.default_temperature, 0.0)
 
 
 class ProviderClientTest(unittest.TestCase):
@@ -85,8 +86,31 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(transport.headers["Authorization"], "Bearer openai-key")
         self.assertEqual(transport.body["model"], "gpt-test")
+        self.assertEqual(transport.body["temperature"], 0.0)
         self.assertEqual(transport.body["response_format"], {"type": "json_object"})
         self.assertEqual(transport.body["messages"][0]["role"], "system")
+
+    def test_explicit_temperature_override_is_still_used(self) -> None:
+        transport = FakeTransport(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "rewritten sentence"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+
+        client = build_provider_client(
+            "openai",
+            model="gpt-test",
+            api_key="openai-key",
+            transport=transport,
+        )
+        client.complete([ChatMessage("user", "hello")], temperature=0.7)
+
+        self.assertEqual(transport.body["temperature"], 0.7)
 
     def test_claude_client_sends_system_prompt_separately(self) -> None:
         transport = FakeTransport(

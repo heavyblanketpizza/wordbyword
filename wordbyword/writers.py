@@ -135,7 +135,7 @@ OPTIONAL_PIPELINE_STAGES = [
     {
         "stage": "12",
         "file": "12_dictionary_candidates_with_cleaned_examples.jsonl",
-        "description": "Dictionary candidates whose examples are greedily replaced with unique cleaned sentences from stage 10 when available.",
+        "description": "Dictionary candidates prepared for rewrite by blanking only the examples that won a unique cleaned-sentence relay from stage 10.",
     },
 ]
 

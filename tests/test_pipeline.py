@@ -377,12 +377,18 @@ class PipelineTest(unittest.TestCase):
             ]
 
             self.assertTrue(linked_rows)
-            self.assertTrue(all("original_example" in row for row in linked_rows))
             self.assertTrue(all("example_replaced_with_cleaned_sentence" in row for row in linked_rows))
-            self.assertTrue(all("cleaned_example_document" in row for row in linked_rows))
             self.assertTrue(any(bool(row["example_replaced_with_cleaned_sentence"]) for row in linked_rows))
-            self.assertTrue(all("example_needs_rewrite" not in row for row in linked_rows))
-            self.assertTrue(all("example_assignment_source" not in row for row in linked_rows))
+            self.assertTrue(all(row.get("curation_status") == "rewrite_ready" for row in linked_rows))
+            self.assertTrue(
+                all(
+                    row["example"] == ""
+                    for row in linked_rows
+                    if bool(row["example_replaced_with_cleaned_sentence"])
+                )
+            )
+            self.assertTrue(all("original_example" not in row for row in linked_rows))
+            self.assertTrue(all("cleaned_example_document" not in row for row in linked_rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertIn("12_dictionary_candidates_with_cleaned_examples.jsonl", summary["outputs"])
