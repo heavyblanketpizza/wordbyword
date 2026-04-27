@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from wordbyword.terminal_ui import (
     emit_cleanup_progress,
     emit_completion_screen,
     emit_stage_update,
+    render_artifact_drop,
 )
 
 
@@ -65,12 +68,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Ollama base URL override. Defaults to WORDBYWORD_OLLAMA_BASE_URL or http://localhost:11434.",
     )
+    parser.add_argument(
+        "--show-distribution",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="JSONL",
+        help=(
+            "Render the cyberpunk distribution panel for an existing "
+            "11_cleaned_dictionary_candidates.jsonl and exit. Optional path; "
+            "defaults to <output>/11_cleaned_dictionary_candidates.jsonl."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.show_distribution is not None:
+        return show_distribution(
+            jsonl_path=resolve_distribution_path(args.show_distribution, args.output),
+            model=args.ollama_model,
+        )
 
     emit_boot_screen(
         input_dir=args.input,
@@ -141,4 +162,69 @@ def main(argv: list[str] | None = None) -> int:
         clean_example_sentences=args.clean_example_sentences or args.clean_dictionary_candidates,
         sentence_cleanup_model=args.ollama_model,
     )
+    return 0
+
+
+def resolve_distribution_path(supplied: str, output_dir: Path) -> Path:
+    if supplied:
+        return Path(supplied)
+    return output_dir / "11_cleaned_dictionary_candidates.jsonl"
+
+
+def load_dictionary_candidates(jsonl_path: Path) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    with jsonl_path.open(encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"Invalid JSON on line {line_number} of {jsonl_path}: {error.msg}"
+                ) from error
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Line {line_number} of {jsonl_path} is not a JSON object."
+                )
+            entries.append(entry)
+    return entries
+
+
+def show_distribution(*, jsonl_path: Path, model: str) -> int:
+    if not jsonl_path.is_file():
+        sys.stderr.write(
+            f"wordbyword: cannot read distribution source: {jsonl_path}\n"
+            "  hint: run with --clean-dictionary-candidates first, "
+            "or pass a path: --show-distribution path/to/11_cleaned_dictionary_candidates.jsonl\n"
+        )
+        return 1
+
+    try:
+        entries = load_dictionary_candidates(jsonl_path)
+    except ValueError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    import os
+    import shutil
+
+    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    rendered = render_artifact_drop(
+        "11_cleaned_dictionary_candidates",
+        entries=entries,
+        file_label=str(jsonl_path),
+        summary=(
+            ("relics", f"{len(entries):,} headwords"),
+            ("model", model),
+            ("status", "replay // no llm calls"),
+        ),
+        color=color,
+        width=width,
+    )
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
     return 0
