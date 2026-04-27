@@ -348,6 +348,14 @@ RELIC_DROP_ART_SENTENCES = [
     "  ╰──────────────────────────────────────────────────────────╯  ",
 ]
 
+RELIC_DROP_ART_LINKED = [
+    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE RELAY // CACHE MERGED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 12_dictionary_candidates_with_cleaned_examples ▓▒  │  ",
+    "  │   ◉─◉─◉   ▟▙ relay stack online ▟▙   ◉─◉─◉   ░░░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────╯  ",
+]
+
 RELIC_DROP_PALETTE = (
     TOKYO_NIGHT["pink"],
     TOKYO_NIGHT["purple"],
@@ -414,8 +422,15 @@ def render_artifact_drop(
     color: bool,
     width: int = 100,
 ) -> str:
-    art = RELIC_DROP_ART_QUALITY if stage == "11_cleaned_dictionary_candidates" else RELIC_DROP_ART_SENTENCES
-    accent = TOKYO_NIGHT["pink"] if stage == "11_cleaned_dictionary_candidates" else TOKYO_NIGHT["cyan"]
+    if stage == "11_cleaned_dictionary_candidates":
+        art = RELIC_DROP_ART_QUALITY
+        accent = TOKYO_NIGHT["pink"]
+    elif stage == "12_dictionary_candidates_with_cleaned_examples":
+        art = RELIC_DROP_ART_LINKED
+        accent = TOKYO_NIGHT["orange"]
+    else:
+        art = RELIC_DROP_ART_SENTENCES
+        accent = TOKYO_NIGHT["cyan"]
     label = file_label or _stage_default_label(stage)
 
     banner = _paint(

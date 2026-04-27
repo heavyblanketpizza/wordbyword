@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wordbyword.cli import (
+    link_cleaned_examples,
     load_dictionary_candidates,
     main,
     resolve_distribution_path,
@@ -107,6 +108,76 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
             self.assertIn("RELIC DROP //", stdout.getvalue())
+
+    def test_link_cleaned_examples_builds_stage_twelve_without_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            (output_dir / "10_cleaned_example_sentences.csv").write_text(
+                "\n".join(
+                    [
+                        "document,page,sentence_index,source_sentence,cleaned_sentence,cleanup_action,cleanup_reason,model_confidence,source_similarity,source_quality_score,source_matched_canonical_key_count,source_covered_canonical_key_count,source_covered_canonical_keys,source_matched_canonical_keys,cleaned_quality_score,cleaned_matched_canonical_key_count,cleaned_covered_canonical_key_count,cleaned_covered_canonical_keys,cleaned_matched_canonical_keys",
+                        "sample.txt,1,1,점심을 먹었다.,점심을 먹었다.,keep,,0.0,1.0,0.5,3,3,점심 | 먹다 | 밥,점심 | 먹다 | 밥,0.9,3,3,점심 | 먹다 | 밥,점심 | 먹다 | 밥",
+                    ]
+                ) + "\n",
+                encoding="utf-8-sig",
+            )
+            (output_dir / "11_cleaned_dictionary_candidates.jsonl").write_text(
+                json.dumps(
+                    {
+                        "canonical_key": "먹다",
+                        "display": "먹다",
+                        "example": "원래 예문",
+                        "quality_score": 0.8,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = link_cleaned_examples(output_dir=output_dir)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue((output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").exists())
+            raw_line = (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines()[0]
+            row = json.loads(raw_line)
+            self.assertTrue(row["example_replaced_with_cleaned_sentence"])
+            self.assertEqual(row["example"], "점심을 먹었다.")
+            self.assertTrue(raw_line.startswith('{"canonical_key":'))
+            self.assertNotIn("example_needs_rewrite", row)
+            self.assertNotIn("example_assignment_source", row)
+
+    def test_main_with_link_cleaned_examples_skips_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            (output_dir / "10_cleaned_example_sentences.csv").write_text(
+                "\n".join(
+                    [
+                        "document,page,sentence_index,source_sentence,cleaned_sentence,cleanup_action,cleanup_reason,model_confidence,source_similarity,source_quality_score,source_matched_canonical_key_count,source_covered_canonical_key_count,source_covered_canonical_keys,source_matched_canonical_keys,cleaned_quality_score,cleaned_matched_canonical_key_count,cleaned_covered_canonical_key_count,cleaned_covered_canonical_keys,cleaned_matched_canonical_keys",
+                        "sample.txt,1,1,점심을 먹었다.,점심을 먹었다.,keep,,0.0,1.0,0.5,3,3,점심 | 먹다 | 밥,점심 | 먹다 | 밥,0.9,3,3,점심 | 먹다 | 밥,점심 | 먹다 | 밥",
+                    ]
+                ) + "\n",
+                encoding="utf-8-sig",
+            )
+            (output_dir / "11_cleaned_dictionary_candidates.jsonl").write_text(
+                json.dumps({"canonical_key": "먹다", "display": "먹다", "example": "원래 예문"}, ensure_ascii=False)
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+                exit_code = main(["--link-cleaned-examples", "--output", str(output_dir)])
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            self.assertIn("12_dictionary_candidates_with_cleaned_examples.jsonl", stdout.getvalue())
 
 
 if __name__ == "__main__":

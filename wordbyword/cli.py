@@ -16,6 +16,7 @@ from wordbyword.terminal_ui import (
     emit_stage_update,
     render_artifact_drop,
 )
+from wordbyword.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use saved output/08_dictionary_candidates.jsonl and output/06_candidate_terms.csv to write 11_cleaned_dictionary_candidates.jsonl.",
     )
     parser.add_argument(
+        "--link-cleaned-examples",
+        action="store_true",
+        help=(
+            "Use saved output/10_cleaned_example_sentences.csv and "
+            "output/11_cleaned_dictionary_candidates.jsonl to write "
+            "12_dictionary_candidates_with_cleaned_examples.jsonl."
+        ),
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
@@ -92,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
             jsonl_path=resolve_distribution_path(args.show_distribution, args.output),
             model=args.ollama_model,
         )
+    if args.link_cleaned_examples:
+        return link_cleaned_examples(output_dir=args.output)
 
     emit_boot_screen(
         input_dir=args.input,
@@ -136,6 +148,21 @@ def main(argv: list[str] | None = None) -> int:
                     ("relics", f"{len(entries):,} headwords"),
                     ("model", args.ollama_model),
                     ("status", "cache locked"),
+                ),
+            )
+            return
+        if stage == "12_dictionary_candidates_with_cleaned_examples":
+            replaced_count = sum(
+                1 for entry in entries
+                if bool(entry.get("example_replaced_with_cleaned_sentence"))
+            )
+            emit_artifact_drop(
+                stage,
+                file_label="12_dictionary_candidates_with_cleaned_examples.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("replaced", f"{replaced_count:,} examples"),
+                    ("rewrite", f"{len(entries) - replaced_count:,} pending"),
                 ),
             )
 
@@ -222,6 +249,39 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
         summary=(
             ("relics", f"{len(entries):,} headwords"),
             ("model", model),
+            ("status", "replay // no llm calls"),
+        ),
+        color=color,
+        width=width,
+    )
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def link_cleaned_examples(*, output_dir: Path) -> int:
+    try:
+        outputs = write_linked_dictionary_candidates_from_saved(output_dir, require_inputs=True)
+    except ValueError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    assert outputs is not None
+    refresh_saved_output_metadata(output_dir, linked_dictionary_outputs=outputs)
+
+    import os
+    import shutil
+
+    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    rendered = render_artifact_drop(
+        "12_dictionary_candidates_with_cleaned_examples",
+        file_label=str(output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"),
+        summary=(
+            ("relics", f"{len(outputs.rows):,} headwords"),
+            ("replaced", f"{outputs.linked_count:,} examples"),
+            ("rewrite", f"{outputs.unlinked_count:,} pending"),
             ("status", "replay // no llm calls"),
         ),
         color=color,

@@ -319,9 +319,9 @@ def term_row(
 
 def dictionary_entry(row: dict[str, object]) -> dict[str, object]:
     return {
-        "kind": "term",
         "canonical_key": row["canonical_key"],
         "display": row["display"],
+        "kind": "term",
         "variants": split_joined(row.get("variants", "")),
         "count": row["count"],
         "document_count": row["document_count"],
