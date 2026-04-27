@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from wordbyword.canonical_keys import row_covered_canonical_keys, split_joined_keys
 from wordbyword.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
@@ -354,11 +355,7 @@ def support_sentence_text(row: Mapping[str, object]) -> str:
 
 
 def support_sentence_keys(row: Mapping[str, object]) -> list[str]:
-    for field_name in ("cleaned_covered_canonical_keys", "covered_canonical_keys", "source_covered_canonical_keys"):
-        values = split_joined_keys(row.get(field_name, ""))
-        if values:
-            return values
-    return []
+    return row_covered_canonical_keys(row)
 
 
 def prompt_variants(value: object) -> list[str]:
@@ -366,9 +363,3 @@ def prompt_variants(value: object) -> list[str]:
         return [cleaned for cleaned in (clean_example_text(str(item)).strip() for item in value) if cleaned][:MAX_PROMPT_VARIANTS]
     return split_joined_keys(value)[:MAX_PROMPT_VARIANTS]
 
-
-def split_joined_keys(value: object) -> list[str]:
-    text = clean_example_text(str(value))
-    if not text:
-        return []
-    return [part.strip() for part in text.split("|") if part.strip()]

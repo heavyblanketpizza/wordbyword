@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from wordbyword.canonical_keys import row_covered_canonical_keys
+
 STAGE_TWELVE_STRIPPED_FIELDS = {
     "original_example",
     "cleaned_example_document",
@@ -63,7 +65,12 @@ def build_linked_dictionary_candidate_outputs(
             IndexedCleanedExampleSentence(
                 index=index,
                 row=row,
-                covered_keys=set(split_joined_keys(row.get("cleaned_covered_canonical_keys", ""))),
+                covered_keys=set(
+                    row_covered_canonical_keys(
+                        row,
+                        field_names=("cleaned_covered_canonical_keys",),
+                    )
+                ),
                 cleaned_quality_score=safe_float(row.get("cleaned_quality_score")),
             )
             for index, row in enumerate(cleaned_example_sentences)
@@ -137,12 +144,6 @@ def build_linked_dictionary_row(
         row["example"] = assigned_example
     row["example_replaced_with_cleaned_sentence"] = matched_sentence is not None
     return row
-
-
-def split_joined_keys(value: object) -> list[str]:
-    if not value:
-        return []
-    return [part.strip() for part in str(value).split("|") if part.strip()]
 
 
 def safe_float(value: Any) -> float:

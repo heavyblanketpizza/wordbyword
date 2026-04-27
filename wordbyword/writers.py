@@ -11,7 +11,8 @@ ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
 
 from kiwipiepy import Kiwi
 
-from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
+from wordbyword.candidates import build_candidate_outputs
+from wordbyword.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
 from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs
 from wordbyword.example_cleanup import (
@@ -790,47 +791,8 @@ def ends_with_bopsida(row: dict[str, object]) -> bool:
     return sentence.endswith("봅시다.")
 
 
-def sentence_candidate_keys(token_rows: list[dict[str, object]], quality_by_key: dict[str, float]) -> list[str]:
-    matched_keys: list[str] = []
-    index = 0
-    while index < len(token_rows):
-        token = token_rows[index]
-        form = str(token.get("form", ""))
-        pos = str(token.get("pos", ""))
-
-        if pos.startswith("N") and index + 1 < len(token_rows):
-            next_pos = str(token_rows[index + 1].get("pos", ""))
-            if next_pos in {"XSV", "XSA"}:
-                canonical_key = form + "하다"
-                if canonical_key in quality_by_key:
-                    matched_keys.append(canonical_key)
-                    index += 2
-                    continue
-
-        canonical_key = token_canonical_key(form, pos)
-        if canonical_key in quality_by_key:
-            matched_keys.append(canonical_key)
-        index += 1
-
-    return matched_keys
-
-
-def token_canonical_key(form: str, pos: str) -> str | None:
-    if pos.startswith(("VV", "VA")) or is_surface_head(pos):
-        return canonicalize_term(form, pos)
-    return None
-
-
 def sentence_row_key(row: dict[str, object]) -> tuple[str, str, str]:
     return (str(row.get("document", "")), str(row.get("page", "")), str(row.get("sentence_index", "")))
-
-
-def ordered_unique(values: list[str]) -> list[str]:
-    return list(dict.fromkeys(values))
-
-
-def join_keys(values: list[str]) -> str:
-    return " | ".join(values)
 
 
 def write_summary(
