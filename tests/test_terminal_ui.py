@@ -135,6 +135,31 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("CLEANUP", rendered)
         self.assertIn("batch 01/04", rendered)
 
+    def test_render_cleanup_progress_supports_dictionary_label_and_term_counts(self) -> None:
+        progress = CleanupBatchProgress(
+            phase="complete",
+            batch_index=2,
+            total_batches=5,
+            completed_batches=2,
+            completed_rows=50,
+            total_rows=120,
+            current_batch_size=25,
+        )
+
+        rendered = render_cleanup_progress(
+            progress,
+            model="gemma4:31b",
+            label="dictionary",
+            item_label="terms",
+            color=False,
+            width=120,
+        )
+
+        self.assertIn("DICTIONARY", rendered)
+        self.assertIn("batch 02/05", rendered)
+        self.assertIn("terms 50/120", rendered)
+        self.assertIn("gemma4:31b", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -77,8 +77,21 @@ def main(argv: list[str] | None = None) -> int:
         sentence_cleanup_model=args.ollama_model,
     )
 
-    def cleanup_progress(progress: CleanupBatchProgress) -> None:
-        emit_cleanup_progress(progress, model=args.ollama_model)
+    def example_cleanup_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(
+            progress,
+            model=args.ollama_model,
+            label="example",
+            item_label="rows",
+        )
+
+    def dictionary_cleanup_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(
+            progress,
+            model=args.ollama_model,
+            label="dictionary",
+            item_label="terms",
+        )
 
     result = run_pipeline(
         input_dir=args.input,
@@ -90,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         sentence_cleanup_model=args.ollama_model,
         sentence_cleanup_base_url=args.ollama_base_url,
         progress=emit_stage_update,
-        cleanup_progress=cleanup_progress,
+        cleanup_progress=example_cleanup_progress,
+        dictionary_cleanup_progress=dictionary_cleanup_progress,
     )
 
     emit_completion_screen(

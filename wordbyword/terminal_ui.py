@@ -116,6 +116,8 @@ def emit_cleanup_progress(
     progress: "CleanupBatchProgress",
     *,
     model: str | None = None,
+    label: str = "cleanup",
+    item_label: str = "rows",
     stream: TextIO | None = None,
 ) -> None:
     stream = sys.stdout if stream is None else stream
@@ -123,7 +125,14 @@ def emit_cleanup_progress(
         return
     color = _supports_color(stream)
     width = _terminal_width()
-    line = render_cleanup_progress(progress, model=model, color=color, width=width)
+    line = render_cleanup_progress(
+        progress,
+        model=model,
+        label=label,
+        item_label=item_label,
+        color=color,
+        width=width,
+    )
     stream.write("\033[2K\r")
     stream.write(line)
     if progress.phase == "complete" and progress.completed_batches >= progress.total_batches:
@@ -218,12 +227,15 @@ def render_cleanup_progress(
     progress: "CleanupBatchProgress",
     *,
     model: str | None = None,
+    label: str = "cleanup",
+    item_label: str = "rows",
     color: bool,
     width: int = 100,
 ) -> str:
     phase_color = PHASE_COLORS["cleanup"]
+    tag_text = f" {label.strip().upper()[:10]:<10} "
     tag = _paint(
-        " CLEANUP  ",
+        tag_text,
         fg=TOKYO_NIGHT["bg"],
         bg=phase_color,
         bold=True,
@@ -238,10 +250,10 @@ def render_cleanup_progress(
     suffix_plain = f" :: {model}" if model else ""
     head_plain = (
         f"batch {progress.batch_index:02d}/{max(progress.total_batches, 1):02d}  "
-        f"rows {progress.completed_rows}/{progress.total_rows}  "
+        f"{item_label} {progress.completed_rows}/{progress.total_rows}  "
     )
     tail_plain = f"  {ratio * 100:5.1f}%{suffix_plain}"
-    overhead = len(" CLEANUP  ") + 1 + 1 + 1 + len(head_plain) + len(tail_plain) + 2
+    overhead = len(tag_text) + 1 + 1 + 1 + len(head_plain) + len(tail_plain) + 2
     bar_width = max(8, min(28, width - overhead))
     filled = int(round(bar_width * ratio))
     filled = max(0, min(bar_width, filled))

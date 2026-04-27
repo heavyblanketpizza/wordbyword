@@ -40,6 +40,7 @@ def run_pipeline(
     sentence_cleanup_base_url: str | None = None,
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
+    dictionary_cleanup_progress: CleanupProgressCallback | None = None,
 ) -> PipelineResult:
     _report(progress, "scan", f"discovering source documents in {input_dir}")
     documents = discover_documents(input_dir)
@@ -89,7 +90,11 @@ def run_pipeline(
         dictionary_cleanup_client=(dictionary_cleanup_client or shared_cleanup_client)
         if dictionary_cleanup_requested
         else None,
-        dictionary_cleanup_progress=cleanup_progress if dictionary_cleanup_requested else None,
+        dictionary_cleanup_progress=(
+            dictionary_cleanup_progress or cleanup_progress
+        )
+        if dictionary_cleanup_requested
+        else None,
     )
 
     return PipelineResult(
