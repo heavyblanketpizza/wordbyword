@@ -4,6 +4,7 @@ import unittest
 
 from wordbyword.dictionary_cleanup import (
     BATCH_CLEAN_DICTIONARY_CANDIDATE_SYSTEM_PROMPT,
+    DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE,
     IndexedDictionaryCandidate,
     build_cleaned_dictionary_candidate_outputs,
     dictionary_cleanup_batch_sizes,
@@ -13,11 +14,14 @@ from wordbyword.llm import CompletionResult
 
 
 class DictionaryCleanupTest(unittest.TestCase):
-    def test_dictionary_cleanup_batch_sizes_default_to_batches_of_twenty_five(self) -> None:
+    def test_dictionary_cleanup_batch_sizes_follow_the_configured_default(self) -> None:
         sizes = dictionary_cleanup_batch_sizes(104)
 
         self.assertEqual(sum(sizes), 104)
-        self.assertEqual(sizes, [25, 25, 25, 25, 4])
+        self.assertEqual(
+            sizes,
+            [DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE, DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE, 24],
+        )
 
     def test_review_dictionary_cleanup_prompt_rejects_names_but_keeps_common_words(self) -> None:
         client = PromptCapturingCompletionClient("EMPTY")

@@ -18,7 +18,7 @@ from wordbyword.example_cleanup import (
 )
 from wordbyword.llm import SupportsCompletion
 from wordbyword.models import CountEntry, PageText
-from wordbyword.text import clean_example_text
+from wordbyword.text import clean_example_text, strip_edge_curly_quotes
 
 FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM = 0.0135
 EXAMPLE_SENTENCE_FINAL_PUNCTUATION = (".", "?", "!", '"')
@@ -372,7 +372,7 @@ def example_sentence_rows(
                 "document": sentence["document"],
                 "page": sentence["page"],
                 "sentence_index": sentence["sentence_index"],
-                "sentence": clean_example_text(str(sentence["sentence"])),
+                "sentence": normalize_example_sentence_text(str(sentence["sentence"])),
                 "quality_score": quality_score,
                 "matched_canonical_key_count": len(matched_keys),
                 "covered_canonical_key_count": len(covered_keys),
@@ -404,6 +404,10 @@ def filtered_example_sentence_rows(rows: list[dict[str, object]]) -> list[dict[s
         filtered_rows.append(row)
 
     return filtered_rows
+
+
+def normalize_example_sentence_text(text: str) -> str:
+    return strip_edge_curly_quotes(clean_example_text(text))
 
 
 def normalize_example_sentence_quality_scores(rows: list[dict[str, object]]) -> list[dict[str, object]]:

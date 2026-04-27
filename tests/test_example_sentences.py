@@ -14,6 +14,35 @@ from wordbyword.writers import (
 
 
 class ExampleSentenceTest(unittest.TestCase):
+    def test_example_sentence_rows_strip_edge_curly_quotes_before_filtering(self) -> None:
+        rows = example_sentence_rows(
+            sentences=[
+                {
+                    "document": "sample.txt",
+                    "page": "",
+                    "sentence_index": 1,
+                    "sentence": "“여름의 산과 들이 햇빛에 빛난다.”",
+                },
+            ],
+            tokens=[
+                token_row(1, "여름", "NNG"),
+                token_row(2, "산", "NNG"),
+                token_row(3, "들", "NNG"),
+                token_row(4, "햇빛", "NNG"),
+                token_row(5, "빛나", "VV"),
+            ],
+            candidate_terms=[
+                {"canonical_key": "여름", "quality_score": 0.4},
+                {"canonical_key": "산", "quality_score": 0.4},
+                {"canonical_key": "들", "quality_score": 0.4},
+                {"canonical_key": "햇빛", "quality_score": 0.4},
+                {"canonical_key": "빛나다", "quality_score": 0.4},
+            ],
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["sentence"], "여름의 산과 들이 햇빛에 빛난다.")
+
     def test_sentence_quality_uses_covered_keys_not_repeated_matches(self) -> None:
         rows = example_sentence_rows(
             sentences=[
@@ -207,6 +236,17 @@ def example_row(
         "covered_canonical_key_count": covered_count,
         "covered_canonical_keys": " | ".join(covered_keys),
         "matched_canonical_keys": " | ".join(matched_keys),
+    }
+
+
+def token_row(token_index: int, form: str, pos: str) -> dict[str, object]:
+    return {
+        "document": "sample.txt",
+        "page": "",
+        "sentence_index": 1,
+        "token_index": token_index,
+        "form": form,
+        "pos": pos,
     }
 
 
