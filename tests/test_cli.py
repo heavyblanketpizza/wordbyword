@@ -148,7 +148,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             ).splitlines()[0]
             row = json.loads(raw_line)
             self.assertTrue(row["example_replaced_with_cleaned_sentence"])
-            self.assertEqual(row["example"], "")
+            self.assertEqual(row["example"], "점심을 먹었다.")
             self.assertEqual(row["curation_status"], "rewrite_ready")
             self.assertTrue(raw_line.startswith('{"canonical_key":'))
             self.assertTrue(raw_line.endswith('"example_replaced_with_cleaned_sentence": true}'))

@@ -3,6 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+STAGE_TWELVE_STRIPPED_FIELDS = {
+    "original_example",
+    "cleaned_example_document",
+    "cleaned_example_sentence_index",
+    "cleaned_example_quality_score",
+    "cleaned_example_covered_canonical_keys",
+    "example_needs_rewrite",
+    "example_assignment_source",
+    "assigned_cleaned_sentence",
+    "assigned_cleaned_sentence_document",
+    "assigned_cleaned_sentence_page",
+    "assigned_cleaned_sentence_sentence_index",
+    "assigned_cleaned_sentence_quality_score",
+    "assigned_cleaned_sentence_cleanup_action",
+    "assigned_cleaned_sentence_covered_canonical_keys",
+}
+
 
 @dataclass(frozen=True)
 class LinkedDictionaryOutputs:
@@ -98,9 +115,16 @@ def build_linked_dictionary_row(
     matched_sentence: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     row: dict[str, object] = {}
+    assigned_example = (
+        str(matched_sentence.get("cleaned_sentence", ""))
+        if matched_sentence is not None
+        else original_example
+    )
     for key, value in entry.items():
+        if key in STAGE_TWELVE_STRIPPED_FIELDS:
+            continue
         if key == "example":
-            row[key] = "" if matched_sentence is not None else original_example
+            row[key] = assigned_example
             continue
         if key == "curation_status":
             row[key] = "rewrite_ready"
@@ -110,7 +134,7 @@ def build_linked_dictionary_row(
     if "curation_status" not in row:
         row["curation_status"] = "rewrite_ready"
     if "example" not in row:
-        row["example"] = "" if matched_sentence is not None else original_example
+        row["example"] = assigned_example
     row["example_replaced_with_cleaned_sentence"] = matched_sentence is not None
     return row
 

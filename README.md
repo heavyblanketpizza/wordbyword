@@ -30,7 +30,7 @@ The pipeline writes these files:
 - `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
 - `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
 - `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
-- `12_dictionary_candidates_with_cleaned_examples.jsonl`: deterministic stage that keeps the `11` row shape, promotes `curation_status` to `rewrite_ready`, and blanks `example` only for rows that won the cleaned-sentence relay from `10`.
+- `12_dictionary_candidates_with_cleaned_examples.jsonl`: deterministic stage that keeps the `11` row shape, promotes `curation_status` to `rewrite_ready`, and replaces `example` with the winning cleaned sentence from `10` when one is assigned.
 - `README.md`: a generated guide for reading the output folder in pipeline order.
 
 When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.

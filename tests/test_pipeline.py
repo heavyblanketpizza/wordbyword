@@ -382,7 +382,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all(row.get("curation_status") == "rewrite_ready" for row in linked_rows))
             self.assertTrue(
                 all(
-                    row["example"] == ""
+                    bool(str(row["example"]).strip())
                     for row in linked_rows
                     if bool(row["example_replaced_with_cleaned_sentence"])
                 )
