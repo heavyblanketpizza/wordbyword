@@ -10,7 +10,7 @@ from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupPro
 from wordbyword.llm import SupportsCompletion, ollama_client
 from wordbyword.analyzer import KoreanAnalyzer
 from wordbyword.readers import discover_documents, document_id_for, read_document
-from wordbyword.writers import write_outputs
+from wordbyword.writers import ArtifactCallback, write_outputs
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -41,6 +41,7 @@ def run_pipeline(
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
 ) -> PipelineResult:
     _report(progress, "scan", f"discovering source documents in {input_dir}")
     documents = discover_documents(input_dir)
@@ -95,6 +96,7 @@ def run_pipeline(
         )
         if dictionary_cleanup_requested
         else None,
+        artifact_callback=artifact_callback,
     )
 
     return PipelineResult(
