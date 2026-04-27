@@ -50,6 +50,20 @@ uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 ```
 
+The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
+
+The LLM cleanup stages are intentionally separate and reuse saved artifacts from `output/`:
+
+```bash
+uv --no-cache run python -m wordbyword
+uv --no-cache run python -m wordbyword --clean-example-sentences
+uv --no-cache run python -m wordbyword --clean-dictionary-candidates
+```
+
+- `--clean-example-sentences` reads saved `06_candidate_terms.csv` and `09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
+- `--clean-dictionary-candidates` reads saved `06_candidate_terms.csv` and `08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
+- When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
+
 Pure numbers are ignored in vocabulary and surface word outputs unless `--include-numbers` is set.
 
 The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, and assign rough deterministic quality and ROI scores for downstream review.
@@ -87,9 +101,9 @@ The optional sentence cleanup stage uses Ollama and defaults to `gemma4:31b` whe
 uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model gemma4:31b
 ```
 
-The cleanup stage sends `09_example_sentences.csv` to Ollama in batches of `50` rows by default.
+The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batches of `50` rows by default.
 
-The optional dictionary cleanup stage sends `08_dictionary_candidates.jsonl` to Ollama in batches of `25` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
+The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
 
 Programmatic example:
 

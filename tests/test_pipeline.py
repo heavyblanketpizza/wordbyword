@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from wordbyword.llm import CompletionResult
-from wordbyword.pipeline import run_pipeline
+from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.writers import parsed_document_count
 
 
@@ -220,6 +220,13 @@ class PipelineTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+            run_pipeline(input_dir=input_dir, output_dir=output_dir)
+
+            (input_dir / "sample.txt").write_text(
+                "이 문장은 cleanup-only run에서 읽히면 안 된다.",
+                encoding="utf-8",
+            )
+
             run_pipeline(
                 input_dir=input_dir,
                 output_dir=output_dir,
@@ -270,6 +277,12 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary["rejected_cleaned_example_sentences"], 0)
             self.assertEqual(summary["cleaned_example_sentence_actions"]["keep"], len(cleaned_example_sentences))
             self.assertEqual(summary["cleaned_example_sentence_actions"]["reject"], 0)
+            self.assertIn("점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다.", {
+                row["source_sentence"] for row in cleaned_example_sentences
+            })
+            self.assertNotIn("이 문장은 cleanup-only run에서 읽히면 안 된다.", {
+                row["source_sentence"] for row in cleaned_example_sentences
+            })
 
     def test_pipeline_can_write_cleaned_dictionary_candidates_with_stub_client(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -282,6 +295,13 @@ class PipelineTest(unittest.TestCase):
                 "점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다. "
                 "이가 아픈 여우가 드소토 선생님을 찾아왔다. "
                 "민속 박물관에 있는 옛날 집 안의 모습입니다.",
+                encoding="utf-8",
+            )
+
+            run_pipeline(input_dir=input_dir, output_dir=output_dir)
+
+            (input_dir / "sample.txt").write_text(
+                "이 텍스트는 cleanup-only dictionary run에서 다시 분석되면 안 된다.",
                 encoding="utf-8",
             )
 
@@ -317,6 +337,41 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary["rejected_cleaned_dictionary_candidates"], 0)
             self.assertEqual(summary["cleaned_dictionary_candidate_actions"]["keep"], len(cleaned_dictionary_rows))
             self.assertEqual(summary["cleaned_dictionary_candidate_actions"]["reject"], 0)
+            self.assertIn("여우", {row["canonical_key"] for row in cleaned_dictionary_rows})
+
+    def test_example_cleanup_requires_saved_stage_nine_and_stage_six(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text("한국어 책을 읽고 있다.", encoding="utf-8")
+
+            with self.assertRaises(PipelineUsageError):
+                run_pipeline(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    clean_example_sentences=True,
+                    sentence_cleanup_client=AlwaysKeepCleanupClient(),
+                )
+
+    def test_dictionary_cleanup_requires_saved_stage_eight_and_support_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text("한국어 책을 읽고 있다.", encoding="utf-8")
+
+            with self.assertRaises(PipelineUsageError):
+                run_pipeline(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    clean_dictionary_candidates=True,
+                    dictionary_cleanup_client=AlwaysKeepCleanupClient(),
+                )
 
     def test_same_basename_in_different_subdirs_stays_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

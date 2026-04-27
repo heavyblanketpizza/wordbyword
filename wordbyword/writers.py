@@ -151,7 +151,11 @@ def write_outputs(
     artifact_callback: ArtifactCallback | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    cleanup_previous_outputs(output_dir)
+    cleanup_previous_outputs(
+        output_dir,
+        include_cleaned_example_sentences=sentence_cleanup_client is not None,
+        include_cleaned_dictionary_candidates=dictionary_cleanup_client is not None,
+    )
     candidate_outputs = build_candidate_outputs(
         vocabulary=vocabulary,
         surface_words=surface_words,
@@ -249,12 +253,110 @@ def write_outputs(
     )
 
 
-def cleanup_previous_outputs(output_dir: Path) -> None:
+def write_cleanup_outputs_from_saved(
+    output_dir: Path,
+    *,
+    sentence_cleanup_client: SupportsCompletion | None = None,
+    sentence_cleanup_progress: CleanupProgressCallback | None = None,
+    dictionary_cleanup_client: SupportsCompletion | None = None,
+    dictionary_cleanup_progress: CleanupProgressCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
+) -> tuple[CleanedExampleOutputs | None, CleanedDictionaryOutputs | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cleaned_example_outputs: CleanedExampleOutputs | None = None
+    cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None
+
+    if sentence_cleanup_client is None and dictionary_cleanup_client is None:
+        refresh_saved_output_metadata(output_dir)
+        return None, None
+
+    candidate_terms = read_required_rows(
+        output_dir / "06_candidate_terms.csv",
+        built_from="06_candidate_terms.csv",
+        target="LLM cleanup stages",
+    )
+    example_sentences: list[dict[str, str]] | None = None
+
+    if sentence_cleanup_client is not None:
+        example_sentences = read_required_rows(
+            output_dir / "09_example_sentences.csv",
+            built_from="09_example_sentences.csv",
+            target="10_cleaned_example_sentences.csv",
+        )
+        if artifact_callback is not None:
+            artifact_callback("09_example_sentences", example_sentences)
+        cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
+        cleaned_example_sentence_fieldnames = cleaned_example_sentence_fields()
+        initialize_rows_file(cleaned_example_sentence_path, fieldnames=cleaned_example_sentence_fieldnames)
+        cleaned_example_outputs = build_cleaned_example_sentence_outputs(
+            example_sentences,
+            candidate_terms,
+            client=sentence_cleanup_client,
+            on_progress=sentence_cleanup_progress,
+            on_batch_rows=lambda batch_rows: append_rows(
+                cleaned_example_sentence_path,
+                batch_rows,
+                fieldnames=cleaned_example_sentence_fieldnames,
+            ),
+        )
+        write_rows(
+            cleaned_example_sentence_path,
+            cleaned_example_outputs.rows,
+            fieldnames=cleaned_example_sentence_fieldnames,
+        )
+
+    if dictionary_cleanup_client is not None:
+        dictionary_entries = read_required_jsonl(
+            output_dir / "08_dictionary_candidates.jsonl",
+            built_from="08_dictionary_candidates.jsonl",
+            target="11_cleaned_dictionary_candidates.jsonl",
+        )
+        cleaned_dictionary_candidate_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
+        initialize_jsonl_file(cleaned_dictionary_candidate_path)
+        support_sentence_rows = resolve_dictionary_support_rows(
+            output_dir,
+            cleaned_example_outputs=cleaned_example_outputs,
+            loaded_example_sentences=example_sentences,
+        )
+        cleaned_dictionary_outputs = build_cleaned_dictionary_candidate_outputs(
+            dictionary_entries,
+            candidate_terms,
+            support_sentence_rows,
+            client=dictionary_cleanup_client,
+            on_progress=dictionary_cleanup_progress,
+            on_batch_rows=lambda batch_rows: append_jsonl(
+                cleaned_dictionary_candidate_path,
+                batch_rows,
+            ),
+        )
+        write_jsonl(
+            cleaned_dictionary_candidate_path,
+            cleaned_dictionary_outputs.rows,
+        )
+        if artifact_callback is not None:
+            artifact_callback(
+                "11_cleaned_dictionary_candidates",
+                cleaned_dictionary_outputs.rows,
+            )
+
+    refresh_saved_output_metadata(
+        output_dir,
+        cleaned_example_outputs=cleaned_example_outputs,
+        cleaned_dictionary_outputs=cleaned_dictionary_outputs,
+    )
+    return cleaned_example_outputs, cleaned_dictionary_outputs
+
+
+def cleanup_previous_outputs(
+    output_dir: Path,
+    *,
+    include_cleaned_example_sentences: bool = False,
+    include_cleaned_dictionary_candidates: bool = False,
+) -> None:
     for filename in {
-        *all_output_files(
-            include_cleaned_example_sentences=True,
-            include_cleaned_dictionary_candidates=True,
-        ),
+        *BASE_OUTPUT_FILES,
+        *(["10_cleaned_example_sentences.csv"] if include_cleaned_example_sentences else []),
+        *(["11_cleaned_dictionary_candidates.jsonl"] if include_cleaned_dictionary_candidates else []),
         *LEGACY_OUTPUT_FILES,
     }:
         path = output_dir / filename
@@ -330,6 +432,126 @@ def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         handle.flush()
+
+
+def read_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            rows.append(json.loads(cleaned))
+    return rows
+
+
+def read_required_rows(path: Path, *, built_from: str, target: str) -> list[dict[str, str]]:
+    if not path.is_file():
+        raise ValueError(
+            f"Cannot build {target} because {built_from} is missing in {path.parent}. "
+            "Run the deterministic pipeline first."
+        )
+    return read_rows(path)
+
+
+def read_required_jsonl(path: Path, *, built_from: str, target: str) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise ValueError(
+            f"Cannot build {target} because {built_from} is missing in {path.parent}. "
+            "Run the deterministic pipeline first."
+        )
+    return read_jsonl(path)
+
+
+def resolve_dictionary_support_rows(
+    output_dir: Path,
+    *,
+    cleaned_example_outputs: CleanedExampleOutputs | None,
+    loaded_example_sentences: list[dict[str, str]] | None,
+) -> list[Mapping[str, object]]:
+    if cleaned_example_outputs is not None:
+        return cleaned_example_outputs.rows
+
+    cleaned_example_path = output_dir / "10_cleaned_example_sentences.csv"
+    if cleaned_example_path.is_file():
+        return read_rows(cleaned_example_path)
+
+    if loaded_example_sentences is not None:
+        return loaded_example_sentences
+
+    return read_required_rows(
+        output_dir / "09_example_sentences.csv",
+        built_from="09_example_sentences.csv",
+        target="11_cleaned_dictionary_candidates.jsonl",
+    )
+
+
+def refresh_saved_output_metadata(
+    output_dir: Path,
+    *,
+    cleaned_example_outputs: CleanedExampleOutputs | None = None,
+    cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
+) -> None:
+    include_cleaned_example_sentences = (output_dir / "10_cleaned_example_sentences.csv").is_file()
+    include_cleaned_dictionary_candidates = (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
+
+    summary_path = output_dir / "00_summary.json"
+    summary: dict[str, Any] = {}
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    summary["outputs"] = all_output_files(
+        include_cleaned_example_sentences=include_cleaned_example_sentences,
+        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+    )
+    summary["pipeline_stages"] = pipeline_stages(
+        include_cleaned_example_sentences=include_cleaned_example_sentences,
+        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+    )
+
+    if cleaned_example_outputs is not None:
+        summary["reviewed_example_sentences"] = cleaned_example_outputs.reviewed_count
+        summary["cleaned_example_sentences"] = len(cleaned_example_outputs.rows)
+        summary["rejected_cleaned_example_sentences"] = cleaned_example_outputs.rejected_count
+        summary["cleaned_example_sentence_actions"] = dict(cleaned_example_outputs.action_counts)
+    elif not include_cleaned_example_sentences:
+        for key in (
+            "reviewed_example_sentences",
+            "cleaned_example_sentences",
+            "rejected_cleaned_example_sentences",
+            "cleaned_example_sentence_actions",
+        ):
+            summary.pop(key, None)
+
+    if cleaned_dictionary_outputs is not None:
+        summary["reviewed_dictionary_candidates"] = cleaned_dictionary_outputs.reviewed_count
+        summary["cleaned_dictionary_candidates"] = len(cleaned_dictionary_outputs.rows)
+        summary["rejected_cleaned_dictionary_candidates"] = cleaned_dictionary_outputs.rejected_count
+        summary["cleaned_dictionary_candidate_actions"] = dict(cleaned_dictionary_outputs.action_counts)
+        summary["cleaned_dictionary_candidate_reasons"] = dict(cleaned_dictionary_outputs.rejection_reason_counts)
+    elif not include_cleaned_dictionary_candidates:
+        for key in (
+            "reviewed_dictionary_candidates",
+            "cleaned_dictionary_candidates",
+            "rejected_cleaned_dictionary_candidates",
+            "cleaned_dictionary_candidate_actions",
+            "cleaned_dictionary_candidate_reasons",
+        ):
+            summary.pop(key, None)
+
+    if summary or summary_path.is_file():
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    write_output_readme(
+        output_dir / "README.md",
+        include_cleaned_example_sentences=include_cleaned_example_sentences,
+        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+    )
 
 
 def write_vocabulary(path: Path, vocabulary: dict[tuple[str, str], CountEntry]) -> None:

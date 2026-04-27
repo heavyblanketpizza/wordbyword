@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
-from wordbyword.pipeline import run_pipeline
+from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
@@ -45,18 +45,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--clean-example-sentences",
         action="store_true",
-        help="Run the optional Ollama cleanup stage and write 10_cleaned_example_sentences.csv.",
+        help="Use saved output/09_example_sentences.csv and output/06_candidate_terms.csv to write 10_cleaned_example_sentences.csv.",
     )
     parser.add_argument(
         "--clean-dictionary-candidates",
         action="store_true",
-        help="Run the optional Ollama cleanup stage and write 11_cleaned_dictionary_candidates.jsonl.",
+        help="Use saved output/08_dictionary_candidates.jsonl and output/06_candidate_terms.csv to write 11_cleaned_dictionary_candidates.jsonl.",
     )
     parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
-            "Ollama model used for --clean-example-sentences. "
+            "Ollama model used for the cleanup stages. "
             f"Defaults to {DEFAULT_EXAMPLE_CLEANUP_MODEL}."
         ),
     )
@@ -118,20 +118,23 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
 
-    result = run_pipeline(
-        input_dir=args.input,
-        output_dir=args.output,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
-        clean_example_sentences=args.clean_example_sentences,
-        clean_dictionary_candidates=args.clean_dictionary_candidates,
-        sentence_cleanup_model=args.ollama_model,
-        sentence_cleanup_base_url=args.ollama_base_url,
-        progress=emit_stage_update,
-        cleanup_progress=example_cleanup_progress,
-        dictionary_cleanup_progress=dictionary_cleanup_progress,
-        artifact_callback=artifact_callback,
-    )
+    try:
+        result = run_pipeline(
+            input_dir=args.input,
+            output_dir=args.output,
+            include_punctuation=args.include_punctuation,
+            include_numbers=args.include_numbers,
+            clean_example_sentences=args.clean_example_sentences,
+            clean_dictionary_candidates=args.clean_dictionary_candidates,
+            sentence_cleanup_model=args.ollama_model,
+            sentence_cleanup_base_url=args.ollama_base_url,
+            progress=emit_stage_update,
+            cleanup_progress=example_cleanup_progress,
+            dictionary_cleanup_progress=dictionary_cleanup_progress,
+            artifact_callback=artifact_callback,
+        )
+    except PipelineUsageError as exc:
+        parser.exit(2, f"wordbyword: error: {exc}\n")
 
     emit_completion_screen(
         result,
