@@ -271,6 +271,53 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary["cleaned_example_sentence_actions"]["keep"], len(cleaned_example_sentences))
             self.assertEqual(summary["cleaned_example_sentence_actions"]["reject"], 0)
 
+    def test_pipeline_can_write_cleaned_dictionary_candidates_with_stub_client(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text(
+                "점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다. "
+                "이가 아픈 여우가 드소토 선생님을 찾아왔다. "
+                "민속 박물관에 있는 옛날 집 안의 모습입니다.",
+                encoding="utf-8",
+            )
+
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                clean_dictionary_candidates=True,
+                dictionary_cleanup_client=AlwaysKeepCleanupClient(),
+            )
+
+            self.assertTrue((output_dir / "11_cleaned_dictionary_candidates.jsonl").exists())
+            self.assertFalse((output_dir / "10_cleaned_example_sentences.csv").exists())
+
+            dictionary_rows = [
+                json.loads(line)
+                for line in (output_dir / "08_dictionary_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            cleaned_dictionary_rows = [
+                json.loads(line)
+                for line in (output_dir / "11_cleaned_dictionary_candidates.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(len(cleaned_dictionary_rows), len(dictionary_rows))
+            self.assertEqual(
+                [row["canonical_key"] for row in cleaned_dictionary_rows],
+                [row["canonical_key"] for row in dictionary_rows],
+            )
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("11_cleaned_dictionary_candidates.jsonl", summary["outputs"])
+            self.assertEqual(summary["reviewed_dictionary_candidates"], len(dictionary_rows))
+            self.assertEqual(summary["cleaned_dictionary_candidates"], len(cleaned_dictionary_rows))
+            self.assertEqual(summary["rejected_cleaned_dictionary_candidates"], 0)
+            self.assertEqual(summary["cleaned_dictionary_candidate_actions"]["keep"], len(cleaned_dictionary_rows))
+            self.assertEqual(summary["cleaned_dictionary_candidate_actions"]["reject"], 0)
+
     def test_same_basename_in_different_subdirs_stays_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)

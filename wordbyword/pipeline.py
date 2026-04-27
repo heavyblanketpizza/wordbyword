@@ -33,7 +33,9 @@ def run_pipeline(
     include_punctuation: bool = False,
     include_numbers: bool = False,
     clean_example_sentences: bool = False,
+    clean_dictionary_candidates: bool = False,
     sentence_cleanup_client: SupportsCompletion | None = None,
+    dictionary_cleanup_client: SupportsCompletion | None = None,
     sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
     sentence_cleanup_base_url: str | None = None,
     progress: ProgressCallback | None = None,
@@ -56,10 +58,12 @@ def run_pipeline(
     ]
     _report(progress, "analyze", f"tokenizing {len(pages):,} page/text unit(s)")
     analysis = analyzer.analyze_pages(pages)
-    cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
-    cleanup_client = sentence_cleanup_client
-    if cleanup_requested and cleanup_client is None:
-        cleanup_client = ollama_client(
+    example_cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
+    dictionary_cleanup_requested = clean_dictionary_candidates or dictionary_cleanup_client is not None
+    cleanup_requested = example_cleanup_requested or dictionary_cleanup_requested
+    shared_cleanup_client = None
+    if cleanup_requested and sentence_cleanup_client is None and dictionary_cleanup_client is None:
+        shared_cleanup_client = ollama_client(
             model=sentence_cleanup_model,
             base_url=sentence_cleanup_base_url,
             timeout_seconds=300.0,
@@ -67,7 +71,7 @@ def run_pipeline(
             max_output_tokens=256,
         )
     if cleanup_requested:
-        _report(progress, "cleanup", f"preparing example cleanup via {sentence_cleanup_model}")
+        _report(progress, "cleanup", f"preparing LLM cleanup via {sentence_cleanup_model}")
 
     _report(progress, "write", f"writing output bundle to {output_dir}")
     write_outputs(
@@ -80,8 +84,12 @@ def run_pipeline(
         document_totals=analysis["document_totals"],
         documents=documents,
         kiwi=kiwi,
-        sentence_cleanup_client=cleanup_client if cleanup_requested else None,
-        sentence_cleanup_progress=cleanup_progress if cleanup_requested else None,
+        sentence_cleanup_client=(sentence_cleanup_client or shared_cleanup_client) if example_cleanup_requested else None,
+        sentence_cleanup_progress=cleanup_progress if example_cleanup_requested else None,
+        dictionary_cleanup_client=(dictionary_cleanup_client or shared_cleanup_client)
+        if dictionary_cleanup_requested
+        else None,
+        dictionary_cleanup_progress=cleanup_progress if dictionary_cleanup_requested else None,
     )
 
     return PipelineResult(

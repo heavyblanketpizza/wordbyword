@@ -9,6 +9,7 @@ from typing import Any
 from kiwipiepy import Kiwi
 
 from wordbyword.candidates import build_candidate_outputs, canonicalize_term, is_surface_head
+from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.example_cleanup import (
     CleanedExampleOutputs,
     CleanupProgressCallback,
@@ -40,6 +41,7 @@ BASE_OUTPUT_FILES = [
 
 OPTIONAL_OUTPUT_FILES = [
     "10_cleaned_example_sentences.csv",
+    "11_cleaned_dictionary_candidates.jsonl",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -120,6 +122,11 @@ OPTIONAL_PIPELINE_STAGES = [
         "file": "10_cleaned_example_sentences.csv",
         "description": "Ollama-curated source sentences kept, lightly fixed, rebuilt, or deleted with minimal-edit bias.",
     },
+    {
+        "stage": "11",
+        "file": "11_cleaned_dictionary_candidates.jsonl",
+        "description": "Ollama-filtered learner-dictionary candidates with low-signal names and debris removed.",
+    },
 ]
 
 
@@ -136,6 +143,8 @@ def write_outputs(
     kiwi: Kiwi | None = None,
     sentence_cleanup_client: SupportsCompletion | None = None,
     sentence_cleanup_progress: CleanupProgressCallback | None = None,
+    dictionary_cleanup_client: SupportsCompletion | None = None,
+    dictionary_cleanup_progress: CleanupProgressCallback | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(output_dir)
@@ -183,6 +192,30 @@ def write_outputs(
             cleaned_example_outputs.rows,
             fieldnames=cleaned_example_sentence_fieldnames,
         )
+    cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None
+    if dictionary_cleanup_client is not None:
+        cleaned_dictionary_candidate_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
+        initialize_jsonl_file(cleaned_dictionary_candidate_path)
+        support_sentence_rows = (
+            cleaned_example_outputs.rows
+            if cleaned_example_outputs is not None
+            else example_sentences
+        )
+        cleaned_dictionary_outputs = build_cleaned_dictionary_candidate_outputs(
+            candidate_outputs.dictionary_entries,
+            candidate_outputs.terms,
+            support_sentence_rows,
+            client=dictionary_cleanup_client,
+            on_progress=dictionary_cleanup_progress,
+            on_batch_rows=lambda batch_rows: append_jsonl(
+                cleaned_dictionary_candidate_path,
+                batch_rows,
+            ),
+        )
+        write_jsonl(
+            cleaned_dictionary_candidate_path,
+            cleaned_dictionary_outputs.rows,
+        )
     write_summary(
         output_dir / "00_summary.json",
         pages=pages,
@@ -196,12 +229,23 @@ def write_outputs(
         document_totals=document_totals,
         documents=documents,
         cleaned_example_outputs=cleaned_example_outputs,
+        cleaned_dictionary_outputs=cleaned_dictionary_outputs,
     )
-    write_output_readme(output_dir / "README.md", include_cleaned_example_sentences=cleaned_example_outputs is not None)
+    write_output_readme(
+        output_dir / "README.md",
+        include_cleaned_example_sentences=cleaned_example_outputs is not None,
+        include_cleaned_dictionary_candidates=cleaned_dictionary_outputs is not None,
+    )
 
 
 def cleanup_previous_outputs(output_dir: Path) -> None:
-    for filename in {*all_output_files(include_cleaned_example_sentences=True), *LEGACY_OUTPUT_FILES}:
+    for filename in {
+        *all_output_files(
+            include_cleaned_example_sentences=True,
+            include_cleaned_dictionary_candidates=True,
+        ),
+        *LEGACY_OUTPUT_FILES,
+    }:
         path = output_dir / filename
         if path.is_file():
             path.unlink()
@@ -255,12 +299,25 @@ def initialize_rows_file(path: Path, *, fieldnames: list[str]) -> None:
         writer.writeheader()
 
 
+def initialize_jsonl_file(path: Path) -> None:
+    path.write_text("", encoding="utf-8")
+
+
 def append_rows(path: Path, rows: list[dict[str, object]], *, fieldnames: list[str]) -> None:
     if not rows:
         return
     with path.open("a", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writerows(rows)
+        handle.flush()
+
+
+def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         handle.flush()
 
 
@@ -466,8 +523,10 @@ def write_summary(
     document_totals: Counter[str],
     documents: list[Path],
     cleaned_example_outputs: CleanedExampleOutputs | None = None,
+    cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
 ) -> None:
     include_cleaned_example_sentences = cleaned_example_outputs is not None
+    include_cleaned_dictionary_candidates = cleaned_dictionary_outputs is not None
     summary: dict[str, Any] = {
         "documents": [str(path) for path in documents],
         "document_count": len(documents),
@@ -480,18 +539,35 @@ def write_summary(
         "rejected_terms": rejected_candidate_count,
         "example_sentences": example_sentence_count,
         "tokens_by_document": dict(document_totals),
-        "outputs": all_output_files(include_cleaned_example_sentences=include_cleaned_example_sentences),
-        "pipeline_stages": pipeline_stages(include_cleaned_example_sentences=include_cleaned_example_sentences),
+        "outputs": all_output_files(
+            include_cleaned_example_sentences=include_cleaned_example_sentences,
+            include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+        ),
+        "pipeline_stages": pipeline_stages(
+            include_cleaned_example_sentences=include_cleaned_example_sentences,
+            include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+        ),
     }
     if cleaned_example_outputs is not None:
         summary["reviewed_example_sentences"] = cleaned_example_outputs.reviewed_count
         summary["cleaned_example_sentences"] = len(cleaned_example_outputs.rows)
         summary["rejected_cleaned_example_sentences"] = cleaned_example_outputs.rejected_count
         summary["cleaned_example_sentence_actions"] = dict(cleaned_example_outputs.action_counts)
+    if cleaned_dictionary_outputs is not None:
+        summary["reviewed_dictionary_candidates"] = cleaned_dictionary_outputs.reviewed_count
+        summary["cleaned_dictionary_candidates"] = len(cleaned_dictionary_outputs.rows)
+        summary["rejected_cleaned_dictionary_candidates"] = cleaned_dictionary_outputs.rejected_count
+        summary["cleaned_dictionary_candidate_actions"] = dict(cleaned_dictionary_outputs.action_counts)
+        summary["cleaned_dictionary_candidate_reasons"] = dict(cleaned_dictionary_outputs.rejection_reason_counts)
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def write_output_readme(path: Path, *, include_cleaned_example_sentences: bool = False) -> None:
+def write_output_readme(
+    path: Path,
+    *,
+    include_cleaned_example_sentences: bool = False,
+    include_cleaned_dictionary_candidates: bool = False,
+) -> None:
     lines = [
         "# wordbyword output",
         "",
@@ -500,7 +576,10 @@ def write_output_readme(path: Path, *, include_cleaned_example_sentences: bool =
         "| Stage | File | Purpose |",
         "| --- | --- | --- |",
     ]
-    for stage in pipeline_stages(include_cleaned_example_sentences=include_cleaned_example_sentences):
+    for stage in pipeline_stages(
+        include_cleaned_example_sentences=include_cleaned_example_sentences,
+        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
+    ):
         lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
 
     lines.extend(
@@ -561,17 +640,43 @@ def example_sentence_fields() -> list[str]:
     ]
 
 
-def all_output_files(*, include_cleaned_example_sentences: bool = False) -> list[str]:
+def all_output_files(
+    *,
+    include_cleaned_example_sentences: bool = False,
+    include_cleaned_dictionary_candidates: bool = False,
+) -> list[str]:
     return [
         *BASE_OUTPUT_FILES,
-        *(OPTIONAL_OUTPUT_FILES if include_cleaned_example_sentences else []),
+        *(
+            ["10_cleaned_example_sentences.csv"]
+            if include_cleaned_example_sentences
+            else []
+        ),
+        *(
+            ["11_cleaned_dictionary_candidates.jsonl"]
+            if include_cleaned_dictionary_candidates
+            else []
+        ),
     ]
 
 
-def pipeline_stages(*, include_cleaned_example_sentences: bool = False) -> list[dict[str, str]]:
+def pipeline_stages(
+    *,
+    include_cleaned_example_sentences: bool = False,
+    include_cleaned_dictionary_candidates: bool = False,
+) -> list[dict[str, str]]:
     return [
         *BASE_PIPELINE_STAGES,
-        *(OPTIONAL_PIPELINE_STAGES if include_cleaned_example_sentences else []),
+        *(
+            [OPTIONAL_PIPELINE_STAGES[0]]
+            if include_cleaned_example_sentences
+            else []
+        ),
+        *(
+            [OPTIONAL_PIPELINE_STAGES[1]]
+            if include_cleaned_dictionary_candidates
+            else []
+        ),
     ]
 
 

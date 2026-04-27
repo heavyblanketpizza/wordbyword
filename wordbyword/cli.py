@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the optional Ollama cleanup stage and write 10_cleaned_example_sentences.csv.",
     )
     parser.add_argument(
+        "--clean-dictionary-candidates",
+        action="store_true",
+        help="Run the optional Ollama cleanup stage and write 11_cleaned_dictionary_candidates.jsonl.",
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
@@ -68,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     emit_boot_screen(
         input_dir=args.input,
         output_dir=args.output,
-        clean_example_sentences=args.clean_example_sentences,
+        clean_example_sentences=args.clean_example_sentences or args.clean_dictionary_candidates,
         sentence_cleanup_model=args.ollama_model,
     )
 
@@ -81,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         include_punctuation=args.include_punctuation,
         include_numbers=args.include_numbers,
         clean_example_sentences=args.clean_example_sentences,
+        clean_dictionary_candidates=args.clean_dictionary_candidates,
         sentence_cleanup_model=args.ollama_model,
         sentence_cleanup_base_url=args.ollama_base_url,
         progress=emit_stage_update,
@@ -92,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         input_dir=args.input,
         include_punctuation=args.include_punctuation,
         include_numbers=args.include_numbers,
-        clean_example_sentences=args.clean_example_sentences,
+        clean_example_sentences=args.clean_example_sentences or args.clean_dictionary_candidates,
         sentence_cleanup_model=args.ollama_model,
     )
     return 0

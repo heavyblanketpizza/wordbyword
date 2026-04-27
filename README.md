@@ -29,6 +29,7 @@ The pipeline writes these files:
 - `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for a later LLM curation stage.
 - `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
 - `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
+- `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
 - `README.md`: a generated guide for reading the output folder in pipeline order.
 
 When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
@@ -46,6 +47,7 @@ uv --no-cache run python -m wordbyword --input original --output output
 uv --no-cache run python -m wordbyword --include-punctuation
 uv --no-cache run python -m wordbyword --include-numbers
 uv --no-cache run python -m wordbyword --clean-example-sentences
+uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 ```
 
 Pure numbers are ignored in vocabulary and surface word outputs unless `--include-numbers` is set.
@@ -86,6 +88,8 @@ uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model 
 ```
 
 The cleanup stage sends `09_example_sentences.csv` to Ollama in batches of `50` rows by default.
+
+The optional dictionary cleanup stage sends `08_dictionary_candidates.jsonl` to Ollama in batches of `25` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
 
 Programmatic example:
 
