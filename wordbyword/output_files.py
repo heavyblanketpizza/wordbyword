@@ -16,6 +16,7 @@ def cleanup_previous_outputs(
     include_cleaned_example_sentences: bool = False,
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
+    include_generated_dictionary_candidates: bool = False,
 ) -> None:
     for filename in {
         *BASE_OUTPUT_FILES,
@@ -24,6 +25,19 @@ def cleanup_previous_outputs(
         *(
             ["12_dictionary_candidates_with_cleaned_examples.jsonl"]
             if include_linked_dictionary_candidates
+            else []
+        ),
+        *(
+            ["13_dictionary_candidates_with_generated_examples.jsonl"]
+            if include_generated_dictionary_candidates
+            else []
+        ),
+        *(
+            [
+                "13_generated_example_attempts.jsonl",
+                "13_generated_example_failures.jsonl",
+            ]
+            if include_generated_dictionary_candidates
             else []
         ),
         *LEGACY_OUTPUT_FILES,

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
+from wordbyword.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.terminal_ui import (
     emit_artifact_drop,
@@ -66,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--generate-missing-examples",
+        action="store_true",
+        help=(
+            "Use saved output/12_dictionary_candidates_with_cleaned_examples.jsonl to write "
+            "13_dictionary_candidates_with_generated_examples.jsonl, generating a new candidate "
+            "example sentence for rows whose example_replaced_with_cleaned_sentence flag is false."
+        ),
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
@@ -108,7 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     emit_boot_screen(
         input_dir=args.input,
         output_dir=args.output,
-        clean_example_sentences=args.clean_example_sentences or args.clean_dictionary_candidates,
+        clean_example_sentences=(
+            args.clean_example_sentences
+            or args.clean_dictionary_candidates
+            or args.generate_missing_examples
+        ),
         sentence_cleanup_model=args.ollama_model,
     )
 
@@ -126,6 +140,21 @@ def main(argv: list[str] | None = None) -> int:
             model=args.ollama_model,
             label="dictionary",
             item_label="terms",
+        )
+
+    def generated_example_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(
+            progress,
+            model=args.ollama_model,
+            label="candidate example",
+            item_label="terms",
+        )
+
+    def generated_example_retry_decider(summary: GeneratedExampleAttemptSummary) -> bool:
+        return prompt_generated_example_retry(
+            summary=summary,
+            output_dir=args.output,
+            model=args.ollama_model,
         )
 
     def artifact_callback(stage: str, entries: Sequence[Mapping[str, object]]) -> None:
@@ -165,6 +194,22 @@ def main(argv: list[str] | None = None) -> int:
                     ("rewrite", f"{len(entries) - replaced_count:,} pending"),
                 ),
             )
+            return
+        if stage == "13_dictionary_candidates_with_generated_examples":
+            generated_count = sum(
+                1 for entry in entries
+                if bool(entry.get("example_generated_with_ollama"))
+            )
+            emit_artifact_drop(
+                stage,
+                file_label="13_dictionary_candidates_with_generated_examples.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("generated", f"{generated_count:,} examples"),
+                    ("preserved", f"{len(entries) - generated_count:,} existing"),
+                    ("model", args.ollama_model),
+                ),
+            )
 
     try:
         result = run_pipeline(
@@ -174,11 +219,14 @@ def main(argv: list[str] | None = None) -> int:
             include_numbers=args.include_numbers,
             clean_example_sentences=args.clean_example_sentences,
             clean_dictionary_candidates=args.clean_dictionary_candidates,
+            generate_missing_examples=args.generate_missing_examples,
             sentence_cleanup_model=args.ollama_model,
             sentence_cleanup_base_url=args.ollama_base_url,
             progress=emit_stage_update,
             cleanup_progress=example_cleanup_progress,
             dictionary_cleanup_progress=dictionary_cleanup_progress,
+            generated_example_progress=generated_example_progress,
+            generated_example_retry_decider=generated_example_retry_decider,
             artifact_callback=artifact_callback,
         )
     except PipelineUsageError as exc:
@@ -189,7 +237,11 @@ def main(argv: list[str] | None = None) -> int:
         input_dir=args.input,
         include_punctuation=args.include_punctuation,
         include_numbers=args.include_numbers,
-        clean_example_sentences=args.clean_example_sentences or args.clean_dictionary_candidates,
+        clean_example_sentences=(
+            args.clean_example_sentences
+            or args.clean_dictionary_candidates
+            or args.generate_missing_examples
+        ),
         sentence_cleanup_model=args.ollama_model,
     )
     return 0
@@ -258,6 +310,39 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
     sys.stdout.write("\n")
     sys.stdout.flush()
     return 0
+
+
+def prompt_generated_example_retry(
+    *,
+    summary: GeneratedExampleAttemptSummary,
+    output_dir: Path,
+    model: str,
+) -> bool:
+    if summary.failed_count <= 0 or not sys.stdin.isatty():
+        return False
+
+    attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    failures_path = output_dir / "13_generated_example_failures.jsonl"
+    sys.stdout.write(
+        "\n"
+        f"wordbyword: candidate-example attempt {summary.attempt_number} with {model} left "
+        f"{summary.failed_count:,} failed row(s).\n"
+        f"  attempts: {attempts_path}\n"
+        f"  failures: {failures_path}\n"
+    )
+    sys.stdout.flush()
+
+    while True:
+        try:
+            response = input("Retry the failed subset with Ollama? [Y/n] ").strip().lower()
+        except EOFError:
+            return False
+        if response in {"", "y", "yes"}:
+            return True
+        if response in {"n", "no"}:
+            return False
+        sys.stdout.write("Please answer Y or n.\n")
+        sys.stdout.flush()
 
 
 def link_cleaned_examples(*, output_dir: Path) -> int:

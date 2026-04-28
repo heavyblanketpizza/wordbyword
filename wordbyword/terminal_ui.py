@@ -356,6 +356,14 @@ RELIC_DROP_ART_LINKED = [
     "  ╰──────────────────────────────────────────────────────────╯  ",
 ]
 
+RELIC_DROP_ART_GENERATED = [
+    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE FORGE // CANDIDATES WRITTEN ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 13_dictionary_candidates_with_generated_examples ▓▒░   │  ",
+    "  │   ◉─◉─◉   ▟▙ forge stack online ▟▙   ◉─◉─◉   ░░░░░░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────────────╯  ",
+]
+
 RELIC_DROP_PALETTE = (
     TOKYO_NIGHT["pink"],
     TOKYO_NIGHT["purple"],
@@ -428,6 +436,9 @@ def render_artifact_drop(
     elif stage == "12_dictionary_candidates_with_cleaned_examples":
         art = RELIC_DROP_ART_LINKED
         accent = TOKYO_NIGHT["orange"]
+    elif stage == "13_dictionary_candidates_with_generated_examples":
+        art = RELIC_DROP_ART_GENERATED
+        accent = TOKYO_NIGHT["green"]
     else:
         art = RELIC_DROP_ART_SENTENCES
         accent = TOKYO_NIGHT["cyan"]

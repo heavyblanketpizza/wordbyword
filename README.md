@@ -31,6 +31,9 @@ The pipeline writes these files:
 - `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
 - `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
 - `12_dictionary_candidates_with_cleaned_examples.jsonl`: deterministic stage that keeps the `11` row shape, promotes `curation_status` to `rewrite_ready`, and replaces `example` with the winning cleaned sentence from `10` when one is assigned.
+- `13_dictionary_candidates_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, preserves cleaned-example wins, and writes a completely new candidate example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
+- `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
+- `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
 - `README.md`: a generated guide for reading the output folder in pipeline order.
 
 When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
@@ -111,6 +114,12 @@ uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model 
 The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batches of `50` rows by default.
 
 The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
+
+The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `25` rows by default, writes `13_dictionary_candidates_with_generated_examples.jsonl`, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset:
+
+```bash
+uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
+```
 
 Programmatic example:
 

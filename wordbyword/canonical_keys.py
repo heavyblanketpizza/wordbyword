@@ -23,7 +23,7 @@ def sentence_candidate_keys(
         form = str(token.get("form", ""))
         pos = str(token.get("pos", ""))
 
-        if pos.startswith("N") and index + 1 < len(token_rows):
+        if allows_hada_merge(pos) and index + 1 < len(token_rows):
             next_pos = str(token_rows[index + 1].get("pos", ""))
             if next_pos in {"XSV", "XSA"}:
                 canonical_key = form + "하다"
@@ -44,6 +44,10 @@ def token_canonical_key(form: str, pos: str) -> str | None:
     if pos.startswith(("VV", "VA")) or is_surface_head(pos):
         return canonicalize_term(form, pos)
     return None
+
+
+def allows_hada_merge(pos: str) -> bool:
+    return pos.startswith("N") or pos == "XR"
 
 
 def ordered_unique(values: Sequence[str]) -> list[str]:

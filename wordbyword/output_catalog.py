@@ -18,6 +18,9 @@ OPTIONAL_OUTPUT_FILES = [
     "10_cleaned_example_sentences.csv",
     "11_cleaned_dictionary_candidates.jsonl",
     "12_dictionary_candidates_with_cleaned_examples.jsonl",
+    "13_dictionary_candidates_with_generated_examples.jsonl",
+    "13_generated_example_attempts.jsonl",
+    "13_generated_example_failures.jsonl",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -111,6 +114,11 @@ OPTIONAL_PIPELINE_STAGES = [
         "file": "12_dictionary_candidates_with_cleaned_examples.jsonl",
         "description": "Dictionary candidates whose examples are replaced with unique cleaned sentences from stage 10 when available.",
     },
+    {
+        "stage": "13",
+        "file": "13_dictionary_candidates_with_generated_examples.jsonl",
+        "description": "Stage-12 dictionary candidates with new Ollama-written candidate examples for rows that still lacked a cleaned replacement.",
+    },
 ]
 
 
@@ -119,6 +127,7 @@ def all_output_files(
     include_cleaned_example_sentences: bool = False,
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
+    include_generated_dictionary_candidates: bool = False,
 ) -> list[str]:
     return [
         *BASE_OUTPUT_FILES,
@@ -129,6 +138,19 @@ def all_output_files(
             if include_linked_dictionary_candidates
             else []
         ),
+        *(
+            ["13_dictionary_candidates_with_generated_examples.jsonl"]
+            if include_generated_dictionary_candidates
+            else []
+        ),
+        *(
+            [
+                "13_generated_example_attempts.jsonl",
+                "13_generated_example_failures.jsonl",
+            ]
+            if include_generated_dictionary_candidates
+            else []
+        ),
     ]
 
 
@@ -137,10 +159,12 @@ def pipeline_stages(
     include_cleaned_example_sentences: bool = False,
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
+    include_generated_dictionary_candidates: bool = False,
 ) -> list[dict[str, str]]:
     return [
         *BASE_PIPELINE_STAGES,
         *([OPTIONAL_PIPELINE_STAGES[0]] if include_cleaned_example_sentences else []),
         *([OPTIONAL_PIPELINE_STAGES[1]] if include_cleaned_dictionary_candidates else []),
         *([OPTIONAL_PIPELINE_STAGES[2]] if include_linked_dictionary_candidates else []),
+        *([OPTIONAL_PIPELINE_STAGES[3]] if include_generated_dictionary_candidates else []),
     ]

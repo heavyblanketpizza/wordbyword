@@ -8,6 +8,7 @@ from typing import Any
 from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs
 from wordbyword.example_assignment import LinkedDictionaryOutputs
 from wordbyword.example_cleanup import CleanedExampleOutputs
+from wordbyword.example_generation import GeneratedExampleOutputs
 from wordbyword.models import CountEntry, PageText
 from wordbyword.output_catalog import all_output_files, pipeline_stages
 
@@ -71,6 +72,7 @@ def write_output_readme(
     include_cleaned_example_sentences: bool = False,
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
+    include_generated_dictionary_candidates: bool = False,
 ) -> None:
     lines = [
         "# wordbyword output",
@@ -84,6 +86,7 @@ def write_output_readme(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
+        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
     ):
         lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
 
@@ -104,10 +107,12 @@ def refresh_saved_output_metadata(
     cleaned_example_outputs: CleanedExampleOutputs | None = None,
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None,
+    generated_example_outputs: GeneratedExampleOutputs | None = None,
 ) -> None:
     include_cleaned_example_sentences = (output_dir / "10_cleaned_example_sentences.csv").is_file()
     include_cleaned_dictionary_candidates = (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
     include_linked_dictionary_candidates = (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").is_file()
+    include_generated_dictionary_candidates = (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").is_file()
 
     summary_path = output_dir / "00_summary.json"
     summary: dict[str, Any] = {}
@@ -118,11 +123,13 @@ def refresh_saved_output_metadata(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
+        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
     )
     summary["pipeline_stages"] = pipeline_stages(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
+        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
     )
 
     if cleaned_example_outputs is not None:
@@ -167,6 +174,22 @@ def refresh_saved_output_metadata(
         ):
             summary.pop(key, None)
 
+    if generated_example_outputs is not None:
+        summary["reviewed_missing_dictionary_examples"] = generated_example_outputs.reviewed_count
+        summary["generated_dictionary_candidate_examples"] = generated_example_outputs.generated_count
+        summary["preserved_dictionary_candidate_examples"] = generated_example_outputs.preserved_count
+        summary["failed_dictionary_candidate_examples"] = generated_example_outputs.failed_count
+        summary["generated_example_attempt_rounds"] = generated_example_outputs.attempt_round_count
+    elif not include_generated_dictionary_candidates:
+        for key in (
+            "reviewed_missing_dictionary_examples",
+            "generated_dictionary_candidate_examples",
+            "preserved_dictionary_candidate_examples",
+            "failed_dictionary_candidate_examples",
+            "generated_example_attempt_rounds",
+        ):
+            summary.pop(key, None)
+
     if summary or summary_path.is_file():
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -175,4 +198,5 @@ def refresh_saved_output_metadata(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
+        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
     )

@@ -37,6 +37,18 @@ class CanonicalKeysTest(unittest.TestCase):
 
         self.assertEqual(matched_keys, ["공부", "학생"])
 
+    def test_sentence_candidate_keys_merges_xr_plus_xsa_into_hada(self) -> None:
+        matched_keys = sentence_candidate_keys(
+            [
+                {"form": "비슷", "pos": "XR"},
+                {"form": "하", "pos": "XSA"},
+                {"form": "분위기", "pos": "NNG"},
+            ],
+            {"비슷하다", "분위기"},
+        )
+
+        self.assertEqual(matched_keys, ["비슷하다", "분위기"])
+
     def test_token_canonical_key_normalizes_verbs_and_ignores_particles(self) -> None:
         self.assertEqual(token_canonical_key("읽", "VV"), "읽다")
         self.assertEqual(token_canonical_key("학생", "NNG"), "학생")

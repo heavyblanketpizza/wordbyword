@@ -11,9 +11,12 @@ from wordbyword.cli import (
     link_cleaned_examples,
     load_dictionary_candidates,
     main,
+    prompt_generated_example_retry,
     resolve_distribution_path,
     show_distribution,
 )
+from wordbyword.example_generation import GeneratedExampleAttemptSummary
+from wordbyword.pipeline import PipelineResult
 
 
 class ShowDistributionCliTest(unittest.TestCase):
@@ -180,6 +183,75 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
             self.assertIn("12_dictionary_candidates_with_cleaned_examples.jsonl", stdout.getvalue())
+
+    def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+
+            with patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+                mock_pipeline.return_value = PipelineResult(
+                    documents=0,
+                    extracted_pages=0,
+                    sentences=0,
+                    token_occurrences=0,
+                    vocabulary_terms=0,
+                    surface_words=0,
+                    output_dir=output_dir,
+                )
+                exit_code = main(["--generate-missing-examples", "--output", str(output_dir)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(mock_pipeline.called)
+            self.assertTrue(mock_pipeline.call_args.kwargs["generate_missing_examples"])
+
+    def test_prompt_generated_example_retry_defaults_to_yes(self) -> None:
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout), patch("sys.stdin.isatty", return_value=True), patch(
+            "builtins.input",
+            return_value="",
+        ):
+            should_retry = prompt_generated_example_retry(
+                summary=attempt_summary(attempt_number=1, failed_count=2),
+                output_dir=Path("/tmp/output"),
+                model="gemma4:31b",
+            )
+
+        self.assertTrue(should_retry)
+        self.assertIn("13_generated_example_attempts.jsonl", stdout.getvalue())
+        self.assertIn("13_generated_example_failures.jsonl", stdout.getvalue())
+
+    def test_prompt_generated_example_retry_accepts_no(self) -> None:
+        with patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value="n"):
+            should_retry = prompt_generated_example_retry(
+                summary=attempt_summary(attempt_number=2, failed_count=1),
+                output_dir=Path("/tmp/output"),
+                model="gemma4:31b",
+            )
+
+        self.assertFalse(should_retry)
+
+    def test_prompt_generated_example_retry_skips_noninteractive_runs(self) -> None:
+        with patch("sys.stdin.isatty", return_value=False):
+            should_retry = prompt_generated_example_retry(
+                summary=attempt_summary(attempt_number=1, failed_count=3),
+                output_dir=Path("/tmp/output"),
+                model="gemma4:31b",
+            )
+
+        self.assertFalse(should_retry)
+
+
+def attempt_summary(*, attempt_number: int, failed_count: int) -> GeneratedExampleAttemptSummary:
+    return GeneratedExampleAttemptSummary(
+        attempt_number=attempt_number,
+        attempted_count=failed_count,
+        generated_count=0,
+        failed_count=failed_count,
+        succeeded_row_ids=[],
+        failed_row_ids=[f"r{index:04d}" for index in range(1, failed_count + 1)],
+        attempt_rows=[],
+        failure_rows=[],
+    )
 
 
 if __name__ == "__main__":

@@ -395,6 +395,157 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary["linked_dictionary_candidates"], len(linked_rows))
             self.assertGreater(summary["linked_cleaned_example_sentences"], 0)
 
+    def test_pipeline_can_generate_missing_examples_from_saved_stage_twelve(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+
+            with (output_dir / "06_candidate_terms.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "canonical_key",
+                        "display",
+                        "kind",
+                        "pos_group",
+                        "count",
+                        "surface_count",
+                        "document_count",
+                        "variant_count",
+                        "variants",
+                        "quality_score",
+                        "roi_score",
+                        "example",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows(
+                    [
+                        {
+                            "canonical_key": "학교",
+                            "display": "학교",
+                            "kind": "term",
+                            "pos_group": "noun",
+                            "count": 10,
+                            "surface_count": 10,
+                            "document_count": 1,
+                            "variant_count": 1,
+                            "variants": "학교",
+                            "quality_score": 0.9,
+                            "roi_score": 0.5,
+                            "example": "학교 예문",
+                        },
+                        {
+                            "canonical_key": "버스",
+                            "display": "버스",
+                            "kind": "term",
+                            "pos_group": "noun",
+                            "count": 9,
+                            "surface_count": 9,
+                            "document_count": 1,
+                            "variant_count": 1,
+                            "variants": "버스",
+                            "quality_score": 0.8,
+                            "roi_score": 0.5,
+                            "example": "버스 예문",
+                        },
+                    ]
+                )
+
+            (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "canonical_key": "학교",
+                                "display": "학교",
+                                "kind": "term",
+                                "variants": ["학교"],
+                                "count": 10,
+                                "document_count": 1,
+                                "quality_score": 0.9,
+                                "roi_score": 0.5,
+                                "example": "원래 학교 예문이다.",
+                                "curation_status": "rewrite_ready",
+                                "example_replaced_with_cleaned_sentence": False,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "canonical_key": "버스",
+                                "display": "버스",
+                                "kind": "term",
+                                "variants": ["버스"],
+                                "count": 9,
+                                "document_count": 1,
+                                "quality_score": 0.8,
+                                "roi_score": 0.5,
+                                "example": "아침마다 버스를 타고 회사에 간다.",
+                                "curation_status": "rewrite_ready",
+                                "example_replaced_with_cleaned_sentence": True,
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                generate_missing_examples=True,
+                generated_example_client=GeneratedExampleClient(),
+            )
+
+            self.assertTrue((output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").exists())
+            self.assertTrue((output_dir / "13_generated_example_attempts.jsonl").exists())
+            self.assertTrue((output_dir / "13_generated_example_failures.jsonl").exists())
+            generated_rows = [
+                json.loads(line)
+                for line in (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            generated_attempt_rows = [
+                json.loads(line)
+                for line in (output_dir / "13_generated_example_attempts.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+
+            self.assertEqual(len(generated_rows), 2)
+            self.assertEqual(len(generated_attempt_rows), 1)
+            self.assertEqual(generated_rows[0]["example"], "학생들이 학교 운동장에서 축구를 한다.")
+            self.assertTrue(generated_rows[0]["example_generated_with_ollama"])
+            self.assertFalse(generated_rows[0]["example_replaced_with_cleaned_sentence"])
+            self.assertEqual(generated_rows[1]["example"], "아침마다 버스를 타고 회사에 간다.")
+            self.assertFalse(generated_rows[1]["example_generated_with_ollama"])
+            self.assertTrue(generated_rows[1]["example_replaced_with_cleaned_sentence"])
+            self.assertEqual(generated_attempt_rows[0]["canonical_key"], "학교")
+            self.assertTrue(generated_attempt_rows[0]["accepted"])
+            self.assertEqual(
+                (output_dir / "13_generated_example_failures.jsonl").read_text(encoding="utf-8"),
+                "",
+            )
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("13_dictionary_candidates_with_generated_examples.jsonl", summary["outputs"])
+            self.assertIn("13_generated_example_attempts.jsonl", summary["outputs"])
+            self.assertIn("13_generated_example_failures.jsonl", summary["outputs"])
+            self.assertEqual(summary["reviewed_missing_dictionary_examples"], 1)
+            self.assertEqual(summary["generated_dictionary_candidate_examples"], 1)
+            self.assertEqual(summary["preserved_dictionary_candidate_examples"], 1)
+            self.assertEqual(summary["failed_dictionary_candidate_examples"], 0)
+            self.assertEqual(summary["generated_example_attempt_rounds"], 1)
+            self.assertIn("13", {stage["stage"] for stage in summary["pipeline_stages"]})
+
     def test_example_cleanup_requires_saved_stage_nine_and_stage_six(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -539,6 +690,28 @@ class AlwaysKeepCleanupClient:
             provider="ollama",
             model="gemma4:31b",
             content="EMPTY",
+        )
+
+
+class GeneratedExampleClient:
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        rows = [
+            json.loads(line)
+            for line in messages[-1].content.splitlines()[1:]
+            if line.strip()
+        ]
+        lines = []
+        for row in rows:
+            assert set(row) == {"id", "headword", "variants"}
+            if row["headword"] == "학교":
+                sentence = "학생들이 학교 운동장에서 축구를 한다."
+            else:
+                sentence = "아침마다 버스를 타고 회사에 간다."
+            lines.append(f"{row['id']}\t{sentence}")
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content="\n".join(lines),
         )
 
 

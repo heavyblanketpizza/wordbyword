@@ -12,6 +12,12 @@ from wordbyword.example_cleanup import (
     build_cleaned_example_sentence_outputs,
     cleaned_example_sentence_fields,
 )
+from wordbyword.example_generation import (
+    GeneratedExampleAttemptSummary,
+    GeneratedExampleOutputs,
+    RetryGeneratedExampleCallback,
+    build_generated_dictionary_candidate_outputs,
+)
 from wordbyword.llm import SupportsCompletion
 from wordbyword.output_files import (
     append_jsonl,
@@ -37,30 +43,50 @@ def write_cleanup_outputs_from_saved(
     sentence_cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
+    generated_example_client: SupportsCompletion | None = None,
+    generated_example_progress: CleanupProgressCallback | None = None,
+    generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
-) -> tuple[CleanedExampleOutputs | None, CleanedDictionaryOutputs | None, LinkedDictionaryOutputs | None]:
+) -> tuple[
+    CleanedExampleOutputs | None,
+    CleanedDictionaryOutputs | None,
+    LinkedDictionaryOutputs | None,
+    GeneratedExampleOutputs | None,
+]:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleaned_example_outputs: CleanedExampleOutputs | None = None
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None
+    generated_example_outputs: GeneratedExampleOutputs | None = None
 
-    if sentence_cleanup_client is None and dictionary_cleanup_client is None:
+    if (
+        sentence_cleanup_client is None
+        and dictionary_cleanup_client is None
+        and generated_example_client is None
+    ):
         linked_dictionary_outputs = write_linked_dictionary_candidates_from_saved(
             output_dir,
             artifact_callback=artifact_callback,
             require_inputs=False,
         )
         refresh_saved_output_metadata(output_dir, linked_dictionary_outputs=linked_dictionary_outputs)
-        return None, None, linked_dictionary_outputs
+        return None, None, linked_dictionary_outputs, None
 
-    candidate_terms = read_required_rows(
-        output_dir / "06_candidate_terms.csv",
-        built_from="06_candidate_terms.csv",
-        target="LLM cleanup stages",
-    )
+    candidate_terms: list[dict[str, str]] | None = None
+    if (
+        sentence_cleanup_client is not None
+        or dictionary_cleanup_client is not None
+        or generated_example_client is not None
+    ):
+        candidate_terms = read_required_rows(
+            output_dir / "06_candidate_terms.csv",
+            built_from="06_candidate_terms.csv",
+            target="LLM cleanup stages",
+        )
     example_sentences: list[dict[str, str]] | None = None
 
     if sentence_cleanup_client is not None:
+        assert candidate_terms is not None
         example_sentences = read_required_rows(
             output_dir / "09_example_sentences.csv",
             built_from="09_example_sentences.csv",
@@ -89,6 +115,7 @@ def write_cleanup_outputs_from_saved(
         )
 
     if dictionary_cleanup_client is not None:
+        assert candidate_terms is not None
         dictionary_entries = read_required_jsonl(
             output_dir / "08_dictionary_candidates.jsonl",
             built_from="08_dictionary_candidates.jsonl",
@@ -119,18 +146,39 @@ def write_cleanup_outputs_from_saved(
                 cleaned_dictionary_outputs.rows,
             )
 
-    linked_dictionary_outputs = write_linked_dictionary_candidates_from_saved(
-        output_dir,
-        artifact_callback=artifact_callback,
-        require_inputs=False,
-    )
+    if (
+        (output_dir / "10_cleaned_example_sentences.csv").is_file()
+        and (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
+    ):
+        linked_dictionary_outputs = write_linked_dictionary_candidates_from_saved(
+            output_dir,
+            artifact_callback=artifact_callback,
+            require_inputs=False,
+        )
+    if generated_example_client is not None:
+        assert candidate_terms is not None
+        generated_example_outputs = write_generated_dictionary_candidates_from_saved(
+            output_dir,
+            generated_example_client=generated_example_client,
+            generated_example_progress=generated_example_progress,
+            generated_example_retry_decider=generated_example_retry_decider,
+            artifact_callback=artifact_callback,
+            linked_dictionary_outputs=linked_dictionary_outputs,
+            candidate_terms=candidate_terms,
+        )
     refresh_saved_output_metadata(
         output_dir,
         cleaned_example_outputs=cleaned_example_outputs,
         cleaned_dictionary_outputs=cleaned_dictionary_outputs,
         linked_dictionary_outputs=linked_dictionary_outputs,
+        generated_example_outputs=generated_example_outputs,
     )
-    return cleaned_example_outputs, cleaned_dictionary_outputs, linked_dictionary_outputs
+    return (
+        cleaned_example_outputs,
+        cleaned_dictionary_outputs,
+        linked_dictionary_outputs,
+        generated_example_outputs,
+    )
 
 
 def resolve_dictionary_support_rows(
@@ -195,3 +243,74 @@ def write_linked_dictionary_candidates_from_saved(
             linked_outputs.rows,
         )
     return linked_outputs
+
+
+def write_generated_dictionary_candidates_from_saved(
+    output_dir: Path,
+    *,
+    generated_example_client: SupportsCompletion,
+    generated_example_progress: CleanupProgressCallback | None = None,
+    generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
+    linked_dictionary_outputs: LinkedDictionaryOutputs | None = None,
+    candidate_terms: Sequence[Mapping[str, object]] | None = None,
+) -> GeneratedExampleOutputs:
+    linked_output_path = output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"
+    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+
+    if linked_dictionary_outputs is not None:
+        linked_rows = linked_dictionary_outputs.rows
+    elif linked_output_path.is_file():
+        linked_rows = read_jsonl(linked_output_path)
+    else:
+        rebuilt_linked_outputs = write_linked_dictionary_candidates_from_saved(
+            output_dir,
+            artifact_callback=artifact_callback,
+            require_inputs=True,
+        )
+        assert rebuilt_linked_outputs is not None
+        linked_rows = rebuilt_linked_outputs.rows
+
+    resolved_candidate_terms = (
+        list(candidate_terms)
+        if candidate_terms is not None
+        else read_required_rows(
+            output_dir / "06_candidate_terms.csv",
+            built_from="06_candidate_terms.csv",
+            target="13_dictionary_candidates_with_generated_examples.jsonl",
+        )
+    )
+
+    initialize_jsonl_file(generated_output_path)
+    initialize_jsonl_file(generated_attempts_path)
+    initialize_jsonl_file(generated_failures_path)
+    unresolved_failure_rows: dict[str, dict[str, object]] = {}
+
+    def on_attempt_complete(summary: GeneratedExampleAttemptSummary) -> bool:
+        append_jsonl(generated_attempts_path, summary.attempt_rows)
+        for row_id in summary.succeeded_row_ids:
+            unresolved_failure_rows.pop(row_id, None)
+        for failure_row in summary.failure_rows:
+            unresolved_failure_rows[str(failure_row["row_id"])] = failure_row
+        write_jsonl(generated_failures_path, list(unresolved_failure_rows.values()))
+        if summary.failed_count <= 0 or generated_example_retry_decider is None:
+            return False
+        return generated_example_retry_decider(summary)
+
+    generated_outputs = build_generated_dictionary_candidate_outputs(
+        linked_rows,
+        resolved_candidate_terms,
+        client=generated_example_client,
+        on_progress=generated_example_progress,
+        on_attempt_complete=on_attempt_complete,
+    )
+    write_jsonl(generated_output_path, generated_outputs.rows)
+    write_jsonl(generated_failures_path, generated_outputs.failure_rows)
+    if artifact_callback is not None:
+        artifact_callback(
+            "13_dictionary_candidates_with_generated_examples",
+            generated_outputs.rows,
+        )
+    return generated_outputs

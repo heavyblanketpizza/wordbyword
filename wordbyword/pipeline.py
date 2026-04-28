@@ -8,6 +8,7 @@ import json
 from kiwipiepy import Kiwi
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
+from wordbyword.example_generation import RetryGeneratedExampleCallback
 from wordbyword.llm import SupportsCompletion, ollama_client
 from wordbyword.analyzer import KoreanAnalyzer
 from wordbyword.readers import discover_documents, document_id_for, read_document
@@ -39,21 +40,34 @@ def run_pipeline(
     include_numbers: bool = False,
     clean_example_sentences: bool = False,
     clean_dictionary_candidates: bool = False,
+    generate_missing_examples: bool = False,
     sentence_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_client: SupportsCompletion | None = None,
+    generated_example_client: SupportsCompletion | None = None,
     sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
     sentence_cleanup_base_url: str | None = None,
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
+    generated_example_progress: CleanupProgressCallback | None = None,
+    generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> PipelineResult:
     example_cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
     dictionary_cleanup_requested = clean_dictionary_candidates or dictionary_cleanup_client is not None
-    cleanup_requested = example_cleanup_requested or dictionary_cleanup_requested
+    generated_example_requested = generate_missing_examples or generated_example_client is not None
+    cleanup_requested = (
+        example_cleanup_requested
+        or dictionary_cleanup_requested
+        or generated_example_requested
+    )
     if cleanup_requested:
         shared_cleanup_client = None
-        if sentence_cleanup_client is None and dictionary_cleanup_client is None:
+        if (
+            sentence_cleanup_client is None
+            and dictionary_cleanup_client is None
+            and generated_example_client is None
+        ):
             shared_cleanup_client = ollama_client(
                 model=sentence_cleanup_model,
                 base_url=sentence_cleanup_base_url,
@@ -73,9 +87,20 @@ def run_pipeline(
                 if dictionary_cleanup_requested
                 else None,
                 dictionary_cleanup_progress=(
-                    dictionary_cleanup_progress or cleanup_progress
+                dictionary_cleanup_progress or cleanup_progress
                 )
                 if dictionary_cleanup_requested
+                else None,
+                generated_example_client=(generated_example_client or shared_cleanup_client)
+                if generated_example_requested
+                else None,
+                generated_example_progress=(
+                    generated_example_progress or dictionary_cleanup_progress or cleanup_progress
+                )
+                if generated_example_requested
+                else None,
+                generated_example_retry_decider=generated_example_retry_decider
+                if generated_example_requested
                 else None,
                 artifact_callback=artifact_callback,
             )
