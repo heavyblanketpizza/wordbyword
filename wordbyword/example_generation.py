@@ -644,7 +644,6 @@ def review_generated_example_batch(
             ChatMessage(role="system", content=BATCH_GENERATE_EXAMPLE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_generated_example_response(result.content)
@@ -687,7 +686,6 @@ def review_repaired_generated_example_batch(
             ChatMessage(role="system", content=BATCH_REPAIR_GENERATED_EXAMPLE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_repaired_generated_example_response(result.content)

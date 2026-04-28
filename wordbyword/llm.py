@@ -25,6 +25,8 @@ DEFAULT_PROVIDER_BASE_URLS: dict[ProviderName, str] = {
     "ollama": "http://localhost:11434",
 }
 
+DEFAULT_TEMPERATURE = 0.7
+
 SENTENCE_REWRITE_SYSTEM_PROMPT = """You rewrite Korean example sentences for learners.
 Keep the meaning faithful.
 Prefer natural Korean over literal wording.
@@ -69,7 +71,7 @@ class ProviderConfig:
     base_url: str
     api_key: str | None = None
     timeout_seconds: float = 60.0
-    default_temperature: float = 0.7
+    default_temperature: float = DEFAULT_TEMPERATURE
     max_output_tokens: int = 1024
 
 
@@ -384,7 +386,7 @@ def load_provider_config(
     api_key: str | None = None,
     base_url: str | None = None,
     timeout_seconds: float = 60.0,
-    default_temperature: float = 0.7,
+    default_temperature: float = DEFAULT_TEMPERATURE,
     max_output_tokens: int = 1024,
 ) -> ProviderConfig:
     normalized = normalize_provider_name(provider)
@@ -416,7 +418,7 @@ def build_provider_client(
     api_key: str | None = None,
     base_url: str | None = None,
     timeout_seconds: float = 60.0,
-    default_temperature: float = 0.7,
+    default_temperature: float = DEFAULT_TEMPERATURE,
     max_output_tokens: int = 1024,
     transport: JsonTransport | None = None,
 ) -> BaseChatClient:

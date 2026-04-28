@@ -378,7 +378,6 @@ def review_cleanup_batch(
             ChatMessage(role="system", content=BATCH_CLEAN_EXAMPLE_SENTENCE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_batch_cleanup_response(result.content)

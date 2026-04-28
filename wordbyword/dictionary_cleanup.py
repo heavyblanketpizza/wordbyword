@@ -247,7 +247,6 @@ def review_dictionary_cleanup_batch(
             ChatMessage(role="system", content=BATCH_CLEAN_DICTIONARY_CANDIDATE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_dictionary_cleanup_response(result.content)
@@ -362,4 +361,3 @@ def prompt_variants(value: object) -> list[str]:
     if isinstance(value, list):
         return [cleaned for cleaned in (clean_example_text(str(item)).strip() for item in value) if cleaned][:MAX_PROMPT_VARIANTS]
     return split_joined_keys(value)[:MAX_PROMPT_VARIANTS]
-

@@ -106,7 +106,7 @@ export WORDBYWORD_GOOGLE_MODEL=gemini-1.5-pro
 export WORDBYWORD_OLLAMA_MODEL=llama3.1
 ```
 
-All LLM helper clients default to `temperature=0.0`. Override with `default_temperature=` only when you intentionally want sampling.
+All LLM helper clients default to `temperature=0.7`. Override with `default_temperature=` only when you need a different sampling level.
 
 The optional sentence cleanup stage uses Ollama and defaults to `gemma4:31b` when `--clean-example-sentences` is enabled. Override it at runtime if needed:
 
