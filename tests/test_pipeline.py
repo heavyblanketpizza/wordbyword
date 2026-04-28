@@ -944,7 +944,14 @@ class RetryingGeneratedExampleClient:
             assert set(row) == {"id", "headword", "variants"}
             content = f"{row['id']}\t두 그림은 서로 닮은 점이 많다."
         else:
-            assert set(row) == {"id", "headword", "variants", "source_example", "generated_example"}
+            assert set(row) == {
+                "id",
+                "headword",
+                "variants",
+                "source_example",
+                "generated_example",
+                "failure_reason",
+            }
             content = f"{row['id']}\tkeep_generated\t"
         return CompletionResult(
             provider="ollama",

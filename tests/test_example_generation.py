@@ -177,7 +177,70 @@ class ExampleGenerationTest(unittest.TestCase):
         self.assertEqual(outputs.failure_rows, [])
         self.assertEqual(client.repair_prompt_row["generated_example"], "두 그림은 서로 닮은 점이 많다.")
         self.assertEqual(client.repair_prompt_row["source_example"], "비슷하다")
+        self.assertIn("did not cover canonical key '비슷하다'", client.repair_prompt_row["failure_reason"])
         self.assertEqual(client.repair_system_prompt, BATCH_REPAIR_GENERATED_EXAMPLE_SYSTEM_PROMPT)
+
+    def test_generated_examples_retry_prompt_includes_duplicate_failure_reason(self) -> None:
+        client = DuplicateThenRewriteRetryClient()
+
+        outputs = build_generated_dictionary_candidate_outputs(
+            [
+                dictionary_candidate(
+                    "학교",
+                    example="원래 학교 예문이다.",
+                    example_replaced_with_cleaned_sentence=False,
+                ),
+                dictionary_candidate(
+                    "책",
+                    example="도서관에서 책을 읽는다.",
+                    example_replaced_with_cleaned_sentence=True,
+                ),
+            ],
+            [
+                candidate_term("학교", pos_group="noun", quality_score=0.9),
+                candidate_term("책", pos_group="noun", quality_score=0.8),
+            ],
+            client=client,
+            on_attempt_complete=lambda summary: summary.failed_count > 0,
+        )
+
+        self.assertEqual(outputs.generated_count, 1)
+        self.assertEqual(outputs.failed_count, 0)
+        self.assertEqual(outputs.rows[0]["example"], "학생들이 학교 운동장에서 축구를 한다.")
+        self.assertEqual(outputs.attempt_rows[1]["review_action"], "rewrite_generated")
+        self.assertEqual(client.repair_prompt_row["generated_example"], "도서관에서 책을 읽는다.")
+        self.assertEqual(
+            client.repair_prompt_row["failure_reason"],
+            "Generated example for row 'r0001' duplicated an existing example sentence.",
+        )
+
+    def test_generated_example_repair_failure_reason_names_bopsida_instruction(self) -> None:
+        client = InstructionThenKeepRetryClient()
+
+        outputs = build_generated_dictionary_candidate_outputs(
+            [
+                dictionary_candidate(
+                    "정리",
+                    example="보기 발명하고 싶은 물건의 특징이 잘 드러나도록 와 같이 2 설명할 내용을 정리해 봅시다.",
+                    example_replaced_with_cleaned_sentence=False,
+                )
+            ],
+            [candidate_term("정리", pos_group="noun", quality_score=0.9)],
+            client=client,
+            on_attempt_complete=lambda summary: summary.attempt_number == 1 and summary.failed_count > 0,
+        )
+
+        self.assertEqual(outputs.generated_count, 0)
+        self.assertEqual(outputs.failed_count, 1)
+        self.assertEqual(outputs.attempt_round_count, 2)
+        self.assertEqual(len(outputs.attempt_rows), 2)
+        self.assertEqual(outputs.attempt_rows[1]["attempt_kind"], "repair")
+        self.assertEqual(outputs.attempt_rows[1]["review_action"], "keep_generated")
+        self.assertEqual(
+            outputs.attempt_rows[1]["failure_reason"],
+            "Generated example repair for row 'r0001' was not a usable sentence: "
+            "it is an instruction ending with '-봅시다'.",
+        )
 
     def test_generated_examples_retry_can_rewrite_source_for_quality(self) -> None:
         client = RewriteSourceRetryClient()
@@ -345,6 +408,49 @@ class SurfaceCoverageGeneratedExampleClient:
         )
 
 
+class DuplicateThenRewriteRetryClient:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.repair_prompt_row: dict[str, object] = {}
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        self.calls += 1
+        row = json.loads(messages[-1].content.splitlines()[1])
+        if self.calls == 1:
+            assert_prompt_packet_shape(row)
+            content = f"{row['id']}\t도서관에서 책을 읽는다."
+        else:
+            assert_repair_prompt_packet_shape(row)
+            self.repair_prompt_row = row
+            content = f"{row['id']}\trewrite_generated\t학생들이 학교 운동장에서 축구를 한다."
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content=content,
+        )
+
+
+class InstructionThenKeepRetryClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        self.calls += 1
+        row = json.loads(messages[-1].content.splitlines()[1])
+        sentence = "발표할 내용을 간단하게 정리해 봅시다."
+        if self.calls == 1:
+            assert_prompt_packet_shape(row)
+            content = f"{row['id']}\t{sentence}"
+        else:
+            assert_repair_prompt_packet_shape(row)
+            content = f"{row['id']}\tkeep_generated\t"
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content=content,
+        )
+
+
 class KeepGeneratedRetryClient:
     def __init__(self) -> None:
         self.calls = 0
@@ -400,7 +506,14 @@ def assert_prompt_packet_shape(row: dict[str, object]) -> None:
 
 
 def assert_repair_prompt_packet_shape(row: dict[str, object]) -> None:
-    assert set(row) == {"id", "headword", "variants", "source_example", "generated_example"}
+    assert set(row) == {
+        "id",
+        "headword",
+        "variants",
+        "source_example",
+        "generated_example",
+        "failure_reason",
+    }
 
 
 if __name__ == "__main__":

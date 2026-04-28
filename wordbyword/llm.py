@@ -25,6 +25,10 @@ DEFAULT_PROVIDER_BASE_URLS: dict[ProviderName, str] = {
     "ollama": "http://localhost:11434",
 }
 
+DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TEMPERATURE = 0.7
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+
 SENTENCE_REWRITE_SYSTEM_PROMPT = """You rewrite Korean example sentences for learners.
 Keep the meaning faithful.
 Prefer natural Korean over literal wording.
@@ -68,9 +72,9 @@ class ProviderConfig:
     model: str
     base_url: str
     api_key: str | None = None
-    timeout_seconds: float = 60.0
-    default_temperature: float = 0.0
-    max_output_tokens: int = 1024
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    default_temperature: float = DEFAULT_TEMPERATURE
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
 
 @dataclass(frozen=True)
@@ -383,9 +387,9 @@ def load_provider_config(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    timeout_seconds: float = 60.0,
-    default_temperature: float = 0.0,
-    max_output_tokens: int = 1024,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    default_temperature: float = DEFAULT_TEMPERATURE,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
 ) -> ProviderConfig:
     normalized = normalize_provider_name(provider)
     resolved_model = model or provider_model_from_env(normalized) or DEFAULT_PROVIDER_MODELS[normalized]
@@ -415,9 +419,9 @@ def build_provider_client(
     model: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    timeout_seconds: float = 60.0,
-    default_temperature: float = 0.0,
-    max_output_tokens: int = 1024,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    default_temperature: float = DEFAULT_TEMPERATURE,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     transport: JsonTransport | None = None,
 ) -> BaseChatClient:
     config = provider if isinstance(provider, ProviderConfig) else load_provider_config(

@@ -1,6 +1,16 @@
 # wordbyword
 
-Extract Korean vocabulary candidates from PDFs and text files for study workflows.
+Internal progress note for building a 학년별 dynamic Korean vocabulary dictionary that can guide LLM rewrites of mature reading materials, especially newspapers and scientific or research articles, into grade-appropriate Korean reading.
+
+The project is currently a vocabulary-and-example preparation pipeline. It does not yet perform the final grade-aware rewrite of source articles. The useful work so far is the upstream dictionary substrate: source text extraction, Korean morphology, canonical vocabulary grouping, candidate scoring, learner-dictionary cleanup, cleaned example selection, and missing example generation.
+
+## Current Shape
+
+- Input: Korean PDFs, `.txt`, and `.md` files under `original/`.
+- Base run: deterministic extraction and scoring from source documents into numbered CSV/JSONL artifacts.
+- Optional LLM runs: saved-output cleanup stages that use Ollama to curate example sentences, filter dictionary candidates, link cleaned examples, generate missing examples, and retry failed generated examples.
+- Near-term product objective: turn the cleaned dictionary candidates into a 학년별 vocabulary profile that an LLM can use while rewriting mature source material for younger readers.
+- Not implemented yet: grade-level bands, learner difficulty calibration, rewrite orchestration for full articles, and evaluation of whether rewritten text stays faithful to the original.
 
 ## Folder Layout
 
@@ -26,7 +36,7 @@ The pipeline writes these files:
 - `05_vocabulary_raw.csv`: raw unique vocabulary terms from Korean-aware morphology.
 - `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, quality scores, and ROI scores.
 - `07_rejected_terms.csv`: vocabulary terms removed by deterministic cleanup, with rejection reasons.
-- `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for a later LLM curation stage.
+- `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for learner-dictionary curation.
 - `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
 - `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
 - `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
@@ -56,9 +66,11 @@ uv --no-cache run python -m wordbyword --include-numbers
 uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
+uv --no-cache run python -m wordbyword --generate-missing-examples
 uv --no-cache run python -m wordbyword --retry-generated-examples
 uv --no-cache run python -m wordbyword --add-dictionary-meanings
 uv --no-cache run python -m wordbyword --fill-missing-meanings
+uv --no-cache run python -m wordbyword --show-distribution
 ```
 
 The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
@@ -70,15 +82,18 @@ uv --no-cache run python -m wordbyword
 uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
+uv --no-cache run python -m wordbyword --generate-missing-examples
 uv --no-cache run python -m wordbyword --retry-generated-examples
 ```
 
 - `--clean-example-sentences` reads saved `06_candidate_terms.csv` and `09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
 - `--clean-dictionary-candidates` reads saved `06_candidate_terms.csv` and `08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
 - `--link-cleaned-examples` reads saved `10_cleaned_example_sentences.csv` and `11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
+- `--generate-missing-examples` reads saved `12_dictionary_candidates_with_cleaned_examples.jsonl` to write `13_dictionary_candidates_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
 - `--retry-generated-examples` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and `13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
 - `--add-dictionary-meanings` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and writes `14_dictionary_candidates_with_meanings.jsonl`. On the first run it downloads the bundled 한국어기초사전 source into `./krdict_data/` (configurable via `--krdict-dir`) and parses it into `krdict_data/index.json`; subsequent runs reuse the cached index. Each row gets a `meaning` field populated from the dictionary, or `"N/A"` when the headword is not found.
 - `--fill-missing-meanings` reads saved `14_dictionary_candidates_with_meanings.jsonl`, sends only the `N/A` rows to Ollama in batches of 40, checkpoints the file after every batch, and logs attempts and unresolved failures to `14_dictionary_meaning_attempts.jsonl` and `14_dictionary_meaning_failures.jsonl`.
+- `--show-distribution` renders the terminal distribution panel for an existing `11_cleaned_dictionary_candidates.jsonl` without making LLM calls.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
 
@@ -93,9 +108,9 @@ Pure numbers are ignored in vocabulary and surface word outputs unless `--includ
 
 The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, and assign rough deterministic quality and ROI scores for downstream review.
 
-## LLM Providers
+## LLM Providers And Cleanup
 
-The package now exposes a small provider layer for the next rewrite and dictionary-curation stage:
+The package exposes a small provider layer for rewrite and dictionary-curation work:
 
 - `openai`
 - `claude`
@@ -120,7 +135,7 @@ export WORDBYWORD_GOOGLE_MODEL=gemini-1.5-pro
 export WORDBYWORD_OLLAMA_MODEL=llama3.1
 ```
 
-All LLM helper clients default to `temperature=0.0`. Override with `default_temperature=` only when you intentionally want sampling.
+All LLM helper clients default to `temperature=0.7`. Override with `default_temperature=` only when you need a different sampling level.
 
 The optional sentence cleanup stage uses Ollama and defaults to `gemma4:31b` when `--clean-example-sentences` is enabled. Override it at runtime if needed:
 
@@ -132,12 +147,22 @@ The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batch
 
 The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
 
-The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints `13_dictionary_candidates_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example and the failed generated sentence, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
+The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints `13_dictionary_candidates_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example, the failed generated sentence, and the validation failure reason, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
 
 ```bash
 uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
 ```
+
+## What This Enables Next
+
+The current `13_dictionary_candidates_with_generated_examples.jsonl` shape is the closest artifact to a rewrite-ready vocabulary dictionary. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
+
+- grade band or target reader level for each canonical key
+- allowed forms, variants, and example sentences per grade band
+- difficulty evidence from frequency, dispersion, source examples, and manual/LLM judgment
+- rewrite prompts that tell the LLM which mature terms to preserve, simplify, gloss, or replace
+- evaluation rows comparing original and rewritten article sentences for faithfulness, readability, and vocabulary-band fit
 
 Programmatic example:
 

@@ -13,9 +13,9 @@ from wordbyword.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
     emit_cleanup_batch_progress,
-    is_acceptable_cleaned_sentence,
     source_similarity,
     tokenize_sentence,
+    unacceptable_cleaned_sentence_reason,
 )
 from wordbyword.llm import (
     ChatMessage,
@@ -66,12 +66,15 @@ Rules:
 
 BATCH_REPAIR_GENERATED_EXAMPLE_SYSTEM_PROMPT = """You repair Korean learner example sentences for vocabulary headwords.
 For each input row, compare source_example and generated_example for the target headword and choose exactly one action.
+Input rows include failure_reason, which explains why generated_example failed validation on the previous attempt.
 Actions:
 - keep_generated: keep generated_example unchanged
 - rewrite_generated: rewrite generated_example so it matches the meaning of the headword in source_example
 - rewrite_source: rewrite source_example into a clean, natural, learner-friendly Korean sentence while preserving its meaning
 - new_example: ignore both sentences and write a completely new learner-friendly example sentence from scratch
 Decision policy:
+- Treat failure_reason as authoritative validation feedback and fix that specific problem.
+- If failure_reason says the prior sentence was not a usable sentence, duplicated an existing example sentence, or was too similar to the source example, do not use keep_generated.
 - If source_example is a directive, classroom instruction, workbook prompt, comprehension question, or otherwise not a proper learner example sentence, use new_example.
 - Otherwise, if generated_example is empty, unusable, or clearly broken, choose rewrite_source when source_example is a good learner sentence; otherwise choose new_example.
 - Otherwise, if source_example and generated_example use the target headword in materially different senses, use rewrite_generated.
@@ -644,7 +647,6 @@ def review_generated_example_batch(
             ChatMessage(role="system", content=BATCH_GENERATE_EXAMPLE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_generated_example_response(result.content)
@@ -687,7 +689,6 @@ def review_repaired_generated_example_batch(
             ChatMessage(role="system", content=BATCH_REPAIR_GENERATED_EXAMPLE_SYSTEM_PROMPT),
             ChatMessage(role="user", content="\n".join(payload_lines)),
         ],
-        temperature=0.0,
         max_output_tokens=max_output_tokens,
     )
     parsed_rows = parse_repaired_generated_example_response(result.content)
@@ -792,9 +793,10 @@ def validate_generated_example_sentence(
     seen_examples: set[str],
 ) -> str:
     cleaned_sentence = clean_example_text(generated_sentence).strip()
-    if not is_acceptable_cleaned_sentence(cleaned_sentence):
+    unusable_reason = unacceptable_cleaned_sentence_reason(cleaned_sentence)
+    if unusable_reason:
         raise LLMResponseError(
-            f"Generated example for row '{indexed_row.row_id}' was not a usable sentence."
+            f"Generated example for row '{indexed_row.row_id}' was not a usable sentence: {unusable_reason}."
         )
 
     source_example = clean_example_text(str(indexed_row.row.get("example", ""))).strip()
@@ -832,9 +834,10 @@ def validate_repaired_generated_example_sentence(
         raise LLMResponseError(
             f"Generated example repair for row '{indexed_row.row_id}' did not produce a sentence."
         )
-    if not is_acceptable_cleaned_sentence(cleaned_sentence):
+    unusable_reason = unacceptable_cleaned_sentence_reason(cleaned_sentence)
+    if unusable_reason:
         raise LLMResponseError(
-            f"Generated example repair for row '{indexed_row.row_id}' was not a usable sentence."
+            f"Generated example repair for row '{indexed_row.row_id}' was not a usable sentence: {unusable_reason}."
         )
     if cleaned_sentence in seen_examples:
         raise LLMResponseError(
@@ -880,6 +883,7 @@ def build_repair_prompt_packet(indexed_row: IndexedGeneratedExampleRow) -> dict[
         ),
         "source_example": clean_example_text(str(indexed_row.row.get("example", ""))),
         "generated_example": clean_example_text(indexed_row.prior_generated_sentence),
+        "failure_reason": str(indexed_row.prior_failure_reason).strip(),
     }
 
 

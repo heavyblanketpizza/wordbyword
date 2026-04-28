@@ -7,6 +7,8 @@ from unittest.mock import patch
 from wordbyword.llm import (
     ChatMessage,
     CompletionResult,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_TEMPERATURE,
     build_dictionary_entry,
     build_provider_client,
     load_provider_config,
@@ -55,7 +57,7 @@ class ProviderConfigTest(unittest.TestCase):
         self.assertEqual(config.provider, "ollama")
         self.assertEqual(config.base_url, "http://localhost:11434")
         self.assertIsNone(config.api_key)
-        self.assertEqual(config.default_temperature, 0.0)
+        self.assertEqual(config.default_temperature, DEFAULT_TEMPERATURE)
 
 
 class ProviderClientTest(unittest.TestCase):
@@ -86,7 +88,7 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(transport.headers["Authorization"], "Bearer openai-key")
         self.assertEqual(transport.body["model"], "gpt-test")
-        self.assertEqual(transport.body["temperature"], 0.0)
+        self.assertEqual(transport.body["temperature"], DEFAULT_TEMPERATURE)
         self.assertEqual(transport.body["response_format"], {"type": "json_object"})
         self.assertEqual(transport.body["messages"][0]["role"], "system")
 
@@ -108,9 +110,9 @@ class ProviderClientTest(unittest.TestCase):
             api_key="openai-key",
             transport=transport,
         )
-        client.complete([ChatMessage("user", "hello")], temperature=0.7)
+        client.complete([ChatMessage("user", "hello")], temperature=0.2)
 
-        self.assertEqual(transport.body["temperature"], 0.7)
+        self.assertEqual(transport.body["temperature"], 0.2)
 
     def test_claude_client_sends_system_prompt_separately(self) -> None:
         transport = FakeTransport(
@@ -180,7 +182,7 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "http://localhost:11434/api/chat")
         self.assertEqual(transport.body["format"], "json")
         self.assertFalse(transport.body["think"])
-        self.assertEqual(transport.body["options"]["num_predict"], 1024)
+        self.assertEqual(transport.body["options"]["num_predict"], DEFAULT_MAX_OUTPUT_TOKENS)
         self.assertEqual(transport.body["messages"][0]["content"], "hello")
 
 
