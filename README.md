@@ -34,6 +34,9 @@ The pipeline writes these files:
 - `13_dictionary_candidates_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, preserves cleaned-example wins, and writes a completely new candidate example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
 - `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
 - `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
+- `14_dictionary_candidates_with_meanings.jsonl`: optional stage that keeps the `13` row shape and adds a `meaning` field. Stage 14A (`--add-dictionary-meanings`) populates the field from the bundled 한국어기초사전 lookup, falling back to `"N/A"` for terms the dictionary does not cover. Stage 14B (`--fill-missing-meanings`) sends the remaining `N/A` rows to Ollama in batches of 40 and checkpoints the file after every batch.
+- `14_dictionary_meaning_attempts.jsonl`: sidecar log of every stage-14B Ollama attempt.
+- `14_dictionary_meaning_failures.jsonl`: sidecar log of the currently unresolved stage-14B failures.
 - `README.md`: a generated guide for reading the output folder in pipeline order.
 
 When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
@@ -54,6 +57,8 @@ uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
 uv --no-cache run python -m wordbyword --retry-generated-examples
+uv --no-cache run python -m wordbyword --add-dictionary-meanings
+uv --no-cache run python -m wordbyword --fill-missing-meanings
 ```
 
 The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
@@ -72,8 +77,17 @@ uv --no-cache run python -m wordbyword --retry-generated-examples
 - `--clean-dictionary-candidates` reads saved `06_candidate_terms.csv` and `08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
 - `--link-cleaned-examples` reads saved `10_cleaned_example_sentences.csv` and `11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
 - `--retry-generated-examples` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and `13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
+- `--add-dictionary-meanings` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and writes `14_dictionary_candidates_with_meanings.jsonl`. On the first run it downloads the bundled 한국어기초사전 source into `./krdict_data/` (configurable via `--krdict-dir`) and parses it into `krdict_data/index.json`; subsequent runs reuse the cached index. Each row gets a `meaning` field populated from the dictionary, or `"N/A"` when the headword is not found.
+- `--fill-missing-meanings` reads saved `14_dictionary_candidates_with_meanings.jsonl`, sends only the `N/A` rows to Ollama in batches of 40, checkpoints the file after every batch, and logs attempts and unresolved failures to `14_dictionary_meaning_attempts.jsonl` and `14_dictionary_meaning_failures.jsonl`.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
+
+Stage 14 is run as two separate passes (lookup first, Ollama fill second) so the deterministic dictionary join stays inspectable on its own:
+
+```bash
+uv --no-cache run python -m wordbyword --add-dictionary-meanings
+uv --no-cache run python -m wordbyword --fill-missing-meanings --ollama-model gemma4:31b
+```
 
 Pure numbers are ignored in vocabulary and surface word outputs unless `--include-numbers` is set.
 

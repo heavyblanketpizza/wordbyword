@@ -84,6 +84,43 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--add-dictionary-meanings",
+        action="store_true",
+        help=(
+            "Use saved output/13_dictionary_candidates_with_generated_examples.jsonl plus the "
+            "한국어기초사전 cache (downloaded on first run) to write "
+            "14_dictionary_candidates_with_meanings.jsonl. Rows missing from 한국어기초사전 are "
+            "tagged with meaning='N/A' so a later --fill-missing-meanings pass can complete them."
+        ),
+    )
+    parser.add_argument(
+        "--fill-missing-meanings",
+        action="store_true",
+        help=(
+            "Use saved output/14_dictionary_candidates_with_meanings.jsonl to fill rows whose "
+            "meaning is 'N/A' with Ollama-written learner definitions, processed in batches of 40 "
+            "and checkpointed after every batch."
+        ),
+    )
+    parser.add_argument(
+        "--krdict-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Folder used to cache the bundled 한국어기초사전 source XML and parsed index. "
+            "Defaults to ./krdict_data. The folder is created and populated on the first "
+            "--add-dictionary-meanings run."
+        ),
+    )
+    parser.add_argument(
+        "--krdict-url",
+        default=None,
+        help=(
+            "Override the default 한국어기초사전 download URL. Useful when bundling a private mirror; "
+            "must point at a tar.gz containing the official KRDict XML files."
+        ),
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
@@ -130,6 +167,17 @@ def main(argv: list[str] | None = None) -> int:
             "wordbyword: error: --retry-generated-examples cannot be combined with "
             "--clean-example-sentences, --clean-dictionary-candidates, or --generate-missing-examples.\n",
         )
+    if (args.add_dictionary_meanings or args.fill_missing_meanings) and (
+        args.clean_example_sentences
+        or args.clean_dictionary_candidates
+        or args.generate_missing_examples
+        or args.retry_generated_examples
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --add-dictionary-meanings and --fill-missing-meanings cannot be "
+            "combined with the stage 10-13 LLM flags. Run them as their own pass.\n",
+        )
 
     emit_boot_screen(
         input_dir=args.input,
@@ -139,6 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             or args.clean_dictionary_candidates
             or args.generate_missing_examples
             or args.retry_generated_examples
+            or args.add_dictionary_meanings
+            or args.fill_missing_meanings
         ),
         sentence_cleanup_model=args.ollama_model,
     )
@@ -166,6 +216,17 @@ def main(argv: list[str] | None = None) -> int:
             label="candidate example",
             item_label="terms",
         )
+
+    def dictionary_meaning_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(
+            progress,
+            model=args.ollama_model,
+            label="meaning",
+            item_label="terms",
+        )
+
+    def krdict_status(phase: str, detail: str) -> None:
+        emit_stage_update(f"krdict_{phase}", detail)
 
     def generated_example_retry_decider(summary: GeneratedExampleAttemptSummary) -> bool:
         if args.retry_generated_examples:
@@ -229,6 +290,30 @@ def main(argv: list[str] | None = None) -> int:
                     ("model", args.ollama_model),
                 ),
             )
+            return
+        if stage == "14_dictionary_candidates_with_meanings":
+            from_dict_count = sum(
+                1 for entry in entries
+                if str(entry.get("meaning_source", "")) == "krdict"
+            )
+            ollama_count = sum(
+                1 for entry in entries
+                if str(entry.get("meaning_source", "")) == "ollama"
+            )
+            missing_count = sum(
+                1 for entry in entries
+                if str(entry.get("meaning_source", "")) == "missing"
+            )
+            emit_artifact_drop(
+                stage,
+                file_label="14_dictionary_candidates_with_meanings.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("krdict", f"{from_dict_count:,} hits"),
+                    ("ollama", f"{ollama_count:,} written"),
+                    ("missing", f"{missing_count:,} pending"),
+                ),
+            )
 
     try:
         result = run_pipeline(
@@ -240,12 +325,18 @@ def main(argv: list[str] | None = None) -> int:
             clean_dictionary_candidates=args.clean_dictionary_candidates,
             generate_missing_examples=args.generate_missing_examples,
             retry_generated_examples=args.retry_generated_examples,
+            add_dictionary_meanings=args.add_dictionary_meanings,
+            fill_missing_meanings=args.fill_missing_meanings,
             sentence_cleanup_model=args.ollama_model,
             sentence_cleanup_base_url=args.ollama_base_url,
+            krdict_dir=args.krdict_dir,
+            krdict_download_url=args.krdict_url,
+            krdict_status_callback=krdict_status,
             progress=emit_stage_update,
             cleanup_progress=example_cleanup_progress,
             dictionary_cleanup_progress=dictionary_cleanup_progress,
             generated_example_progress=generated_example_progress,
+            dictionary_meaning_progress=dictionary_meaning_progress,
             generated_example_retry_decider=generated_example_retry_decider,
             artifact_callback=artifact_callback,
         )
@@ -262,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             or args.clean_dictionary_candidates
             or args.generate_missing_examples
             or args.retry_generated_examples
+            or args.add_dictionary_meanings
+            or args.fill_missing_meanings
         ),
         sentence_cleanup_model=args.ollama_model,
     )

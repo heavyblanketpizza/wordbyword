@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs
+from wordbyword.dictionary_meaning import (
+    DictionaryMeaningGenerationOutputs,
+    DictionaryMeaningLookupOutputs,
+)
 from wordbyword.example_assignment import LinkedDictionaryOutputs
 from wordbyword.example_cleanup import CleanedExampleOutputs
 from wordbyword.example_generation import GeneratedExampleOutputs
@@ -73,6 +77,7 @@ def write_output_readme(
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
     include_generated_dictionary_candidates: bool = False,
+    include_dictionary_meanings: bool = False,
 ) -> None:
     lines = [
         "# wordbyword output",
@@ -87,6 +92,7 @@ def write_output_readme(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_dictionary_meanings=include_dictionary_meanings,
     ):
         lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
 
@@ -108,11 +114,14 @@ def refresh_saved_output_metadata(
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None,
     generated_example_outputs: GeneratedExampleOutputs | None = None,
+    dictionary_meaning_lookup_outputs: DictionaryMeaningLookupOutputs | None = None,
+    dictionary_meaning_generation_outputs: DictionaryMeaningGenerationOutputs | None = None,
 ) -> None:
     include_cleaned_example_sentences = (output_dir / "10_cleaned_example_sentences.csv").is_file()
     include_cleaned_dictionary_candidates = (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
     include_linked_dictionary_candidates = (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").is_file()
     include_generated_dictionary_candidates = (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").is_file()
+    include_dictionary_meanings = (output_dir / "14_dictionary_candidates_with_meanings.jsonl").is_file()
 
     summary_path = output_dir / "00_summary.json"
     summary: dict[str, Any] = {}
@@ -124,12 +133,14 @@ def refresh_saved_output_metadata(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_dictionary_meanings=include_dictionary_meanings,
     )
     summary["pipeline_stages"] = pipeline_stages(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_dictionary_meanings=include_dictionary_meanings,
     )
 
     if cleaned_example_outputs is not None:
@@ -190,6 +201,27 @@ def refresh_saved_output_metadata(
         ):
             summary.pop(key, None)
 
+    if dictionary_meaning_lookup_outputs is not None:
+        summary["dictionary_meaning_lookup_reviewed"] = dictionary_meaning_lookup_outputs.reviewed_count
+        summary["dictionary_meaning_lookup_found"] = dictionary_meaning_lookup_outputs.found_count
+        summary["dictionary_meaning_lookup_missing"] = dictionary_meaning_lookup_outputs.missing_count
+
+    if dictionary_meaning_generation_outputs is not None:
+        summary["dictionary_meaning_generation_attempted"] = dictionary_meaning_generation_outputs.attempted_count
+        summary["dictionary_meaning_generation_generated"] = dictionary_meaning_generation_outputs.generated_count
+        summary["dictionary_meaning_generation_failed"] = dictionary_meaning_generation_outputs.failed_count
+
+    if not include_dictionary_meanings:
+        for key in (
+            "dictionary_meaning_lookup_reviewed",
+            "dictionary_meaning_lookup_found",
+            "dictionary_meaning_lookup_missing",
+            "dictionary_meaning_generation_attempted",
+            "dictionary_meaning_generation_generated",
+            "dictionary_meaning_generation_failed",
+        ):
+            summary.pop(key, None)
+
     if summary or summary_path.is_file():
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -199,4 +231,5 @@ def refresh_saved_output_metadata(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_dictionary_meanings=include_dictionary_meanings,
     )

@@ -42,15 +42,22 @@ def run_pipeline(
     clean_dictionary_candidates: bool = False,
     generate_missing_examples: bool = False,
     retry_generated_examples: bool = False,
+    add_dictionary_meanings: bool = False,
+    fill_missing_meanings: bool = False,
     sentence_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_client: SupportsCompletion | None = None,
     generated_example_client: SupportsCompletion | None = None,
+    dictionary_meaning_client: SupportsCompletion | None = None,
     sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
     sentence_cleanup_base_url: str | None = None,
+    krdict_dir: Path | None = None,
+    krdict_download_url: str | None = None,
+    krdict_status_callback: Callable[[str, str], None] | None = None,
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
     generated_example_progress: CleanupProgressCallback | None = None,
+    dictionary_meaning_progress: CleanupProgressCallback | None = None,
     generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> PipelineResult:
@@ -62,18 +69,26 @@ def run_pipeline(
         or generated_example_client is not None
     )
     retry_generated_example_requested = retry_generated_examples
+    dictionary_meaning_requested = (
+        add_dictionary_meanings
+        or fill_missing_meanings
+        or dictionary_meaning_client is not None
+    )
     cleanup_requested = (
         example_cleanup_requested
         or dictionary_cleanup_requested
         or generated_example_requested
+        or dictionary_meaning_requested
     )
     if cleanup_requested:
         shared_cleanup_client = None
-        if (
-            sentence_cleanup_client is None
-            and dictionary_cleanup_client is None
-            and generated_example_client is None
-        ):
+        needs_shared_client = (
+            (example_cleanup_requested and sentence_cleanup_client is None)
+            or (dictionary_cleanup_requested and dictionary_cleanup_client is None)
+            or (generated_example_requested and generated_example_client is None)
+            or (fill_missing_meanings and dictionary_meaning_client is None)
+        )
+        if needs_shared_client:
             shared_cleanup_client = ollama_client(
                 model=sentence_cleanup_model,
                 base_url=sentence_cleanup_base_url,
@@ -109,6 +124,19 @@ def run_pipeline(
                 if generated_example_requested
                 else None,
                 retry_generated_examples_only=retry_generated_example_requested,
+                add_dictionary_meanings=add_dictionary_meanings,
+                fill_missing_meanings=fill_missing_meanings,
+                dictionary_meaning_client=(dictionary_meaning_client or shared_cleanup_client)
+                if fill_missing_meanings
+                else None,
+                dictionary_meaning_progress=(
+                    dictionary_meaning_progress or cleanup_progress
+                )
+                if fill_missing_meanings
+                else None,
+                krdict_dir=krdict_dir,
+                krdict_download_url=krdict_download_url,
+                krdict_status_callback=krdict_status_callback,
                 artifact_callback=artifact_callback,
             )
         except ValueError as exc:
