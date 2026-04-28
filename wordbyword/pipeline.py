@@ -16,6 +16,9 @@ from wordbyword.writers import ArtifactCallback, write_cleanup_outputs_from_save
 
 ProgressCallback = Callable[[str, str], None]
 
+DEFAULT_SHARED_CLEANUP_TIMEOUT_SECONDS = 300.0
+DEFAULT_SHARED_CLEANUP_MAX_OUTPUT_TOKENS = 256
+
 
 @dataclass(frozen=True)
 class PipelineResult:
@@ -77,8 +80,8 @@ def run_pipeline(
             shared_cleanup_client = ollama_client(
                 model=sentence_cleanup_model,
                 base_url=sentence_cleanup_base_url,
-                timeout_seconds=300.0,
-                max_output_tokens=256,
+                timeout_seconds=DEFAULT_SHARED_CLEANUP_TIMEOUT_SECONDS,
+                max_output_tokens=DEFAULT_SHARED_CLEANUP_MAX_OUTPUT_TOKENS,
             )
         _report(progress, "cleanup", f"loading saved stage inputs from {output_dir}")
         try:

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from wordbyword.llm import (
     ChatMessage,
     CompletionResult,
+    DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_TEMPERATURE,
     build_dictionary_entry,
     build_provider_client,
@@ -181,7 +182,7 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "http://localhost:11434/api/chat")
         self.assertEqual(transport.body["format"], "json")
         self.assertFalse(transport.body["think"])
-        self.assertEqual(transport.body["options"]["num_predict"], 1024)
+        self.assertEqual(transport.body["options"]["num_predict"], DEFAULT_MAX_OUTPUT_TOKENS)
         self.assertEqual(transport.body["messages"][0]["content"], "hello")
 
 

@@ -456,13 +456,21 @@ def source_similarity(source_sentence: str, cleaned_sentence: str) -> float:
 
 
 def is_acceptable_cleaned_sentence(sentence: str) -> bool:
+    return unacceptable_cleaned_sentence_reason(sentence) == ""
+
+
+def unacceptable_cleaned_sentence_reason(sentence: str) -> str:
     cleaned = clean_example_text(sentence).strip()
-    return (
-        bool(cleaned)
-        and cleaned.endswith(FINAL_PUNCTUATION)
-        and not cleaned.rstrip('"').strip().endswith("봅시다.")
-        and not any(marker in cleaned for marker in UNRESOLVED_LAYOUT_MARKERS)
-    )
+    if not cleaned:
+        return "it is empty"
+    if not cleaned.endswith(FINAL_PUNCTUATION):
+        return "it does not end with terminal punctuation"
+    if cleaned.rstrip('"').strip().endswith("봅시다."):
+        return "it is an instruction ending with '-봅시다'"
+    for marker in UNRESOLVED_LAYOUT_MARKERS:
+        if marker in cleaned:
+            return f"it contains unresolved layout marker '{marker}'"
+    return ""
 
 
 def normalize_cleaned_quality_scores(rows: Sequence[dict[str, object]]) -> None:
