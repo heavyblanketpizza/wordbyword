@@ -69,7 +69,7 @@ class ProviderConfig:
     base_url: str
     api_key: str | None = None
     timeout_seconds: float = 60.0
-    default_temperature: float = 0.0
+    default_temperature: float = 0.7
     max_output_tokens: int = 1024
 
 
@@ -384,7 +384,7 @@ def load_provider_config(
     api_key: str | None = None,
     base_url: str | None = None,
     timeout_seconds: float = 60.0,
-    default_temperature: float = 0.0,
+    default_temperature: float = 0.7,
     max_output_tokens: int = 1024,
 ) -> ProviderConfig:
     normalized = normalize_provider_name(provider)
@@ -416,7 +416,7 @@ def build_provider_client(
     api_key: str | None = None,
     base_url: str | None = None,
     timeout_seconds: float = 60.0,
-    default_temperature: float = 0.0,
+    default_temperature: float = 0.7,
     max_output_tokens: int = 1024,
     transport: JsonTransport | None = None,
 ) -> BaseChatClient:

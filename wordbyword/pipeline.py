@@ -78,7 +78,7 @@ def run_pipeline(
                 model=sentence_cleanup_model,
                 base_url=sentence_cleanup_base_url,
                 timeout_seconds=300.0,
-                default_temperature=0.0,
+                default_temperature=0.7,
                 max_output_tokens=256,
             )
         _report(progress, "cleanup", f"loading saved stage inputs from {output_dir}")

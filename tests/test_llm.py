@@ -55,7 +55,7 @@ class ProviderConfigTest(unittest.TestCase):
         self.assertEqual(config.provider, "ollama")
         self.assertEqual(config.base_url, "http://localhost:11434")
         self.assertIsNone(config.api_key)
-        self.assertEqual(config.default_temperature, 0.0)
+        self.assertEqual(config.default_temperature, 0.7)
 
 
 class ProviderClientTest(unittest.TestCase):
@@ -86,7 +86,7 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "https://api.openai.com/v1/chat/completions")
         self.assertEqual(transport.headers["Authorization"], "Bearer openai-key")
         self.assertEqual(transport.body["model"], "gpt-test")
-        self.assertEqual(transport.body["temperature"], 0.0)
+        self.assertEqual(transport.body["temperature"], 0.7)
         self.assertEqual(transport.body["response_format"], {"type": "json_object"})
         self.assertEqual(transport.body["messages"][0]["role"], "system")
 
