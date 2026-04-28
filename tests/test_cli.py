@@ -204,6 +204,36 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertTrue(mock_pipeline.called)
             self.assertTrue(mock_pipeline.call_args.kwargs["generate_missing_examples"])
 
+    def test_main_with_retry_generated_examples_uses_pipeline_cleanup_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+
+            with patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+                mock_pipeline.return_value = PipelineResult(
+                    documents=0,
+                    extracted_pages=0,
+                    sentences=0,
+                    token_occurrences=0,
+                    vocabulary_terms=0,
+                    surface_words=0,
+                    output_dir=output_dir,
+                )
+                exit_code = main(["--retry-generated-examples", "--output", str(output_dir)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(mock_pipeline.called)
+            self.assertTrue(mock_pipeline.call_args.kwargs["retry_generated_examples"])
+            self.assertFalse(mock_pipeline.call_args.kwargs["generate_missing_examples"])
+
+    def test_main_with_retry_generated_examples_rejects_generate_missing_examples_combo(self) -> None:
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            with self.assertRaises(SystemExit) as error:
+                main(["--retry-generated-examples", "--generate-missing-examples"])
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--retry-generated-examples cannot be combined", stderr.getvalue())
+
     def test_prompt_generated_example_retry_defaults_to_yes(self) -> None:
         stdout = io.StringIO()
         with patch("sys.stdout", stdout), patch("sys.stdin.isatty", return_value=True), patch(

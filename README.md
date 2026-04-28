@@ -53,6 +53,7 @@ uv --no-cache run python -m wordbyword --include-numbers
 uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
+uv --no-cache run python -m wordbyword --retry-generated-examples
 ```
 
 The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
@@ -64,11 +65,13 @@ uv --no-cache run python -m wordbyword
 uv --no-cache run python -m wordbyword --clean-example-sentences
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
+uv --no-cache run python -m wordbyword --retry-generated-examples
 ```
 
 - `--clean-example-sentences` reads saved `06_candidate_terms.csv` and `09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
 - `--clean-dictionary-candidates` reads saved `06_candidate_terms.csv` and `08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
 - `--link-cleaned-examples` reads saved `10_cleaned_example_sentences.csv` and `11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
+- `--retry-generated-examples` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and `13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
 
@@ -115,10 +118,11 @@ The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batch
 
 The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
 
-The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `25` rows by default, writes `13_dictionary_candidates_with_generated_examples.jsonl`, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset:
+The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints `13_dictionary_candidates_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example and the failed generated sentence, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
 
 ```bash
 uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
 ```
 
 Programmatic example:

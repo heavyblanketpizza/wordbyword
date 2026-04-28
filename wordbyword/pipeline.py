@@ -41,6 +41,7 @@ def run_pipeline(
     clean_example_sentences: bool = False,
     clean_dictionary_candidates: bool = False,
     generate_missing_examples: bool = False,
+    retry_generated_examples: bool = False,
     sentence_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_client: SupportsCompletion | None = None,
     generated_example_client: SupportsCompletion | None = None,
@@ -55,7 +56,12 @@ def run_pipeline(
 ) -> PipelineResult:
     example_cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
     dictionary_cleanup_requested = clean_dictionary_candidates or dictionary_cleanup_client is not None
-    generated_example_requested = generate_missing_examples or generated_example_client is not None
+    generated_example_requested = (
+        generate_missing_examples
+        or retry_generated_examples
+        or generated_example_client is not None
+    )
+    retry_generated_example_requested = retry_generated_examples
     cleanup_requested = (
         example_cleanup_requested
         or dictionary_cleanup_requested
@@ -102,6 +108,7 @@ def run_pipeline(
                 generated_example_retry_decider=generated_example_retry_decider
                 if generated_example_requested
                 else None,
+                retry_generated_examples_only=retry_generated_example_requested,
                 artifact_callback=artifact_callback,
             )
         except ValueError as exc:

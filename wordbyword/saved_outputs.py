@@ -14,9 +14,11 @@ from wordbyword.example_cleanup import (
 )
 from wordbyword.example_generation import (
     GeneratedExampleAttemptSummary,
+    GeneratedExampleBatchSnapshot,
     GeneratedExampleOutputs,
     RetryGeneratedExampleCallback,
     build_generated_dictionary_candidate_outputs,
+    retry_generated_dictionary_candidate_outputs,
 )
 from wordbyword.llm import SupportsCompletion
 from wordbyword.output_files import (
@@ -46,6 +48,7 @@ def write_cleanup_outputs_from_saved(
     generated_example_client: SupportsCompletion | None = None,
     generated_example_progress: CleanupProgressCallback | None = None,
     generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
+    retry_generated_examples_only: bool = False,
     artifact_callback: ArtifactCallback | None = None,
 ) -> tuple[
     CleanedExampleOutputs | None,
@@ -147,6 +150,8 @@ def write_cleanup_outputs_from_saved(
             )
 
     if (
+        not retry_generated_examples_only
+        and
         (output_dir / "10_cleaned_example_sentences.csv").is_file()
         and (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
     ):
@@ -157,15 +162,24 @@ def write_cleanup_outputs_from_saved(
         )
     if generated_example_client is not None:
         assert candidate_terms is not None
-        generated_example_outputs = write_generated_dictionary_candidates_from_saved(
-            output_dir,
-            generated_example_client=generated_example_client,
-            generated_example_progress=generated_example_progress,
-            generated_example_retry_decider=generated_example_retry_decider,
-            artifact_callback=artifact_callback,
-            linked_dictionary_outputs=linked_dictionary_outputs,
-            candidate_terms=candidate_terms,
-        )
+        if retry_generated_examples_only:
+            generated_example_outputs = retry_generated_dictionary_candidates_from_saved(
+                output_dir,
+                generated_example_client=generated_example_client,
+                generated_example_progress=generated_example_progress,
+                artifact_callback=artifact_callback,
+                candidate_terms=candidate_terms,
+            )
+        else:
+            generated_example_outputs = write_generated_dictionary_candidates_from_saved(
+                output_dir,
+                generated_example_client=generated_example_client,
+                generated_example_progress=generated_example_progress,
+                generated_example_retry_decider=generated_example_retry_decider,
+                artifact_callback=artifact_callback,
+                linked_dictionary_outputs=linked_dictionary_outputs,
+                candidate_terms=candidate_terms,
+            )
     refresh_saved_output_metadata(
         output_dir,
         cleaned_example_outputs=cleaned_example_outputs,
@@ -287,14 +301,24 @@ def write_generated_dictionary_candidates_from_saved(
     initialize_jsonl_file(generated_attempts_path)
     initialize_jsonl_file(generated_failures_path)
     unresolved_failure_rows: dict[str, dict[str, object]] = {}
+    write_jsonl(
+        generated_output_path,
+        [
+            {**dict(row), "example_generated_with_ollama": False}
+            for row in linked_rows
+        ],
+    )
+
+    def on_batch_complete(snapshot: GeneratedExampleBatchSnapshot) -> None:
+        append_jsonl(generated_attempts_path, snapshot.summary.attempt_rows)
+        for row_id in snapshot.summary.succeeded_row_ids:
+            unresolved_failure_rows.pop(row_id, None)
+        for failure_row in snapshot.summary.failure_rows:
+            unresolved_failure_rows[str(failure_row["row_id"])] = failure_row
+        write_jsonl(generated_output_path, snapshot.rows)
+        write_jsonl(generated_failures_path, list(unresolved_failure_rows.values()))
 
     def on_attempt_complete(summary: GeneratedExampleAttemptSummary) -> bool:
-        append_jsonl(generated_attempts_path, summary.attempt_rows)
-        for row_id in summary.succeeded_row_ids:
-            unresolved_failure_rows.pop(row_id, None)
-        for failure_row in summary.failure_rows:
-            unresolved_failure_rows[str(failure_row["row_id"])] = failure_row
-        write_jsonl(generated_failures_path, list(unresolved_failure_rows.values()))
         if summary.failed_count <= 0 or generated_example_retry_decider is None:
             return False
         return generated_example_retry_decider(summary)
@@ -304,6 +328,7 @@ def write_generated_dictionary_candidates_from_saved(
         resolved_candidate_terms,
         client=generated_example_client,
         on_progress=generated_example_progress,
+        on_batch_complete=on_batch_complete,
         on_attempt_complete=on_attempt_complete,
     )
     write_jsonl(generated_output_path, generated_outputs.rows)
@@ -314,3 +339,104 @@ def write_generated_dictionary_candidates_from_saved(
             generated_outputs.rows,
         )
     return generated_outputs
+
+
+def retry_generated_dictionary_candidates_from_saved(
+    output_dir: Path,
+    *,
+    generated_example_client: SupportsCompletion,
+    generated_example_progress: CleanupProgressCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
+    candidate_terms: Sequence[Mapping[str, object]] | None = None,
+) -> GeneratedExampleOutputs:
+    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+
+    generated_rows = read_required_jsonl(
+        generated_output_path,
+        built_from="13_dictionary_candidates_with_generated_examples.jsonl",
+        target="retry-generated-examples",
+    )
+    failure_rows = (
+        read_jsonl(generated_failures_path)
+        if generated_failures_path.is_file()
+        else []
+    )
+
+    resolved_candidate_terms = (
+        list(candidate_terms)
+        if candidate_terms is not None
+        else read_required_rows(
+            output_dir / "06_candidate_terms.csv",
+            built_from="06_candidate_terms.csv",
+            target="retry-generated-examples",
+        )
+    )
+
+    if not failure_rows:
+        generated_outputs = retry_generated_dictionary_candidate_outputs(
+            generated_rows,
+            [],
+            resolved_candidate_terms,
+            client=generated_example_client,
+            starting_attempt_number=_next_generated_example_attempt_number(output_dir),
+            on_progress=generated_example_progress,
+        )
+        write_jsonl(generated_output_path, generated_outputs.rows)
+        initialize_jsonl_file(generated_failures_path)
+        if artifact_callback is not None:
+            artifact_callback(
+                "13_dictionary_candidates_with_generated_examples",
+                generated_outputs.rows,
+            )
+        return generated_outputs
+
+    unresolved_failure_rows = {
+        str(row["row_id"]): dict(row)
+        for row in failure_rows
+        if row.get("row_id")
+    }
+
+    def on_batch_complete(snapshot: GeneratedExampleBatchSnapshot) -> None:
+        append_jsonl(generated_attempts_path, snapshot.summary.attempt_rows)
+        for row_id in snapshot.summary.succeeded_row_ids:
+            unresolved_failure_rows.pop(row_id, None)
+        for failure_row in snapshot.summary.failure_rows:
+            unresolved_failure_rows[str(failure_row["row_id"])] = failure_row
+        write_jsonl(generated_output_path, snapshot.rows)
+        write_jsonl(generated_failures_path, list(unresolved_failure_rows.values()))
+
+    generated_outputs = retry_generated_dictionary_candidate_outputs(
+        generated_rows,
+        failure_rows,
+        resolved_candidate_terms,
+        client=generated_example_client,
+        starting_attempt_number=_next_generated_example_attempt_number(output_dir),
+        on_progress=generated_example_progress,
+        on_batch_complete=on_batch_complete,
+    )
+    write_jsonl(generated_output_path, generated_outputs.rows)
+    write_jsonl(generated_failures_path, generated_outputs.failure_rows)
+    if artifact_callback is not None:
+        artifact_callback(
+            "13_dictionary_candidates_with_generated_examples",
+            generated_outputs.rows,
+        )
+    return generated_outputs
+
+
+def _next_generated_example_attempt_number(output_dir: Path) -> int:
+    attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    if not attempts_path.is_file():
+        return 2
+
+    max_attempt_number = 1
+    for row in read_jsonl(attempts_path):
+        try:
+            attempt_number = int(row.get("attempt_number", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if attempt_number > max_attempt_number:
+            max_attempt_number = attempt_number
+    return max_attempt_number + 1

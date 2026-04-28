@@ -546,6 +546,193 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(summary["generated_example_attempt_rounds"], 1)
             self.assertIn("13", {stage["stage"] for stage in summary["pipeline_stages"]})
 
+    def test_pipeline_can_retry_failed_generated_examples_and_checkpoint_repair_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+
+            with (output_dir / "06_candidate_terms.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "canonical_key",
+                        "display",
+                        "kind",
+                        "pos_group",
+                        "count",
+                        "surface_count",
+                        "document_count",
+                        "variant_count",
+                        "variants",
+                        "quality_score",
+                        "roi_score",
+                        "example",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "canonical_key": "비슷하다",
+                        "display": "비슷하다",
+                        "kind": "term",
+                        "pos_group": "adjective",
+                        "count": 10,
+                        "surface_count": 10,
+                        "document_count": 1,
+                        "variant_count": 1,
+                        "variants": "비슷하다",
+                        "quality_score": 0.9,
+                        "roi_score": 0.5,
+                        "example": "비슷하다 예문",
+                    }
+                )
+
+            (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").write_text(
+                json.dumps(
+                    {
+                        "canonical_key": "비슷하다",
+                        "display": "비슷하다",
+                        "kind": "term",
+                        "variants": ["비슷하다"],
+                        "count": 10,
+                        "document_count": 1,
+                        "quality_score": 0.9,
+                        "roi_score": 0.5,
+                        "example": "비슷하다",
+                        "curation_status": "rewrite_ready",
+                        "example_replaced_with_cleaned_sentence": False,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                generate_missing_examples=True,
+                generated_example_client=RetryingGeneratedExampleClient(),
+                generated_example_retry_decider=lambda summary: summary.failed_count > 0,
+            )
+
+            generated_rows = [
+                json.loads(line)
+                for line in (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            generated_attempt_rows = [
+                json.loads(line)
+                for line in (output_dir / "13_generated_example_attempts.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+
+            self.assertEqual(generated_rows[0]["example"], "두 그림은 서로 닮은 점이 많다.")
+            self.assertTrue(generated_rows[0]["example_generated_with_ollama"])
+            self.assertEqual(len(generated_attempt_rows), 2)
+            self.assertFalse(generated_attempt_rows[0]["accepted"])
+            self.assertTrue(generated_attempt_rows[1]["accepted"])
+            self.assertEqual(generated_attempt_rows[1]["attempt_kind"], "repair")
+            self.assertEqual(generated_attempt_rows[1]["review_action"], "keep_generated")
+            self.assertEqual(
+                generated_attempt_rows[1]["input_generated_sentence"],
+                "두 그림은 서로 닮은 점이 많다.",
+            )
+            self.assertEqual(
+                (output_dir / "13_generated_example_failures.jsonl").read_text(encoding="utf-8"),
+                "",
+            )
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["generated_example_attempt_rounds"], 2)
+            self.assertEqual(summary["failed_dictionary_candidate_examples"], 0)
+
+    def test_pipeline_checkpoints_generated_example_output_after_each_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+
+            with (output_dir / "06_candidate_terms.csv").open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "canonical_key",
+                        "display",
+                        "kind",
+                        "pos_group",
+                        "count",
+                        "surface_count",
+                        "document_count",
+                        "variant_count",
+                        "variants",
+                        "quality_score",
+                        "roi_score",
+                        "example",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "canonical_key": "사과",
+                        "display": "사과",
+                        "kind": "term",
+                        "pos_group": "noun",
+                        "count": 26,
+                        "surface_count": 26,
+                        "document_count": 1,
+                        "variant_count": 1,
+                        "variants": "사과",
+                        "quality_score": 0.9,
+                        "roi_score": 0.5,
+                        "example": "사과 예문",
+                    }
+                )
+
+            (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "canonical_key": "사과",
+                            "display": f"사과-{index}",
+                            "kind": "term",
+                            "variants": ["사과"],
+                            "count": 1,
+                            "document_count": 1,
+                            "quality_score": 0.9,
+                            "roi_score": 0.5,
+                            "example": f"원래 사과 예문 {index}.",
+                            "curation_status": "rewrite_ready",
+                            "example_replaced_with_cleaned_sentence": False,
+                        },
+                        ensure_ascii=False,
+                    )
+                    for index in range(41)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+
+            client = CheckpointingGeneratedExampleClient(output_dir)
+            run_pipeline(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                generate_missing_examples=True,
+                generated_example_client=client,
+            )
+
+            self.assertEqual(client.batch_sizes, [40, 1])
+            self.assertEqual(client.checkpoint_generated_count_after_first_batch, 40)
+
     def test_example_cleanup_requires_saved_stage_nine_and_stage_six(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -712,6 +899,57 @@ class GeneratedExampleClient:
             provider="ollama",
             model="gemma4:31b",
             content="\n".join(lines),
+        )
+
+
+class CheckpointingGeneratedExampleClient:
+    def __init__(self, output_dir: Path) -> None:
+        self.output_dir = output_dir
+        self.batch_sizes: list[int] = []
+        self.checkpoint_generated_count_after_first_batch: int | None = None
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        rows = [
+            json.loads(line)
+            for line in messages[-1].content.splitlines()[1:]
+            if line.strip()
+        ]
+        self.batch_sizes.append(len(rows))
+        if len(self.batch_sizes) == 2:
+            generated_rows = [
+                json.loads(line)
+                for line in (
+                    self.output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+                ).read_text(encoding="utf-8").splitlines()
+            ]
+            self.checkpoint_generated_count_after_first_batch = sum(
+                1 for row in generated_rows if bool(row["example_generated_with_ollama"])
+            )
+        lines = [f"{row['id']}\t학생 {row['id'][1:]}이 사과를 먹는다." for row in rows]
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content="\n".join(lines),
+        )
+
+
+class RetryingGeneratedExampleClient:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        self.calls += 1
+        row = json.loads(messages[-1].content.splitlines()[1])
+        if self.calls == 1:
+            assert set(row) == {"id", "headword", "variants"}
+            content = f"{row['id']}\t두 그림은 서로 닮은 점이 많다."
+        else:
+            assert set(row) == {"id", "headword", "variants", "source_example", "generated_example"}
+            content = f"{row['id']}\tkeep_generated\t"
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content=content,
         )
 
 

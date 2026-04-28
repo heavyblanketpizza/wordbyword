@@ -76,6 +76,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--retry-generated-examples",
+        action="store_true",
+        help=(
+            "Use saved output/13_generated_example_failures.jsonl to run only the stage-13 "
+            "repair pass against the unresolved failed subset, updating the 13_* files in place."
+        ),
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
         help=(
@@ -114,6 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.link_cleaned_examples:
         return link_cleaned_examples(output_dir=args.output)
+    if args.retry_generated_examples and (
+        args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --retry-generated-examples cannot be combined with "
+            "--clean-example-sentences, --clean-dictionary-candidates, or --generate-missing-examples.\n",
+        )
 
     emit_boot_screen(
         input_dir=args.input,
@@ -122,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             args.clean_example_sentences
             or args.clean_dictionary_candidates
             or args.generate_missing_examples
+            or args.retry_generated_examples
         ),
         sentence_cleanup_model=args.ollama_model,
     )
@@ -151,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     def generated_example_retry_decider(summary: GeneratedExampleAttemptSummary) -> bool:
+        if args.retry_generated_examples:
+            return False
         return prompt_generated_example_retry(
             summary=summary,
             output_dir=args.output,
@@ -220,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             clean_example_sentences=args.clean_example_sentences,
             clean_dictionary_candidates=args.clean_dictionary_candidates,
             generate_missing_examples=args.generate_missing_examples,
+            retry_generated_examples=args.retry_generated_examples,
             sentence_cleanup_model=args.ollama_model,
             sentence_cleanup_base_url=args.ollama_base_url,
             progress=emit_stage_update,
@@ -241,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
             args.clean_example_sentences
             or args.clean_dictionary_candidates
             or args.generate_missing_examples
+            or args.retry_generated_examples
         ),
         sentence_cleanup_model=args.ollama_model,
     )
