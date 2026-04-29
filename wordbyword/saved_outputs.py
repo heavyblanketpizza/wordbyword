@@ -278,7 +278,7 @@ def write_generated_dictionary_candidates_from_saved(
     candidate_terms: Sequence[Mapping[str, object]] | None = None,
 ) -> GeneratedExampleOutputs:
     linked_output_path = output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"
-    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
     generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
     generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
 
@@ -301,7 +301,7 @@ def write_generated_dictionary_candidates_from_saved(
         else read_required_rows(
             output_dir / "06_candidate_terms.csv",
             built_from="06_candidate_terms.csv",
-            target="13_dictionary_candidates_with_generated_examples.jsonl",
+            target="13_vocabulary_with_generated_examples.jsonl",
         )
     )
 
@@ -343,7 +343,7 @@ def write_generated_dictionary_candidates_from_saved(
     write_jsonl(generated_failures_path, generated_outputs.failure_rows)
     if artifact_callback is not None:
         artifact_callback(
-            "13_dictionary_candidates_with_generated_examples",
+            "13_vocabulary_with_generated_examples",
             generated_outputs.rows,
         )
     return generated_outputs
@@ -357,13 +357,13 @@ def retry_generated_dictionary_candidates_from_saved(
     artifact_callback: ArtifactCallback | None = None,
     candidate_terms: Sequence[Mapping[str, object]] | None = None,
 ) -> GeneratedExampleOutputs:
-    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
     generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
     generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
 
     generated_rows = read_required_jsonl(
         generated_output_path,
-        built_from="13_dictionary_candidates_with_generated_examples.jsonl",
+        built_from="13_vocabulary_with_generated_examples.jsonl",
         target="retry-generated-examples",
     )
     failure_rows = (
@@ -395,7 +395,7 @@ def retry_generated_dictionary_candidates_from_saved(
         initialize_jsonl_file(generated_failures_path)
         if artifact_callback is not None:
             artifact_callback(
-                "13_dictionary_candidates_with_generated_examples",
+                "13_vocabulary_with_generated_examples",
                 generated_outputs.rows,
             )
         return generated_outputs
@@ -428,7 +428,7 @@ def retry_generated_dictionary_candidates_from_saved(
     write_jsonl(generated_failures_path, generated_outputs.failure_rows)
     if artifact_callback is not None:
         artifact_callback(
-            "13_dictionary_candidates_with_generated_examples",
+            "13_vocabulary_with_generated_examples",
             generated_outputs.rows,
         )
     return generated_outputs
@@ -440,22 +440,22 @@ def write_meaning_dictionary_candidates_from_saved(
     reference_dictionary_path: Path,
     artifact_callback: ArtifactCallback | None = None,
 ) -> MeaningAssignmentOutputs:
-    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
-    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
+    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
+    meaning_output_path = output_dir / "14_vocabulary_with_meanings.jsonl"
 
     generated_rows = read_required_jsonl(
         generated_output_path,
-        built_from="13_dictionary_candidates_with_generated_examples.jsonl",
-        target="14_dictionary_candidates_with_meanings.jsonl",
+        built_from="13_vocabulary_with_generated_examples.jsonl",
+        target="14_vocabulary_with_meanings.jsonl",
     )
     reference_rows = read_required_jsonl(
         reference_dictionary_path,
         built_from=str(reference_dictionary_path),
-        target="14_dictionary_candidates_with_meanings.jsonl",
+        target="14_vocabulary_with_meanings.jsonl",
     )
 
     remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir)
-    generated_meaning_output_path = output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"
+    generated_meaning_output_path = output_dir / "15_final_dictionary.jsonl"
     if generated_meaning_output_path.is_file():
         generated_meaning_output_path.unlink()
     initialize_jsonl_file(meaning_output_path)
@@ -467,7 +467,7 @@ def write_meaning_dictionary_candidates_from_saved(
     write_jsonl(meaning_output_path, meaning_outputs.rows)
     if artifact_callback is not None:
         artifact_callback(
-            "14_dictionary_candidates_with_meanings",
+            "14_vocabulary_with_meanings",
             meaning_outputs.rows,
         )
     refresh_saved_output_metadata(
@@ -484,13 +484,13 @@ def write_generated_meaning_dictionary_candidates_from_saved(
     generated_meaning_progress: CleanupProgressCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> GeneratedMeaningOutputs:
-    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
-    generated_meaning_output_path = output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"
+    meaning_output_path = output_dir / "14_vocabulary_with_meanings.jsonl"
+    generated_meaning_output_path = output_dir / "15_final_dictionary.jsonl"
 
     meaning_rows = read_required_jsonl(
         meaning_output_path,
-        built_from="14_dictionary_candidates_with_meanings.jsonl",
-        target="15_dictionary_candidates_with_generated_meanings.jsonl",
+        built_from="14_vocabulary_with_meanings.jsonl",
+        target="15_final_dictionary.jsonl",
     )
     initialize_jsonl_file(generated_meaning_output_path)
     write_jsonl(
@@ -518,7 +518,7 @@ def write_generated_meaning_dictionary_candidates_from_saved(
     write_jsonl(generated_meaning_output_path, generated_meaning_outputs.rows)
     if artifact_callback is not None:
         artifact_callback(
-            "15_dictionary_candidates_with_generated_meanings",
+            "15_final_dictionary",
             generated_meaning_outputs.rows,
         )
     refresh_saved_output_metadata(

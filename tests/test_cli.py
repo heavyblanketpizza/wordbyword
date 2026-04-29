@@ -193,7 +193,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir = root / "output"
             output_dir.mkdir()
             reference_path = root / "reference-dictionary.jsonl"
-            (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").write_text(
+            (output_dir / "13_vocabulary_with_generated_examples.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(
@@ -243,12 +243,12 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
-            self.assertTrue((output_dir / "14_dictionary_candidates_with_meanings.jsonl").exists())
+            self.assertTrue((output_dir / "14_vocabulary_with_meanings.jsonl").exists())
             self.assertFalse((output_dir / "13_generated_example_attempts.jsonl").exists())
             self.assertFalse((output_dir / "13_generated_example_failures.jsonl").exists())
             rows = [
                 json.loads(line)
-                for line in (output_dir / "14_dictionary_candidates_with_meanings.jsonl").read_text(
+                for line in (output_dir / "14_vocabulary_with_meanings.jsonl").read_text(
                     encoding="utf-8"
                 ).splitlines()
             ]
@@ -257,14 +257,14 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
-            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", summary["outputs"])
+            self.assertIn("14_vocabulary_with_meanings.jsonl", summary["outputs"])
             self.assertNotIn("13_generated_example_attempts.jsonl", summary["outputs"])
             self.assertNotIn("13_generated_example_failures.jsonl", summary["outputs"])
-            self.assertEqual(summary["dictionary_candidate_meaning_rows"], 2)
-            self.assertEqual(summary["matched_reference_dictionary_meanings"], 1)
-            self.assertEqual(summary["missing_dictionary_candidate_meanings"], 1)
+            self.assertEqual(summary["vocabulary_meaning_rows"], 2)
+            self.assertEqual(summary["matched_reference_vocabulary_meanings"], 1)
+            self.assertEqual(summary["missing_vocabulary_meanings"], 1)
             self.assertIn("14", {stage["stage"] for stage in summary["pipeline_stages"]})
-            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", stdout.getvalue())
+            self.assertIn("14_vocabulary_with_meanings.jsonl", stdout.getvalue())
 
     def test_main_with_add_reference_meanings_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -272,7 +272,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir = root / "output"
             output_dir.mkdir()
             reference_path = root / "reference-dictionary.jsonl"
-            (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").write_text(
+            (output_dir / "13_vocabulary_with_generated_examples.jsonl").write_text(
                 json.dumps({"canonical_key": "물", "display": "물"}, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
@@ -295,12 +295,12 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", stdout.getvalue())
+            self.assertIn("14_vocabulary_with_meanings.jsonl", stdout.getvalue())
 
     def test_generate_missing_meanings_builds_stage_fifteen_without_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
-            (output_dir / "14_dictionary_candidates_with_meanings.jsonl").write_text(
+            (output_dir / "14_vocabulary_with_meanings.jsonl").write_text(
                 "\n".join(
                     [
                         json.dumps(
@@ -341,10 +341,10 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
-            self.assertTrue((output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl").exists())
+            self.assertTrue((output_dir / "15_final_dictionary.jsonl").exists())
             rows = [
                 json.loads(line)
-                for line in (output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl").read_text(
+                for line in (output_dir / "15_final_dictionary.jsonl").read_text(
                     encoding="utf-8"
                 ).splitlines()
             ]
@@ -355,18 +355,18 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
-            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", summary["outputs"])
-            self.assertEqual(summary["reviewed_missing_dictionary_meanings"], 1)
-            self.assertEqual(summary["generated_dictionary_candidate_meanings"], 1)
-            self.assertEqual(summary["preserved_dictionary_candidate_meanings"], 1)
-            self.assertEqual(summary["remaining_missing_dictionary_candidate_meanings"], 0)
+            self.assertIn("15_final_dictionary.jsonl", summary["outputs"])
+            self.assertEqual(summary["reviewed_missing_vocabulary_meanings"], 1)
+            self.assertEqual(summary["generated_vocabulary_meanings"], 1)
+            self.assertEqual(summary["preserved_vocabulary_meanings"], 1)
+            self.assertEqual(summary["remaining_missing_vocabulary_meanings"], 0)
             self.assertIn("15", {stage["stage"] for stage in summary["pipeline_stages"]})
-            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", stdout.getvalue())
+            self.assertIn("15_final_dictionary.jsonl", stdout.getvalue())
 
     def test_main_with_generate_missing_meanings_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
-            (output_dir / "14_dictionary_candidates_with_meanings.jsonl").write_text(
+            (output_dir / "14_vocabulary_with_meanings.jsonl").write_text(
                 json.dumps(
                     {
                         "canonical_key": "없는말",
@@ -389,7 +389,7 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", stdout.getvalue())
+            self.assertIn("15_final_dictionary.jsonl", stdout.getvalue())
 
     def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

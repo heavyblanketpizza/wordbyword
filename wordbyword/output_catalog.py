@@ -18,11 +18,11 @@ OPTIONAL_OUTPUT_FILES = [
     "10_cleaned_example_sentences.csv",
     "11_cleaned_dictionary_candidates.jsonl",
     "12_dictionary_candidates_with_cleaned_examples.jsonl",
-    "13_dictionary_candidates_with_generated_examples.jsonl",
+    "13_vocabulary_with_generated_examples.jsonl",
     "13_generated_example_attempts.jsonl",
     "13_generated_example_failures.jsonl",
-    "14_dictionary_candidates_with_meanings.jsonl",
-    "15_dictionary_candidates_with_generated_meanings.jsonl",
+    "14_vocabulary_with_meanings.jsonl",
+    "15_final_dictionary.jsonl",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -118,18 +118,18 @@ OPTIONAL_PIPELINE_STAGES = [
     },
     {
         "stage": "13",
-        "file": "13_dictionary_candidates_with_generated_examples.jsonl",
-        "description": "Stage-12 dictionary candidates with new Ollama-written candidate examples for rows that still lacked a cleaned replacement.",
+        "file": "13_vocabulary_with_generated_examples.jsonl",
+        "description": "Selected vocabulary with new Ollama-written examples for rows that still lacked a cleaned replacement.",
     },
     {
         "stage": "14",
-        "file": "14_dictionary_candidates_with_meanings.jsonl",
-        "description": "Stage-13 dictionary candidates confirmed and enriched with reference-dictionary meanings when canonical keys match.",
+        "file": "14_vocabulary_with_meanings.jsonl",
+        "description": "Confirmed vocabulary enriched with reference-dictionary meanings when canonical keys match.",
     },
     {
         "stage": "15",
-        "file": "15_dictionary_candidates_with_generated_meanings.jsonl",
-        "description": "Stage-14 dictionary candidates with Ollama-written meanings for rows that still had empty meanings.",
+        "file": "15_final_dictionary.jsonl",
+        "description": "Final dictionary with Ollama-written meanings for rows that still had empty meanings.",
     },
 ]
 
@@ -155,7 +155,7 @@ def all_output_files(
             else []
         ),
         *(
-            ["13_dictionary_candidates_with_generated_examples.jsonl"]
+            ["13_vocabulary_with_generated_examples.jsonl"]
             if include_generated_dictionary_candidates
             else []
         ),
@@ -172,12 +172,12 @@ def all_output_files(
             else []
         ),
         *(
-            ["14_dictionary_candidates_with_meanings.jsonl"]
+            ["14_vocabulary_with_meanings.jsonl"]
             if include_meaning_dictionary_candidates
             else []
         ),
         *(
-            ["15_dictionary_candidates_with_generated_meanings.jsonl"]
+            ["15_final_dictionary.jsonl"]
             if include_generated_meaning_dictionary_candidates
             else []
         ),

@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Use saved build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl to write "
-            "13_dictionary_candidates_with_generated_examples.jsonl, generating a new candidate "
+            "13_vocabulary_with_generated_examples.jsonl, generating a new "
             "example sentence for rows whose example_replaced_with_cleaned_sentence flag is false."
         ),
     )
@@ -94,17 +94,17 @@ def build_parser() -> argparse.ArgumentParser:
         dest="add_reference_meanings",
         action="store_true",
         help=(
-            "Use saved build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl and "
+            "Use saved build-dictionary/13_vocabulary_with_generated_examples.jsonl and "
             "references/reference-dictionary.jsonl to write "
-            "14_dictionary_candidates_with_meanings.jsonl."
+            "14_vocabulary_with_meanings.jsonl."
         ),
     )
     parser.add_argument(
         "--generate-missing-meanings",
         action="store_true",
         help=(
-            "Use saved build-dictionary/14_dictionary_candidates_with_meanings.jsonl to write "
-            "15_dictionary_candidates_with_generated_meanings.jsonl, asking Ollama to write "
+            "Use saved build-dictionary/14_vocabulary_with_meanings.jsonl to write "
+            "15_final_dictionary.jsonl, asking Ollama to write "
             "Korean meanings for rows whose meaning field is empty."
         ),
     )
@@ -259,14 +259,14 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             return
-        if stage == "13_dictionary_candidates_with_generated_examples":
+        if stage == "13_vocabulary_with_generated_examples":
             generated_count = sum(
                 1 for entry in entries
                 if bool(entry.get("example_generated_with_ollama"))
             )
             emit_artifact_drop(
                 stage,
-                file_label="13_dictionary_candidates_with_generated_examples.jsonl",
+                file_label="13_vocabulary_with_generated_examples.jsonl",
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} examples"),
@@ -275,14 +275,14 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             return
-        if stage == "14_dictionary_candidates_with_meanings":
+        if stage == "14_vocabulary_with_meanings":
             matched_count = sum(
                 1 for entry in entries
                 if bool(str(entry.get("meaning", "")).strip())
             )
             emit_artifact_drop(
                 stage,
-                file_label="14_dictionary_candidates_with_meanings.jsonl",
+                file_label="14_vocabulary_with_meanings.jsonl",
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("matched", f"{matched_count:,} meanings"),
@@ -290,14 +290,14 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             return
-        if stage == "15_dictionary_candidates_with_generated_meanings":
+        if stage == "15_final_dictionary":
             generated_count = sum(
                 1 for entry in entries
                 if bool(entry.get("meaning_generated_with_ollama"))
             )
             emit_artifact_drop(
                 stage,
-                file_label="15_dictionary_candidates_with_generated_meanings.jsonl",
+                file_label="15_final_dictionary.jsonl",
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} meanings"),
@@ -491,8 +491,8 @@ def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path)
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     width = shutil.get_terminal_size(fallback=(100, 24)).columns
     rendered = render_artifact_drop(
-        "14_dictionary_candidates_with_meanings",
-        file_label=str(output_dir / "14_dictionary_candidates_with_meanings.jsonl"),
+        "14_vocabulary_with_meanings",
+        file_label=str(output_dir / "14_vocabulary_with_meanings.jsonl"),
         summary=(
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("matched", f"{outputs.matched_count:,} meanings"),
@@ -546,8 +546,8 @@ def generate_missing_meanings(
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     width = shutil.get_terminal_size(fallback=(100, 24)).columns
     rendered = render_artifact_drop(
-        "15_dictionary_candidates_with_generated_meanings",
-        file_label=str(output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"),
+        "15_final_dictionary",
+        file_label=str(output_dir / "15_final_dictionary.jsonl"),
         summary=(
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("generated", f"{outputs.generated_count:,} meanings"),

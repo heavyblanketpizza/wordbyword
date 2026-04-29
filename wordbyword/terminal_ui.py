@@ -357,9 +357,9 @@ RELIC_DROP_ART_LINKED = [
 ]
 
 RELIC_DROP_ART_GENERATED = [
-    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE FORGE // CANDIDATES WRITTEN ▓▒░  ░▒▓█▓▒░    ",
+    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE FORGE // VOCAB WRITTEN ▓▒░  ░▒▓█▓▒░    ",
     "  ╭──────────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 13_dictionary_candidates_with_generated_examples ▓▒░   │  ",
+    "  │  ▓▒░  ░▒▓ 13_vocabulary_with_generated_examples ▓▒░   │  ",
     "  │   ◉─◉─◉   ▟▙ forge stack online ▟▙   ◉─◉─◉   ░░░░░░░░░░░   │  ",
     "  ╰──────────────────────────────────────────────────────────────────╯  ",
 ]
@@ -367,7 +367,7 @@ RELIC_DROP_ART_GENERATED = [
 RELIC_DROP_ART_MEANINGS = [
     "    ░▒▓█▓▒░  ░▒▓ MEANING RELAY // REFERENCE MERGED ▓▒░  ░▒▓█▓▒░    ",
     "  ╭──────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 14_dictionary_candidates_with_meanings.jsonl ▓▒░   │  ",
+    "  │  ▓▒░  ░▒▓ 14_vocabulary_with_meanings.jsonl ▓▒░   │  ",
     "  │   ◉─◉─◉   ▟▙ meaning stack online ▟▙   ◉─◉─◉   ░░░░░░░░   │  ",
     "  ╰──────────────────────────────────────────────────────────────╯  ",
 ]
@@ -375,7 +375,7 @@ RELIC_DROP_ART_MEANINGS = [
 RELIC_DROP_ART_GENERATED_MEANINGS = [
     "    ░▒▓█▓▒░  ░▒▓ MEANING FORGE // EMPTY SLOTS FILLED ▓▒░  ░▒▓█▓▒░    ",
     "  ╭────────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 15_dictionary_candidates_with_generated_meanings ▓▒░ │  ",
+    "  │  ▓▒░  ░▒▓ 15_final_dictionary ▓▒░ │  ",
     "  │   ◉─◉─◉   ▟▙ generated meanings online ▟▙   ◉─◉─◉   ░░░░░   │  ",
     "  ╰────────────────────────────────────────────────────────────────╯  ",
 ]
@@ -452,13 +452,13 @@ def render_artifact_drop(
     elif stage == "12_dictionary_candidates_with_cleaned_examples":
         art = RELIC_DROP_ART_LINKED
         accent = TOKYO_NIGHT["orange"]
-    elif stage == "13_dictionary_candidates_with_generated_examples":
+    elif stage == "13_vocabulary_with_generated_examples":
         art = RELIC_DROP_ART_GENERATED
         accent = TOKYO_NIGHT["green"]
-    elif stage == "14_dictionary_candidates_with_meanings":
+    elif stage == "14_vocabulary_with_meanings":
         art = RELIC_DROP_ART_MEANINGS
         accent = TOKYO_NIGHT["purple"]
-    elif stage == "15_dictionary_candidates_with_generated_meanings":
+    elif stage == "15_final_dictionary":
         art = RELIC_DROP_ART_GENERATED_MEANINGS
         accent = TOKYO_NIGHT["yellow"]
     else:

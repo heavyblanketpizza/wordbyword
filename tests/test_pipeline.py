@@ -504,12 +504,12 @@ class PipelineTest(unittest.TestCase):
                 generated_example_client=GeneratedExampleClient(),
             )
 
-            self.assertTrue((output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").exists())
+            self.assertTrue((output_dir / "13_vocabulary_with_generated_examples.jsonl").exists())
             self.assertTrue((output_dir / "13_generated_example_attempts.jsonl").exists())
             self.assertTrue((output_dir / "13_generated_example_failures.jsonl").exists())
             generated_rows = [
                 json.loads(line)
-                for line in (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").read_text(
+                for line in (output_dir / "13_vocabulary_with_generated_examples.jsonl").read_text(
                     encoding="utf-8"
                 ).splitlines()
             ]
@@ -536,13 +536,13 @@ class PipelineTest(unittest.TestCase):
             )
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
-            self.assertIn("13_dictionary_candidates_with_generated_examples.jsonl", summary["outputs"])
+            self.assertIn("13_vocabulary_with_generated_examples.jsonl", summary["outputs"])
             self.assertIn("13_generated_example_attempts.jsonl", summary["outputs"])
             self.assertIn("13_generated_example_failures.jsonl", summary["outputs"])
-            self.assertEqual(summary["reviewed_missing_dictionary_examples"], 1)
-            self.assertEqual(summary["generated_dictionary_candidate_examples"], 1)
-            self.assertEqual(summary["preserved_dictionary_candidate_examples"], 1)
-            self.assertEqual(summary["failed_dictionary_candidate_examples"], 0)
+            self.assertEqual(summary["reviewed_missing_vocabulary_examples"], 1)
+            self.assertEqual(summary["generated_vocabulary_examples"], 1)
+            self.assertEqual(summary["preserved_vocabulary_examples"], 1)
+            self.assertEqual(summary["failed_vocabulary_examples"], 0)
             self.assertEqual(summary["generated_example_attempt_rounds"], 1)
             self.assertIn("13", {stage["stage"] for stage in summary["pipeline_stages"]})
 
@@ -622,7 +622,7 @@ class PipelineTest(unittest.TestCase):
 
             generated_rows = [
                 json.loads(line)
-                for line in (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").read_text(
+                for line in (output_dir / "13_vocabulary_with_generated_examples.jsonl").read_text(
                     encoding="utf-8"
                 ).splitlines()
             ]
@@ -651,7 +651,7 @@ class PipelineTest(unittest.TestCase):
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["generated_example_attempt_rounds"], 2)
-            self.assertEqual(summary["failed_dictionary_candidate_examples"], 0)
+            self.assertEqual(summary["failed_vocabulary_examples"], 0)
 
     def test_pipeline_checkpoints_generated_example_output_after_each_batch(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -919,7 +919,7 @@ class CheckpointingGeneratedExampleClient:
             generated_rows = [
                 json.loads(line)
                 for line in (
-                    self.output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+                    self.output_dir / "13_vocabulary_with_generated_examples.jsonl"
                 ).read_text(encoding="utf-8").splitlines()
             ]
             self.checkpoint_generated_count_after_first_batch = sum(

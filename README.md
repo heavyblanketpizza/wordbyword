@@ -41,11 +41,11 @@ The pipeline writes these files:
 - `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
 - `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
 - `12_dictionary_candidates_with_cleaned_examples.jsonl`: deterministic stage that keeps the `11` row shape, promotes `curation_status` to `rewrite_ready`, and replaces `example` with the winning cleaned sentence from `10` when one is assigned.
-- `13_dictionary_candidates_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, preserves cleaned-example wins, and writes a completely new candidate example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
+- `13_vocabulary_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, treats the rows as selected vocabulary, preserves cleaned-example wins, and writes a completely new example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
 - `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
 - `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
-- `14_dictionary_candidates_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
-- `15_dictionary_candidates_with_generated_meanings.jsonl`: optional Ollama stage that keeps the `14` row shape and writes Korean meanings for rows whose `meaning` field is empty, using the canonical key and example sentence as context.
+- `14_vocabulary_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
+- `15_final_dictionary.jsonl`: final dictionary artifact. It keeps the `14` row shape and writes Korean meanings for rows whose `meaning` field is empty, using the canonical key and example sentence as context.
 - `README.md`: a generated guide for reading the `build-dictionary/` folder in pipeline order.
 
 When artifact quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
@@ -90,10 +90,10 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings
 - `--clean-example-sentences` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
 - `--clean-dictionary-candidates` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
 - `--link-cleaned-examples` reads saved `build-dictionary/10_cleaned_example_sentences.csv` and `build-dictionary/11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
-- `--generate-missing-examples` reads saved `build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl` to write `13_dictionary_candidates_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
-- `--retry-generated-examples` reads saved `build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
-- `--add-reference-meanings` reads saved `build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl` and `references/reference-dictionary.jsonl` to write `14_dictionary_candidates_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
-- `--generate-missing-meanings` reads saved `build-dictionary/14_dictionary_candidates_with_meanings.jsonl` and asks Ollama to write Korean meanings for rows whose `meaning` field is empty, writing `15_dictionary_candidates_with_generated_meanings.jsonl`.
+- `--generate-missing-examples` reads saved `build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl` to write selected vocabulary in `13_vocabulary_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
+- `--retry-generated-examples` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
+- `--add-reference-meanings` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `references/reference-dictionary.jsonl` to write `14_vocabulary_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
+- `--generate-missing-meanings` reads saved `build-dictionary/14_vocabulary_with_meanings.jsonl` and asks Ollama to write Korean meanings for rows whose `meaning` field is empty, writing `15_final_dictionary.jsonl`.
 - `--show-distribution` renders the terminal distribution panel for an existing `11_cleaned_dictionary_candidates.jsonl` without making LLM calls.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
@@ -141,20 +141,20 @@ The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batch
 
 The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
 
-The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints `13_dictionary_candidates_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example, the failed generated sentence, and the validation failure reason, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
+The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints selected vocabulary in `13_vocabulary_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example, the failed generated sentence, and the validation failure reason, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
 
 ```bash
 uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
 ```
 
-The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_dictionary_candidates_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `references/reference-dictionary.jsonl`:
+The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_vocabulary_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `references/reference-dictionary.jsonl`:
 
 ```bash
 uv --no-cache run python -m wordbyword --add-reference-meanings
 ```
 
-The optional missing-meaning generation stage sends saved `14_dictionary_candidates_with_meanings.jsonl` rows whose `meaning` field is empty to Ollama in batches of `40` rows by default. Each prompt includes the row id, `canonical_key`, display form, and example sentence. The stage checkpoints `15_dictionary_candidates_with_generated_meanings.jsonl` after each batch and marks generated rows with `meaning_generated_with_ollama: true`:
+The optional missing-meaning generation stage sends saved `14_vocabulary_with_meanings.jsonl` rows whose `meaning` field is empty to Ollama in batches of `40` rows by default. Each prompt includes the row id, `canonical_key`, display form, and example sentence. The stage checkpoints `15_final_dictionary.jsonl` after each batch and marks generated rows with `meaning_generated_with_ollama: true`:
 
 ```bash
 uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-model gemma4:31b
@@ -162,7 +162,7 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-mode
 
 ## What This Enables Next
 
-The current `15_dictionary_candidates_with_generated_meanings.jsonl` shape is the closest artifact to a rewrite-ready vocabulary dictionary. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
+The current `15_final_dictionary.jsonl` shape is the final dictionary artifact for this build. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
 
 - grade band or target reader level for each canonical key
 - allowed forms, variants, and example sentences per grade band
