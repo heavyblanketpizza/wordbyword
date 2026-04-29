@@ -22,6 +22,7 @@ OPTIONAL_OUTPUT_FILES = [
     "13_generated_example_attempts.jsonl",
     "13_generated_example_failures.jsonl",
     "14_dictionary_candidates_with_meanings.jsonl",
+    "15_dictionary_candidates_with_generated_meanings.jsonl",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -125,6 +126,11 @@ OPTIONAL_PIPELINE_STAGES = [
         "file": "14_dictionary_candidates_with_meanings.jsonl",
         "description": "Stage-13 dictionary candidates confirmed and enriched with reference-dictionary meanings when canonical keys match.",
     },
+    {
+        "stage": "15",
+        "file": "15_dictionary_candidates_with_generated_meanings.jsonl",
+        "description": "Stage-14 dictionary candidates with Ollama-written meanings for rows that still had empty meanings.",
+    },
 ]
 
 
@@ -137,6 +143,7 @@ def all_output_files(
     include_generated_example_attempts: bool | None = None,
     include_generated_example_failures: bool | None = None,
     include_meaning_dictionary_candidates: bool = False,
+    include_generated_meaning_dictionary_candidates: bool = False,
 ) -> list[str]:
     return [
         *BASE_OUTPUT_FILES,
@@ -169,6 +176,11 @@ def all_output_files(
             if include_meaning_dictionary_candidates
             else []
         ),
+        *(
+            ["15_dictionary_candidates_with_generated_meanings.jsonl"]
+            if include_generated_meaning_dictionary_candidates
+            else []
+        ),
     ]
 
 
@@ -179,6 +191,7 @@ def pipeline_stages(
     include_linked_dictionary_candidates: bool = False,
     include_generated_dictionary_candidates: bool = False,
     include_meaning_dictionary_candidates: bool = False,
+    include_generated_meaning_dictionary_candidates: bool = False,
 ) -> list[dict[str, str]]:
     return [
         *BASE_PIPELINE_STAGES,
@@ -187,4 +200,5 @@ def pipeline_stages(
         *([OPTIONAL_PIPELINE_STAGES[2]] if include_linked_dictionary_candidates else []),
         *([OPTIONAL_PIPELINE_STAGES[3]] if include_generated_dictionary_candidates else []),
         *([OPTIONAL_PIPELINE_STAGES[4]] if include_meaning_dictionary_candidates else []),
+        *([OPTIONAL_PIPELINE_STAGES[5]] if include_generated_meaning_dictionary_candidates else []),
     ]

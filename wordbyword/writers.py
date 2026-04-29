@@ -69,6 +69,7 @@ from wordbyword.output_metadata import (
 from wordbyword.saved_outputs import (
     resolve_dictionary_support_rows,
     write_cleanup_outputs_from_saved,
+    write_generated_meaning_dictionary_candidates_from_saved,
     write_linked_dictionary_candidates_from_saved,
     write_meaning_dictionary_candidates_from_saved,
 )
@@ -114,6 +115,7 @@ __all__ = [
     "write_cleanup_outputs_from_saved",
     "write_jsonl",
     "write_linked_dictionary_candidates_from_saved",
+    "write_generated_meaning_dictionary_candidates_from_saved",
     "write_meaning_dictionary_candidates_from_saved",
     "write_output_readme",
     "write_outputs",

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
 from wordbyword.example_generation import GeneratedExampleAttemptSummary
+from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.terminal_ui import (
     emit_artifact_drop,
@@ -18,7 +19,10 @@ from wordbyword.terminal_ui import (
     render_artifact_drop,
 )
 from wordbyword.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
-from wordbyword.saved_outputs import write_meaning_dictionary_candidates_from_saved
+from wordbyword.saved_outputs import (
+    write_generated_meaning_dictionary_candidates_from_saved,
+    write_meaning_dictionary_candidates_from_saved,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,6 +100,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--generate-missing-meanings",
+        action="store_true",
+        help=(
+            "Use saved build-dictionary/14_dictionary_candidates_with_meanings.jsonl to write "
+            "15_dictionary_candidates_with_generated_meanings.jsonl, asking Ollama to write "
+            "Korean meanings for rows whose meaning field is empty."
+        ),
+    )
+    parser.add_argument(
         "--reference-dictionary",
         type=Path,
         default=Path("references/reference-dictionary.jsonl"),
@@ -147,6 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         return add_reference_meanings(
             output_dir=args.output,
             reference_dictionary_path=args.reference_dictionary,
+        )
+    if args.generate_missing_meanings:
+        return generate_missing_meanings(
+            output_dir=args.output,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
         )
     if args.retry_generated_examples and (
         args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
@@ -268,6 +287,22 @@ def main(argv: list[str] | None = None) -> int:
                     ("relics", f"{len(entries):,} headwords"),
                     ("matched", f"{matched_count:,} meanings"),
                     ("missing", f"{len(entries) - matched_count:,} meanings"),
+                ),
+            )
+            return
+        if stage == "15_dictionary_candidates_with_generated_meanings":
+            generated_count = sum(
+                1 for entry in entries
+                if bool(entry.get("meaning_generated_with_ollama"))
+            )
+            emit_artifact_drop(
+                stage,
+                file_label="15_dictionary_candidates_with_generated_meanings.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("generated", f"{generated_count:,} meanings"),
+                    ("preserved", f"{len(entries) - generated_count:,} meanings"),
+                    ("model", args.ollama_model),
                 ),
             )
 
@@ -463,6 +498,62 @@ def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path)
             ("matched", f"{outputs.matched_count:,} meanings"),
             ("missing", f"{outputs.unmatched_count:,} meanings"),
             ("status", "replay // no llm calls"),
+        ),
+        color=color,
+        width=width,
+    )
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def generate_missing_meanings(
+    *,
+    output_dir: Path,
+    model: str,
+    base_url: str | None = None,
+    generated_meaning_client: SupportsCompletion | None = None,
+) -> int:
+    client = generated_meaning_client or ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=300.0,
+        max_output_tokens=4096,
+    )
+
+    def generated_meaning_progress(progress: CleanupBatchProgress) -> None:
+        emit_cleanup_progress(
+            progress,
+            model=model,
+            label="meaning",
+            item_label="terms",
+        )
+
+    try:
+        outputs = write_generated_meaning_dictionary_candidates_from_saved(
+            output_dir,
+            generated_meaning_client=client,
+            generated_meaning_progress=generated_meaning_progress,
+        )
+    except (ValueError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    import os
+    import shutil
+
+    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    rendered = render_artifact_drop(
+        "15_dictionary_candidates_with_generated_meanings",
+        file_label=str(output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"),
+        summary=(
+            ("relics", f"{len(outputs.rows):,} headwords"),
+            ("generated", f"{outputs.generated_count:,} meanings"),
+            ("preserved", f"{outputs.preserved_count:,} meanings"),
+            ("missing", f"{outputs.missing_count:,} meanings"),
+            ("model", model),
         ),
         color=color,
         width=width,

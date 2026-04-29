@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from wordbyword.cli import (
     add_reference_meanings,
+    generate_missing_meanings,
     link_cleaned_examples,
     load_dictionary_candidates,
     main,
@@ -17,6 +18,7 @@ from wordbyword.cli import (
     show_distribution,
 )
 from wordbyword.example_generation import GeneratedExampleAttemptSummary
+from wordbyword.llm import CompletionResult
 from wordbyword.pipeline import PipelineResult
 
 
@@ -295,6 +297,100 @@ class ShowDistributionCliTest(unittest.TestCase):
             mock_pipeline.assert_not_called()
             self.assertIn("14_dictionary_candidates_with_meanings.jsonl", stdout.getvalue())
 
+    def test_generate_missing_meanings_builds_stage_fifteen_without_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            (output_dir / "14_dictionary_candidates_with_meanings.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "canonical_key": "학교",
+                                "display": "학교",
+                                "example": "학교에 갑니다.",
+                                "curation_status": "confirmed",
+                                "meaning": "학생들이 배우는 곳.",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "canonical_key": "없는말",
+                                "display": "없는말",
+                                "example": "없는말 예문",
+                                "curation_status": "confirmed",
+                                "meaning": "",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = generate_missing_meanings(
+                    output_dir=output_dir,
+                    model="gemma4:31b",
+                    generated_meaning_client=GeneratedMeaningClient(),
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue((output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl").exists())
+            rows = [
+                json.loads(line)
+                for line in (output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
+            self.assertFalse(rows[0]["meaning_generated_with_ollama"])
+            self.assertEqual(rows[1]["meaning"], "예문에서 쓰인 뜻.")
+            self.assertTrue(rows[1]["meaning_generated_with_ollama"])
+            self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", summary["outputs"])
+            self.assertEqual(summary["reviewed_missing_dictionary_meanings"], 1)
+            self.assertEqual(summary["generated_dictionary_candidate_meanings"], 1)
+            self.assertEqual(summary["preserved_dictionary_candidate_meanings"], 1)
+            self.assertEqual(summary["remaining_missing_dictionary_candidate_meanings"], 0)
+            self.assertIn("15", {stage["stage"] for stage in summary["pipeline_stages"]})
+            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", stdout.getvalue())
+
+    def test_main_with_generate_missing_meanings_skips_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            (output_dir / "14_dictionary_candidates_with_meanings.jsonl").write_text(
+                json.dumps(
+                    {
+                        "canonical_key": "없는말",
+                        "display": "없는말",
+                        "example": "없는말 예문",
+                        "meaning": "",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline, patch(
+                "wordbyword.cli.ollama_client",
+                return_value=GeneratedMeaningClient(),
+            ):
+                exit_code = main(["--generate-missing-meanings", "--output", str(output_dir)])
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            self.assertIn("15_dictionary_candidates_with_generated_meanings.jsonl", stdout.getvalue())
+
     def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
@@ -393,6 +489,21 @@ def attempt_summary(*, attempt_number: int, failed_count: int) -> GeneratedExamp
         attempt_rows=[],
         failure_rows=[],
     )
+
+
+class GeneratedMeaningClient:
+    def complete(self, messages, *args, **kwargs) -> CompletionResult:
+        rows = [
+            json.loads(line)
+            for line in messages[-1].content.splitlines()[1:]
+            if line.strip()
+        ]
+        lines = [f"{row['id']}\t예문에서 쓰인 뜻." for row in rows]
+        return CompletionResult(
+            provider="ollama",
+            model="gemma4:31b",
+            content="\n".join(lines),
+        )
 
 
 if __name__ == "__main__":

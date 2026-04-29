@@ -372,6 +372,14 @@ RELIC_DROP_ART_MEANINGS = [
     "  ╰──────────────────────────────────────────────────────────────╯  ",
 ]
 
+RELIC_DROP_ART_GENERATED_MEANINGS = [
+    "    ░▒▓█▓▒░  ░▒▓ MEANING FORGE // EMPTY SLOTS FILLED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭────────────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 15_dictionary_candidates_with_generated_meanings ▓▒░ │  ",
+    "  │   ◉─◉─◉   ▟▙ generated meanings online ▟▙   ◉─◉─◉   ░░░░░   │  ",
+    "  ╰────────────────────────────────────────────────────────────────╯  ",
+]
+
 RELIC_DROP_PALETTE = (
     TOKYO_NIGHT["pink"],
     TOKYO_NIGHT["purple"],
@@ -450,6 +458,9 @@ def render_artifact_drop(
     elif stage == "14_dictionary_candidates_with_meanings":
         art = RELIC_DROP_ART_MEANINGS
         accent = TOKYO_NIGHT["purple"]
+    elif stage == "15_dictionary_candidates_with_generated_meanings":
+        art = RELIC_DROP_ART_GENERATED_MEANINGS
+        accent = TOKYO_NIGHT["yellow"]
     else:
         art = RELIC_DROP_ART_SENTENCES
         accent = TOKYO_NIGHT["cyan"]

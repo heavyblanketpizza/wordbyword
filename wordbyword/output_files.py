@@ -38,12 +38,16 @@ def cleanup_previous_outputs(
                 "13_generated_example_attempts.jsonl",
                 "13_generated_example_failures.jsonl",
                 "14_dictionary_candidates_with_meanings.jsonl",
+                "15_dictionary_candidates_with_generated_meanings.jsonl",
             ]
             if include_generated_dictionary_candidates
             else []
         ),
         *(
-            ["14_dictionary_candidates_with_meanings.jsonl"]
+            [
+                "14_dictionary_candidates_with_meanings.jsonl",
+                "15_dictionary_candidates_with_generated_meanings.jsonl",
+            ]
             if include_meaning_dictionary_candidates
             else []
         ),

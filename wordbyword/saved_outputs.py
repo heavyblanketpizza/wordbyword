@@ -25,6 +25,10 @@ from wordbyword.meaning_assignment import (
     MeaningAssignmentOutputs,
     build_dictionary_candidates_with_meanings,
 )
+from wordbyword.meaning_generation import (
+    GeneratedMeaningOutputs,
+    build_generated_meaning_dictionary_outputs,
+)
 from wordbyword.output_files import (
     append_jsonl,
     append_rows,
@@ -451,6 +455,9 @@ def write_meaning_dictionary_candidates_from_saved(
     )
 
     remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir)
+    generated_meaning_output_path = output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"
+    if generated_meaning_output_path.is_file():
+        generated_meaning_output_path.unlink()
     initialize_jsonl_file(meaning_output_path)
     meaning_outputs = build_dictionary_candidates_with_meanings(
         generated_rows,
@@ -468,6 +475,57 @@ def write_meaning_dictionary_candidates_from_saved(
         meaning_assignment_outputs=meaning_outputs,
     )
     return meaning_outputs
+
+
+def write_generated_meaning_dictionary_candidates_from_saved(
+    output_dir: Path,
+    *,
+    generated_meaning_client: SupportsCompletion,
+    generated_meaning_progress: CleanupProgressCallback | None = None,
+    artifact_callback: ArtifactCallback | None = None,
+) -> GeneratedMeaningOutputs:
+    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
+    generated_meaning_output_path = output_dir / "15_dictionary_candidates_with_generated_meanings.jsonl"
+
+    meaning_rows = read_required_jsonl(
+        meaning_output_path,
+        built_from="14_dictionary_candidates_with_meanings.jsonl",
+        target="15_dictionary_candidates_with_generated_meanings.jsonl",
+    )
+    initialize_jsonl_file(generated_meaning_output_path)
+    write_jsonl(
+        generated_meaning_output_path,
+        [
+            {
+                **dict(row),
+                "curation_status": "confirmed",
+                "meaning": str(row.get("meaning", "") or ""),
+                "meaning_generated_with_ollama": False,
+            }
+            for row in meaning_rows
+        ],
+    )
+
+    generated_meaning_outputs = build_generated_meaning_dictionary_outputs(
+        meaning_rows,
+        client=generated_meaning_client,
+        on_progress=generated_meaning_progress,
+        on_batch_complete=lambda snapshot: write_jsonl(
+            generated_meaning_output_path,
+            snapshot.rows,
+        ),
+    )
+    write_jsonl(generated_meaning_output_path, generated_meaning_outputs.rows)
+    if artifact_callback is not None:
+        artifact_callback(
+            "15_dictionary_candidates_with_generated_meanings",
+            generated_meaning_outputs.rows,
+        )
+    refresh_saved_output_metadata(
+        output_dir,
+        generated_meaning_outputs=generated_meaning_outputs,
+    )
+    return generated_meaning_outputs
 
 
 def remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir: Path) -> None:
