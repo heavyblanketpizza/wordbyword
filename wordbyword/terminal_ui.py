@@ -364,6 +364,14 @@ RELIC_DROP_ART_GENERATED = [
     "  ╰──────────────────────────────────────────────────────────────────╯  ",
 ]
 
+RELIC_DROP_ART_MEANINGS = [
+    "    ░▒▓█▓▒░  ░▒▓ MEANING RELAY // REFERENCE MERGED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 14_dictionary_candidates_with_meanings.jsonl ▓▒░   │  ",
+    "  │   ◉─◉─◉   ▟▙ meaning stack online ▟▙   ◉─◉─◉   ░░░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────────╯  ",
+]
+
 RELIC_DROP_PALETTE = (
     TOKYO_NIGHT["pink"],
     TOKYO_NIGHT["purple"],
@@ -439,6 +447,9 @@ def render_artifact_drop(
     elif stage == "13_dictionary_candidates_with_generated_examples":
         art = RELIC_DROP_ART_GENERATED
         accent = TOKYO_NIGHT["green"]
+    elif stage == "14_dictionary_candidates_with_meanings":
+        art = RELIC_DROP_ART_MEANINGS
+        accent = TOKYO_NIGHT["purple"]
     else:
         art = RELIC_DROP_ART_SENTENCES
         accent = TOKYO_NIGHT["cyan"]

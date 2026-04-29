@@ -10,8 +10,9 @@ wheels/
 # Virtual environments
 .venv
 
-# uv/cache and generated extraction outputs
+# uv/cache and generated dictionary build artifacts
 .uv-cache/
+build-dictionary/
 output/
 references/
 

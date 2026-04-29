@@ -9,6 +9,7 @@ from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs
 from wordbyword.example_assignment import LinkedDictionaryOutputs
 from wordbyword.example_cleanup import CleanedExampleOutputs
 from wordbyword.example_generation import GeneratedExampleOutputs
+from wordbyword.meaning_assignment import MeaningAssignmentOutputs
 from wordbyword.models import CountEntry, PageText
 from wordbyword.output_catalog import all_output_files, pipeline_stages
 
@@ -73,9 +74,10 @@ def write_output_readme(
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
     include_generated_dictionary_candidates: bool = False,
+    include_meaning_dictionary_candidates: bool = False,
 ) -> None:
     lines = [
-        "# wordbyword output",
+        "# wordbyword build-dictionary",
         "",
         "Read these files in numeric order to follow the pipeline from source text to vocabulary candidates.",
         "",
@@ -87,13 +89,14 @@ def write_output_readme(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
     ):
         lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
 
     lines.extend(
         [
             "",
-            "When output quality looks wrong, start at `01_extracted_pages.csv` and move forward.",
+            "When artifact quality looks wrong, start at `01_extracted_pages.csv` and move forward.",
             "The first file where the text looks wrong usually points to the stage that needs work.",
             "",
         ]
@@ -108,11 +111,15 @@ def refresh_saved_output_metadata(
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None,
     generated_example_outputs: GeneratedExampleOutputs | None = None,
+    meaning_assignment_outputs: MeaningAssignmentOutputs | None = None,
 ) -> None:
     include_cleaned_example_sentences = (output_dir / "10_cleaned_example_sentences.csv").is_file()
     include_cleaned_dictionary_candidates = (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
     include_linked_dictionary_candidates = (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").is_file()
     include_generated_dictionary_candidates = (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").is_file()
+    include_generated_example_attempts = (output_dir / "13_generated_example_attempts.jsonl").is_file()
+    include_generated_example_failures = (output_dir / "13_generated_example_failures.jsonl").is_file()
+    include_meaning_dictionary_candidates = (output_dir / "14_dictionary_candidates_with_meanings.jsonl").is_file()
 
     summary_path = output_dir / "00_summary.json"
     summary: dict[str, Any] = {}
@@ -124,12 +131,16 @@ def refresh_saved_output_metadata(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_generated_example_attempts=include_generated_example_attempts,
+        include_generated_example_failures=include_generated_example_failures,
+        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
     )
     summary["pipeline_stages"] = pipeline_stages(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
     )
 
     if cleaned_example_outputs is not None:
@@ -190,6 +201,18 @@ def refresh_saved_output_metadata(
         ):
             summary.pop(key, None)
 
+    if meaning_assignment_outputs is not None:
+        summary["dictionary_candidate_meaning_rows"] = len(meaning_assignment_outputs.rows)
+        summary["matched_reference_dictionary_meanings"] = meaning_assignment_outputs.matched_count
+        summary["missing_dictionary_candidate_meanings"] = meaning_assignment_outputs.unmatched_count
+    elif not include_meaning_dictionary_candidates:
+        for key in (
+            "dictionary_candidate_meaning_rows",
+            "matched_reference_dictionary_meanings",
+            "missing_dictionary_candidate_meanings",
+        ):
+            summary.pop(key, None)
+
     if summary or summary_path.is_file():
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -199,4 +222,5 @@ def refresh_saved_output_metadata(
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
         include_generated_dictionary_candidates=include_generated_dictionary_candidates,
+        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
     )

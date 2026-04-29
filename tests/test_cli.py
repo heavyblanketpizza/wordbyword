@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wordbyword.cli import (
+    add_reference_meanings,
     link_cleaned_examples,
     load_dictionary_candidates,
     main,
@@ -21,11 +22,11 @@ from wordbyword.pipeline import PipelineResult
 
 class ShowDistributionCliTest(unittest.TestCase):
     def test_resolve_distribution_path_uses_output_default(self) -> None:
-        path = resolve_distribution_path("", Path("output"))
-        self.assertEqual(path, Path("output") / "11_cleaned_dictionary_candidates.jsonl")
+        path = resolve_distribution_path("", Path("build-dictionary"))
+        self.assertEqual(path, Path("build-dictionary") / "11_cleaned_dictionary_candidates.jsonl")
 
     def test_resolve_distribution_path_uses_supplied_value(self) -> None:
-        path = resolve_distribution_path("/tmp/relics.jsonl", Path("output"))
+        path = resolve_distribution_path("/tmp/relics.jsonl", Path("build-dictionary"))
         self.assertEqual(path, Path("/tmp/relics.jsonl"))
 
     def test_load_dictionary_candidates_reads_jsonl_rows(self) -> None:
@@ -183,6 +184,116 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
             self.assertIn("12_dictionary_candidates_with_cleaned_examples.jsonl", stdout.getvalue())
+
+    def test_add_reference_meanings_builds_stage_fourteen_without_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            output_dir = root / "output"
+            output_dir.mkdir()
+            reference_path = root / "reference-dictionary.jsonl"
+            (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "canonical_key": "학교",
+                                "display": "학교",
+                                "example": "학교에 갑니다.",
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "canonical_key": "없는말",
+                                "display": "없는말",
+                                "example": "없는말 예문",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "13_generated_example_attempts.jsonl").write_text("", encoding="utf-8")
+            (output_dir / "13_generated_example_failures.jsonl").write_text("", encoding="utf-8")
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+            reference_path.write_text(
+                json.dumps(
+                    {
+                        "headword": "학교",
+                        "canonical_key": "학교",
+                        "meaning": "학생들이 배우는 곳.",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = add_reference_meanings(
+                    output_dir=output_dir,
+                    reference_dictionary_path=reference_path,
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue((output_dir / "14_dictionary_candidates_with_meanings.jsonl").exists())
+            self.assertFalse((output_dir / "13_generated_example_attempts.jsonl").exists())
+            self.assertFalse((output_dir / "13_generated_example_failures.jsonl").exists())
+            rows = [
+                json.loads(line)
+                for line in (output_dir / "14_dictionary_candidates_with_meanings.jsonl").read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
+            self.assertEqual(rows[1]["meaning"], "")
+            self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
+
+            summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", summary["outputs"])
+            self.assertNotIn("13_generated_example_attempts.jsonl", summary["outputs"])
+            self.assertNotIn("13_generated_example_failures.jsonl", summary["outputs"])
+            self.assertEqual(summary["dictionary_candidate_meaning_rows"], 2)
+            self.assertEqual(summary["matched_reference_dictionary_meanings"], 1)
+            self.assertEqual(summary["missing_dictionary_candidate_meanings"], 1)
+            self.assertIn("14", {stage["stage"] for stage in summary["pipeline_stages"]})
+            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", stdout.getvalue())
+
+    def test_main_with_add_reference_meanings_skips_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            output_dir = root / "output"
+            output_dir.mkdir()
+            reference_path = root / "reference-dictionary.jsonl"
+            (output_dir / "13_dictionary_candidates_with_generated_examples.jsonl").write_text(
+                json.dumps({"canonical_key": "물", "display": "물"}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            reference_path.write_text(
+                json.dumps({"canonical_key": "물", "meaning": "마시는 액체."}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+                exit_code = main(
+                    [
+                        "--add-reference-meanings",
+                        "--output",
+                        str(output_dir),
+                        "--reference-dictionary",
+                        str(reference_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            self.assertIn("14_dictionary_candidates_with_meanings.jsonl", stdout.getvalue())
 
     def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

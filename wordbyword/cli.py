@@ -18,6 +18,7 @@ from wordbyword.terminal_ui import (
     render_artifact_drop,
 )
 from wordbyword.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
+from wordbyword.saved_outputs import write_meaning_dictionary_candidates_from_saved
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("output"),
-        help="Folder where CSV and JSON outputs are written. Defaults to ./output.",
+        default=Path("build-dictionary"),
+        help="Folder where dictionary build artifacts are written. Defaults to ./build-dictionary.",
     )
     parser.add_argument(
         "--include-punctuation",
@@ -50,19 +51,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--clean-example-sentences",
         action="store_true",
-        help="Use saved output/09_example_sentences.csv and output/06_candidate_terms.csv to write 10_cleaned_example_sentences.csv.",
+        help="Use saved build-dictionary/09_example_sentences.csv and build-dictionary/06_candidate_terms.csv to write 10_cleaned_example_sentences.csv.",
     )
     parser.add_argument(
         "--clean-dictionary-candidates",
         action="store_true",
-        help="Use saved output/08_dictionary_candidates.jsonl and output/06_candidate_terms.csv to write 11_cleaned_dictionary_candidates.jsonl.",
+        help="Use saved build-dictionary/08_dictionary_candidates.jsonl and build-dictionary/06_candidate_terms.csv to write 11_cleaned_dictionary_candidates.jsonl.",
     )
     parser.add_argument(
         "--link-cleaned-examples",
         action="store_true",
         help=(
-            "Use saved output/10_cleaned_example_sentences.csv and "
-            "output/11_cleaned_dictionary_candidates.jsonl to write "
+            "Use saved build-dictionary/10_cleaned_example_sentences.csv and "
+            "build-dictionary/11_cleaned_dictionary_candidates.jsonl to write "
             "12_dictionary_candidates_with_cleaned_examples.jsonl."
         ),
     )
@@ -70,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--generate-missing-examples",
         action="store_true",
         help=(
-            "Use saved output/12_dictionary_candidates_with_cleaned_examples.jsonl to write "
+            "Use saved build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl to write "
             "13_dictionary_candidates_with_generated_examples.jsonl, generating a new candidate "
             "example sentence for rows whose example_replaced_with_cleaned_sentence flag is false."
         ),
@@ -79,8 +80,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--retry-generated-examples",
         action="store_true",
         help=(
-            "Use saved output/13_generated_example_failures.jsonl to run only the stage-13 "
+            "Use saved build-dictionary/13_generated_example_failures.jsonl to run only the stage-13 "
             "repair pass against the unresolved failed subset, updating the 13_* files in place."
+        ),
+    )
+    parser.add_argument(
+        "--add-reference-meanings",
+        "--add-meanings",
+        dest="add_reference_meanings",
+        action="store_true",
+        help=(
+            "Use saved build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl and "
+            "references/reference-dictionary.jsonl to write "
+            "14_dictionary_candidates_with_meanings.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--reference-dictionary",
+        type=Path,
+        default=Path("references/reference-dictionary.jsonl"),
+        help=(
+            "Reference JSONL with canonical_key and meaning fields for --add-reference-meanings. "
+            "Defaults to references/reference-dictionary.jsonl."
         ),
     )
     parser.add_argument(
@@ -105,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Render the cyberpunk distribution panel for an existing "
             "11_cleaned_dictionary_candidates.jsonl and exit. Optional path; "
-            "defaults to <output>/11_cleaned_dictionary_candidates.jsonl."
+            "defaults to <output-dir>/11_cleaned_dictionary_candidates.jsonl."
         ),
     )
     return parser
@@ -122,6 +143,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.link_cleaned_examples:
         return link_cleaned_examples(output_dir=args.output)
+    if args.add_reference_meanings:
+        return add_reference_meanings(
+            output_dir=args.output,
+            reference_dictionary_path=args.reference_dictionary,
+        )
     if args.retry_generated_examples and (
         args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
     ):
@@ -227,6 +253,21 @@ def main(argv: list[str] | None = None) -> int:
                     ("generated", f"{generated_count:,} examples"),
                     ("preserved", f"{len(entries) - generated_count:,} existing"),
                     ("model", args.ollama_model),
+                ),
+            )
+            return
+        if stage == "14_dictionary_candidates_with_meanings":
+            matched_count = sum(
+                1 for entry in entries
+                if bool(str(entry.get("meaning", "")).strip())
+            )
+            emit_artifact_drop(
+                stage,
+                file_label="14_dictionary_candidates_with_meanings.jsonl",
+                summary=(
+                    ("relics", f"{len(entries):,} headwords"),
+                    ("matched", f"{matched_count:,} meanings"),
+                    ("missing", f"{len(entries) - matched_count:,} meanings"),
                 ),
             )
 
@@ -388,6 +429,39 @@ def link_cleaned_examples(*, output_dir: Path) -> int:
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("replaced", f"{outputs.linked_count:,} examples"),
             ("rewrite", f"{outputs.unlinked_count:,} pending"),
+            ("status", "replay // no llm calls"),
+        ),
+        color=color,
+        width=width,
+    )
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path) -> int:
+    try:
+        outputs = write_meaning_dictionary_candidates_from_saved(
+            output_dir,
+            reference_dictionary_path=reference_dictionary_path,
+        )
+    except ValueError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    import os
+    import shutil
+
+    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    width = shutil.get_terminal_size(fallback=(100, 24)).columns
+    rendered = render_artifact_drop(
+        "14_dictionary_candidates_with_meanings",
+        file_label=str(output_dir / "14_dictionary_candidates_with_meanings.jsonl"),
+        summary=(
+            ("relics", f"{len(outputs.rows):,} headwords"),
+            ("matched", f"{outputs.matched_count:,} meanings"),
+            ("missing", f"{outputs.unmatched_count:,} meanings"),
             ("status", "replay // no llm calls"),
         ),
         color=color,

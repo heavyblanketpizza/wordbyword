@@ -21,6 +21,10 @@ from wordbyword.example_generation import (
     retry_generated_dictionary_candidate_outputs,
 )
 from wordbyword.llm import SupportsCompletion
+from wordbyword.meaning_assignment import (
+    MeaningAssignmentOutputs,
+    build_dictionary_candidates_with_meanings,
+)
 from wordbyword.output_files import (
     append_jsonl,
     append_rows,
@@ -424,6 +428,63 @@ def retry_generated_dictionary_candidates_from_saved(
             generated_outputs.rows,
         )
     return generated_outputs
+
+
+def write_meaning_dictionary_candidates_from_saved(
+    output_dir: Path,
+    *,
+    reference_dictionary_path: Path,
+    artifact_callback: ArtifactCallback | None = None,
+) -> MeaningAssignmentOutputs:
+    generated_output_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
+    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
+
+    generated_rows = read_required_jsonl(
+        generated_output_path,
+        built_from="13_dictionary_candidates_with_generated_examples.jsonl",
+        target="14_dictionary_candidates_with_meanings.jsonl",
+    )
+    reference_rows = read_required_jsonl(
+        reference_dictionary_path,
+        built_from=str(reference_dictionary_path),
+        target="14_dictionary_candidates_with_meanings.jsonl",
+    )
+
+    remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir)
+    initialize_jsonl_file(meaning_output_path)
+    meaning_outputs = build_dictionary_candidates_with_meanings(
+        generated_rows,
+        reference_rows,
+        on_row=lambda row: append_jsonl(meaning_output_path, [row]),
+    )
+    write_jsonl(meaning_output_path, meaning_outputs.rows)
+    if artifact_callback is not None:
+        artifact_callback(
+            "14_dictionary_candidates_with_meanings",
+            meaning_outputs.rows,
+        )
+    refresh_saved_output_metadata(
+        output_dir,
+        meaning_assignment_outputs=meaning_outputs,
+    )
+    return meaning_outputs
+
+
+def remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir: Path) -> None:
+    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    if generated_attempts_path.is_file():
+        generated_attempts_path.unlink()
+    remove_empty_generated_example_failures(output_dir)
+
+
+def remove_empty_generated_example_failures(output_dir: Path) -> bool:
+    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+    if not generated_failures_path.is_file():
+        return False
+    if generated_failures_path.read_text(encoding="utf-8").strip():
+        return False
+    generated_failures_path.unlink()
+    return True
 
 
 def _next_generated_example_attempt_number(output_dir: Path) -> int:

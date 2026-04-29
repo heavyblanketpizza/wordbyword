@@ -16,7 +16,7 @@ The project is currently a vocabulary-and-example preparation pipeline. It does 
 
 - Put original books and documents in `original/`.
 - Run the pipeline with `uv --no-cache run python -m wordbyword`.
-- Generated files are written to `output/`.
+- Generated files are written to `build-dictionary/`.
 
 Supported source formats:
 
@@ -44,9 +44,10 @@ The pipeline writes these files:
 - `13_dictionary_candidates_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, preserves cleaned-example wins, and writes a completely new candidate example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
 - `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
 - `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
-- `README.md`: a generated guide for reading the output folder in pipeline order.
+- `14_dictionary_candidates_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
+- `README.md`: a generated guide for reading the `build-dictionary/` folder in pipeline order.
 
-When output quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
+When artifact quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
 
 ## Usage
 
@@ -57,7 +58,7 @@ uv --no-cache run python -m wordbyword
 Useful options:
 
 ```bash
-uv --no-cache run python -m wordbyword --input original --output output
+uv --no-cache run python -m wordbyword --input original --output build-dictionary
 uv --no-cache run python -m wordbyword --include-punctuation
 uv --no-cache run python -m wordbyword --include-numbers
 uv --no-cache run python -m wordbyword --clean-example-sentences
@@ -65,12 +66,13 @@ uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
 uv --no-cache run python -m wordbyword --generate-missing-examples
 uv --no-cache run python -m wordbyword --retry-generated-examples
+uv --no-cache run python -m wordbyword --add-reference-meanings
 uv --no-cache run python -m wordbyword --show-distribution
 ```
 
 The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
 
-The LLM cleanup stages are intentionally separate and reuse saved artifacts from `output/`:
+The LLM cleanup stages are intentionally separate and reuse saved artifacts from `build-dictionary/`:
 
 ```bash
 uv --no-cache run python -m wordbyword
@@ -79,13 +81,15 @@ uv --no-cache run python -m wordbyword --clean-dictionary-candidates
 uv --no-cache run python -m wordbyword --link-cleaned-examples
 uv --no-cache run python -m wordbyword --generate-missing-examples
 uv --no-cache run python -m wordbyword --retry-generated-examples
+uv --no-cache run python -m wordbyword --add-reference-meanings
 ```
 
-- `--clean-example-sentences` reads saved `06_candidate_terms.csv` and `09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
-- `--clean-dictionary-candidates` reads saved `06_candidate_terms.csv` and `08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
-- `--link-cleaned-examples` reads saved `10_cleaned_example_sentences.csv` and `11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
-- `--generate-missing-examples` reads saved `12_dictionary_candidates_with_cleaned_examples.jsonl` to write `13_dictionary_candidates_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
-- `--retry-generated-examples` reads saved `13_dictionary_candidates_with_generated_examples.jsonl` and `13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
+- `--clean-example-sentences` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
+- `--clean-dictionary-candidates` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
+- `--link-cleaned-examples` reads saved `build-dictionary/10_cleaned_example_sentences.csv` and `build-dictionary/11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
+- `--generate-missing-examples` reads saved `build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl` to write `13_dictionary_candidates_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
+- `--retry-generated-examples` reads saved `build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
+- `--add-reference-meanings` reads saved `build-dictionary/13_dictionary_candidates_with_generated_examples.jsonl` and `references/reference-dictionary.jsonl` to write `14_dictionary_candidates_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
 - `--show-distribution` renders the terminal distribution panel for an existing `11_cleaned_dictionary_candidates.jsonl` without making LLM calls.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
@@ -140,9 +144,15 @@ uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-mode
 uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
 ```
 
+The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_dictionary_candidates_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `references/reference-dictionary.jsonl`:
+
+```bash
+uv --no-cache run python -m wordbyword --add-reference-meanings
+```
+
 ## What This Enables Next
 
-The current `13_dictionary_candidates_with_generated_examples.jsonl` shape is the closest artifact to a rewrite-ready vocabulary dictionary. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
+The current `14_dictionary_candidates_with_meanings.jsonl` shape is the closest artifact to a rewrite-ready vocabulary dictionary. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
 
 - grade band or target reader level for each canonical key
 - allowed forms, variants, and example sentences per grade band

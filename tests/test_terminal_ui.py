@@ -19,7 +19,7 @@ class TerminalUiTest(unittest.TestCase):
     def test_render_boot_screen_keeps_mode_without_old_profile_copy(self) -> None:
         rendered = render_boot_screen(
             input_dir=Path("original"),
-            output_dir=Path("output"),
+            output_dir=Path("build-dictionary"),
             clean_example_sentences=True,
             sentence_cleanup_model="gemma4:31b",
             color=False,
@@ -47,7 +47,7 @@ class TerminalUiTest(unittest.TestCase):
             token_occurrences=45155,
             vocabulary_terms=2314,
             surface_words=5727,
-            output_dir=Path("output"),
+            output_dir=Path("build-dictionary"),
         )
 
         rendered = render_completion_screen(
@@ -79,7 +79,7 @@ class TerminalUiTest(unittest.TestCase):
             token_occurrences=4,
             vocabulary_terms=5,
             surface_words=6,
-            output_dir=Path("output"),
+            output_dir=Path("build-dictionary"),
         )
 
         rendered = render_completion_screen(
