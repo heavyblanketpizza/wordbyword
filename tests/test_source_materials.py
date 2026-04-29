@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import io
 import json
 import tempfile
@@ -8,79 +7,48 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import fitz
-
 from wordbyword.cli import main
-from wordbyword.source_materials import parse_source_material, source_id_for
+from wordbyword.source_materials import discover_source_materials, parse_source_material, parse_source_materials, source_id_for
 
 
-class SourceMaterialParserTest(unittest.TestCase):
+class SourceMaterialWorkspaceTest(unittest.TestCase):
     def test_source_id_for_uses_stable_filesystem_slug(self) -> None:
         self.assertEqual(source_id_for(Path("Popular Chemistry Prize 2025.pdf")), "popular-chemistry-prize-2025")
 
-    def test_pdf_bundle_writes_canonical_ir_and_assets(self) -> None:
+    def test_single_source_prepares_manifest_and_flat_assets_folder(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             source_path = root / "sample.pdf"
             output_root = root / "parsed"
-            write_sample_pdf(source_path)
+            source_path.write_bytes(b"%PDF-1.7\n")
+
+            stale_output = output_root / "sample"
+            stale_output.mkdir(parents=True)
+            (stale_output / "canonical_content.json").write_text("bad", encoding="utf-8")
+            (stale_output / "canonical_blocks.json").write_text("bad", encoding="utf-8")
+            (stale_output / "canonical_blocks.jsonl").write_text("bad", encoding="utf-8")
+            for old_folder in ("images", "tables", "drawings", "pages"):
+                folder = stale_output / "assets" / old_folder
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "old.txt").write_text("bad", encoding="utf-8")
 
             bundle = parse_source_material(source_path, output_root=output_root)
 
             self.assertEqual(bundle.source_id, "sample")
             self.assertTrue(bundle.manifest_path.is_file())
-            self.assertTrue(bundle.canonical_json_path.is_file())
-            self.assertTrue(bundle.canonical_jsonl_path.is_file())
-            self.assertTrue((bundle.output_dir / "assets" / "tables").is_dir())
-            self.assertTrue((bundle.output_dir / "assets" / "drawings").is_dir())
-            self.assertTrue((bundle.output_dir / "assets" / "images").is_dir())
+            self.assertTrue(bundle.assets_dir.is_dir())
+            self.assertFalse((bundle.output_dir / "canonical_content.json").exists())
+            self.assertFalse((bundle.output_dir / "canonical_blocks.json").exists())
+            self.assertFalse((bundle.output_dir / "canonical_blocks.jsonl").exists())
+            self.assertFalse(any((bundle.assets_dir / old).exists() for old in ("images", "tables", "drawings", "pages")))
 
-            canonical = json.loads(bundle.canonical_json_path.read_text(encoding="utf-8"))
-            block_types = {block["type"] for block in canonical["blocks"]}
-            self.assertIn("heading", block_types)
-            self.assertIn("paragraph", block_types)
-            self.assertIn("table", block_types)
-            self.assertIn("drawing", block_types)
-            self.assertEqual(canonical["schema_version"], "wordbyword.source_material_ir.v1")
-            self.assertEqual(canonical["source"]["filename"], "sample.pdf")
-            self.assertEqual(canonical["statistics"]["block_count"], len(canonical["blocks"]))
-            self.assertGreaterEqual(canonical["statistics"]["asset_counts"]["table"], 2)
-            self.assertGreaterEqual(canonical["statistics"]["asset_counts"]["drawing"], 1)
+            manifest = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], "wordbyword.source_material_workspace.v1")
+            self.assertEqual(manifest["source"]["filename"], "sample.pdf")
+            self.assertEqual(manifest["parser"]["status"], "not_run")
+            self.assertEqual(manifest["files"], {"assets": "assets/"})
 
-            table_block = next(block for block in canonical["blocks"] if block["type"] == "table")
-            self.assertEqual(table_block["rows"], [["Term", "Meaning"], ["H2O", "water"]])
-            self.assertEqual(table_block["text"], "Term\tMeaning\nH2O\twater")
-            self.assertTrue(table_block["assets"])
-
-            asset_paths = [bundle.output_dir / asset["path"] for asset in canonical["assets"]]
-            self.assertTrue(all(path.is_file() for path in asset_paths))
-
-            jsonl_rows = [
-                json.loads(line)
-                for line in bundle.canonical_jsonl_path.read_text(encoding="utf-8").splitlines()
-            ]
-            self.assertEqual(len(jsonl_rows), len(canonical["blocks"]))
-            self.assertEqual([row["order"] for row in jsonl_rows], list(range(1, len(jsonl_rows) + 1)))
-            self.assertTrue(all(row["id"] == f"b{row['order']:06d}" for row in jsonl_rows))
-
-    def test_image_source_becomes_ocr_and_vision_placeholder_block(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            source_path = root / "worksheet.png"
-            output_root = root / "parsed"
-            source_path.write_bytes(base64.b64decode(SMALL_PNG_BASE64))
-
-            bundle = parse_source_material(source_path, output_root=output_root)
-
-            canonical = json.loads(bundle.canonical_json_path.read_text(encoding="utf-8"))
-            self.assertEqual(len(canonical["blocks"]), 1)
-            block = canonical["blocks"][0]
-            self.assertEqual(block["type"], "image")
-            self.assertTrue(block["needs_ocr"])
-            self.assertTrue(block["needs_vision"])
-            self.assertEqual(canonical["statistics"]["asset_counts"]["image"], 1)
-
-    def test_cli_parses_one_source_material_without_running_dictionary_pipeline(self) -> None:
+    def test_cli_prepares_one_source_material_without_running_dictionary_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             source_path = root / "lesson.txt"
@@ -98,36 +66,52 @@ class SourceMaterialParserTest(unittest.TestCase):
                 )
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue((output_root / "lesson" / "canonical_content.json").is_file())
+            self.assertTrue((output_root / "lesson" / "manifest.json").is_file())
+            self.assertTrue((output_root / "lesson" / "assets").is_dir())
+            self.assertFalse((output_root / "lesson" / "canonical_content.json").exists())
 
+    def test_batch_prepares_separate_folder_for_each_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "class-source-materials"
+            output_root = source_dir / "parsed"
+            source_dir.mkdir()
+            (source_dir / "lesson.txt").write_text("첫 번째 자료.", encoding="utf-8")
+            nested_dir = source_dir / "nested"
+            nested_dir.mkdir()
+            (nested_dir / "lesson.txt").write_text("두 번째 자료.", encoding="utf-8")
+            output_root.mkdir()
+            (output_root / "generated.txt").write_text("do not parse generated output", encoding="utf-8")
 
-def write_sample_pdf(path: Path) -> None:
-    document = fitz.open()
-    page = document.new_page(width=400, height=400)
-    page.insert_text((40, 40), "Water Cycle", fontsize=18)
-    page.insert_text((40, 80), "Water moves through the air and land.", fontsize=11)
+            discovered = discover_source_materials(source_dir, output_root=output_root)
+            result = parse_source_materials(source_dir, output_root=output_root)
 
-    x0, y0 = 40, 120
-    cell_width, cell_height = 120, 30
-    for row in range(3):
-        y = y0 + row * cell_height
-        page.draw_line((x0, y), (x0 + 2 * cell_width, y))
-    for column in range(3):
-        x = x0 + column * cell_width
-        page.draw_line((x, y0), (x, y0 + 2 * cell_height))
-    page.insert_text((50, 140), "Term", fontsize=10)
-    page.insert_text((170, 140), "Meaning", fontsize=10)
-    page.insert_text((50, 170), "H2O", fontsize=10)
-    page.insert_text((170, 170), "water", fontsize=10)
+            self.assertEqual([path.name for path in discovered], ["lesson.txt", "lesson.txt"])
+            self.assertEqual(len(result.bundles), 2)
+            self.assertEqual({bundle.source_id for bundle in result.bundles}, {"lesson", "nested-lesson"})
+            self.assertTrue((output_root / "lesson" / "manifest.json").is_file())
+            self.assertTrue((output_root / "nested-lesson" / "manifest.json").is_file())
+            self.assertFalse((output_root / "generated" / "manifest.json").exists())
 
-    page.draw_circle((280, 260), 36)
-    page.draw_line((244, 260), (316, 260))
-    page.draw_line((280, 224), (280, 296))
-    document.save(path)
-    document.close()
+    def test_cli_batch_prepares_one_folder_per_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            output_root = root / "parsed"
+            source_dir.mkdir()
+            (source_dir / "alpha.txt").write_text("알파 자료.", encoding="utf-8")
+            (source_dir / "beta.md").write_text("# 베타 자료", encoding="utf-8")
 
+            with patch("sys.stdout", io.StringIO()):
+                exit_code = main(
+                    [
+                        "--parse-source-materials",
+                        str(source_dir),
+                        "--source-output-root",
+                        str(output_root),
+                    ]
+                )
 
-SMALL_PNG_BASE64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
-    "/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-)
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((output_root / "alpha" / "manifest.json").is_file())
+            self.assertTrue((output_root / "beta" / "manifest.json").is_file())

@@ -12,8 +12,10 @@ from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.source_materials import (
     DEFAULT_PARSED_SOURCE_ROOT,
+    DEFAULT_SOURCE_MATERIAL_ROOT,
     SourceMaterialParseError,
     parse_source_material,
+    parse_source_materials,
 )
 from wordbyword.terminal_ui import (
     emit_artifact_drop,
@@ -157,8 +159,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Parse one class source material into a canonical IR bundle with extracted image, "
-            "table, drawing, and OCR/vision placeholder assets."
+            "Prepare one class source material workspace under the parsed source root. "
+            "Document-intelligence parsing is intentionally not run yet."
+        ),
+    )
+    parser.add_argument(
+        "--parse-source-materials",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_SOURCE_MATERIAL_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Prepare one separate parsed workspace for every supported file in a class "
+            "source-material directory. Defaults to class-source-materials when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -166,7 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_PARSED_SOURCE_ROOT,
         help=(
-            "Root folder for --parse-source-material bundles. "
+            "Root folder for source-material parse bundles. "
             "Defaults to class-source-materials/parsed."
         ),
     )
@@ -182,11 +196,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.parse_source_material is not None and args.parse_source_materials is not None:
+        parser.exit(
+            2,
+            "wordbyword: error: --parse-source-material and --parse-source-materials cannot be combined.\n",
+        )
+    if args.parse_source_materials is not None and args.source_id:
+        parser.exit(
+            2,
+            "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
+        )
     if args.parse_source_material is not None:
         return parse_source_material_cli(
             source_path=args.parse_source_material,
             output_root=args.source_output_root,
             source_id=args.source_id,
+        )
+    if args.parse_source_materials is not None:
+        return parse_source_materials_cli(
+            source_dir=args.parse_source_materials,
+            output_root=args.source_output_root,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -464,18 +493,43 @@ def parse_source_material_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
-    stats = bundle.ir.statistics
     sys.stdout.write(
-        "source material parsed\n"
+        "source material workspace prepared\n"
         f"  source_id: {bundle.source_id}\n"
         f"  output_dir: {bundle.output_dir}\n"
-        f"  canonical_json: {bundle.canonical_json_path}\n"
-        f"  canonical_jsonl: {bundle.canonical_jsonl_path}\n"
-        f"  blocks: {stats['block_count']}\n"
-        f"  assets: {stats['asset_count']}\n"
-        f"  needs_ocr: {stats['needs_ocr_count']}\n"
-        f"  needs_vision: {stats['needs_vision_count']}\n"
+        f"  manifest: {bundle.manifest_path}\n"
+        f"  assets: {bundle.assets_dir}\n"
+        f"  parser_status: {bundle.manifest['parser']['status']}\n"
     )
+    sys.stdout.flush()
+    return 0
+
+
+def parse_source_materials_cli(
+    *,
+    source_dir: Path,
+    output_root: Path,
+) -> int:
+    try:
+        result = parse_source_materials(
+            source_dir,
+            output_root=output_root,
+        )
+    except SourceMaterialParseError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "source material workspaces prepared\n"
+        f"  source_dir: {result.source_dir}\n"
+        f"  output_root: {result.output_root}\n"
+        f"  sources: {len(result.source_paths)}\n"
+    )
+    for bundle in result.bundles:
+        sys.stdout.write(
+            f"  - {bundle.source_id}: {bundle.output_dir} "
+            f"(assets: {bundle.assets_dir.name}/, parser: {bundle.manifest['parser']['status']})\n"
+        )
     sys.stdout.flush()
     return 0
 

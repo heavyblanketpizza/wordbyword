@@ -26,22 +26,20 @@ Supported source formats:
 - `.txt`
 - `.md`
 
-## Source Material Parsing
+## Source Material Workspaces
 
-Use this first when preparing mature class materials for later LLM rewriting:
+Use this first to create one isolated workspace per mature class material:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-chemistryprize2025.pdf
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials
 ```
 
-The command writes one source-specific bundle under `class-source-materials/parsed/<source-id>/`:
+The command writes one source-specific folder under `class-source-materials/parsed/<source-id>/`:
 
-- `manifest.json`: source metadata, checksum, counts, and bundle file map.
-- `canonical_content.json`: canonical intermediate representation with ordered text, table, image, drawing, OCR, and vision fields.
-- `canonical_blocks.jsonl`: one model-friendly block per line for chunking and later rewrite prompts.
-- `assets/images/`, `assets/tables/`, `assets/drawings/`, and `assets/pages/`: extracted or rendered visual assets for later OCR/vision enrichment.
+- `manifest.json`: source metadata, checksum, parser status, and bundle file map.
+- `assets/`: a single flat folder for parser-generated images, tables, page crops, and other visual assets.
 
-Current deterministic extraction supports PDF/EPUB through PyMuPDF, plain text/Markdown/HTML snapshots, and standalone image files. OCR text and vision descriptions are represented as explicit empty fields for the next enrichment stage; visual blocks are marked with `needs_ocr` and/or `needs_vision`.
+The previous custom PyMuPDF extraction has been removed because its parsed JSON was not useful enough for rewrite or LLM-training-data prep. These folders are now clean parser workspaces only; the next parser layer should write high-quality Markdown/HTML and sidecar metadata into each source folder using a real document-intelligence backend such as Docling, Marker, or Unstructured.
 
 ## Outputs
 
