@@ -13,6 +13,7 @@ wheels/
 # uv/cache and generated extraction outputs
 .uv-cache/
 output/
+references/
 
 # Local source documents; keep the folder placeholder only.
 original/*
