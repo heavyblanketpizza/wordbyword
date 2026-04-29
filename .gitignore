@@ -14,9 +14,6 @@ wheels/
 .uv-cache/
 output/
 
-# Bundled 한국어기초사전 cache populated by --add-dictionary-meanings.
-krdict_data/
-
 # Local source documents; keep the folder placeholder only.
 original/*
 !original/.gitkeep

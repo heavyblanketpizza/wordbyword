@@ -12,14 +12,6 @@ from wordbyword.example_cleanup import (
     build_cleaned_example_sentence_outputs,
     cleaned_example_sentence_fields,
 )
-from wordbyword.dictionary_meaning import (
-    DictionaryMeaningBatchSnapshot,
-    DictionaryMeaningGenerationOutputs,
-    DictionaryMeaningLookupOutputs,
-    build_dictionary_meaning_generation_outputs,
-    build_dictionary_meaning_lookup_outputs,
-    needs_generated_meaning,
-)
 from wordbyword.example_generation import (
     GeneratedExampleAttemptSummary,
     GeneratedExampleBatchSnapshot,
@@ -27,11 +19,6 @@ from wordbyword.example_generation import (
     RetryGeneratedExampleCallback,
     build_generated_dictionary_candidate_outputs,
     retry_generated_dictionary_candidate_outputs,
-)
-from wordbyword.krdict import (
-    KrdictDataset,
-    default_krdict_dir,
-    ensure_krdict_dataset,
 )
 from wordbyword.llm import SupportsCompletion
 from wordbyword.output_files import (
@@ -62,63 +49,18 @@ def write_cleanup_outputs_from_saved(
     generated_example_progress: CleanupProgressCallback | None = None,
     generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
     retry_generated_examples_only: bool = False,
-    add_dictionary_meanings: bool = False,
-    fill_missing_meanings: bool = False,
-    dictionary_meaning_client: SupportsCompletion | None = None,
-    dictionary_meaning_progress: CleanupProgressCallback | None = None,
-    krdict_dir: Path | None = None,
-    krdict_download_url: str | None = None,
-    krdict_status_callback: Callable[[str, str], None] | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> tuple[
     CleanedExampleOutputs | None,
     CleanedDictionaryOutputs | None,
     LinkedDictionaryOutputs | None,
     GeneratedExampleOutputs | None,
-    DictionaryMeaningLookupOutputs | None,
-    DictionaryMeaningGenerationOutputs | None,
 ]:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleaned_example_outputs: CleanedExampleOutputs | None = None
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None
     generated_example_outputs: GeneratedExampleOutputs | None = None
-    dictionary_meaning_lookup_outputs: DictionaryMeaningLookupOutputs | None = None
-    dictionary_meaning_generation_outputs: DictionaryMeaningGenerationOutputs | None = None
-
-    if add_dictionary_meanings or fill_missing_meanings:
-        if add_dictionary_meanings:
-            dictionary_meaning_lookup_outputs = write_dictionary_meaning_lookup_from_saved(
-                output_dir,
-                krdict_dir=krdict_dir,
-                krdict_download_url=krdict_download_url,
-                krdict_status_callback=krdict_status_callback,
-                artifact_callback=artifact_callback,
-            )
-        if fill_missing_meanings:
-            if dictionary_meaning_client is None:
-                raise ValueError(
-                    "fill_missing_meanings requires dictionary_meaning_client to be supplied."
-                )
-            dictionary_meaning_generation_outputs = write_dictionary_meaning_generation_from_saved(
-                output_dir,
-                client=dictionary_meaning_client,
-                on_progress=dictionary_meaning_progress,
-                artifact_callback=artifact_callback,
-            )
-        refresh_saved_output_metadata(
-            output_dir,
-            dictionary_meaning_lookup_outputs=dictionary_meaning_lookup_outputs,
-            dictionary_meaning_generation_outputs=dictionary_meaning_generation_outputs,
-        )
-        return (
-            None,
-            None,
-            None,
-            None,
-            dictionary_meaning_lookup_outputs,
-            dictionary_meaning_generation_outputs,
-        )
 
     if (
         sentence_cleanup_client is None
@@ -131,7 +73,7 @@ def write_cleanup_outputs_from_saved(
             require_inputs=False,
         )
         refresh_saved_output_metadata(output_dir, linked_dictionary_outputs=linked_dictionary_outputs)
-        return None, None, linked_dictionary_outputs, None, None, None
+        return None, None, linked_dictionary_outputs, None
 
     candidate_terms: list[dict[str, str]] | None = None
     if (
@@ -250,8 +192,6 @@ def write_cleanup_outputs_from_saved(
         cleaned_dictionary_outputs,
         linked_dictionary_outputs,
         generated_example_outputs,
-        None,
-        None,
     )
 
 
@@ -500,78 +440,3 @@ def _next_generated_example_attempt_number(output_dir: Path) -> int:
         if attempt_number > max_attempt_number:
             max_attempt_number = attempt_number
     return max_attempt_number + 1
-
-
-def write_dictionary_meaning_lookup_from_saved(
-    output_dir: Path,
-    *,
-    krdict_dir: Path | None = None,
-    krdict_download_url: str | None = None,
-    krdict_status_callback: Callable[[str, str], None] | None = None,
-    artifact_callback: ArtifactCallback | None = None,
-) -> DictionaryMeaningLookupOutputs:
-    generated_input_path = output_dir / "13_dictionary_candidates_with_generated_examples.jsonl"
-    generated_rows = read_required_jsonl(
-        generated_input_path,
-        built_from="13_dictionary_candidates_with_generated_examples.jsonl",
-        target="14_dictionary_candidates_with_meanings.jsonl",
-    )
-
-    resolved_krdict_dir = krdict_dir if krdict_dir is not None else default_krdict_dir()
-    dataset = ensure_krdict_dataset(
-        resolved_krdict_dir,
-        download_url=krdict_download_url,
-        on_status=krdict_status_callback,
-    )
-
-    lookup_outputs = build_dictionary_meaning_lookup_outputs(generated_rows, dataset)
-
-    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
-    write_jsonl(meaning_output_path, lookup_outputs.rows)
-    if artifact_callback is not None:
-        artifact_callback(
-            "14_dictionary_candidates_with_meanings",
-            lookup_outputs.rows,
-        )
-    return lookup_outputs
-
-
-def write_dictionary_meaning_generation_from_saved(
-    output_dir: Path,
-    *,
-    client: SupportsCompletion,
-    on_progress: CleanupProgressCallback | None = None,
-    artifact_callback: ArtifactCallback | None = None,
-) -> DictionaryMeaningGenerationOutputs:
-    meaning_output_path = output_dir / "14_dictionary_candidates_with_meanings.jsonl"
-    meaning_attempts_path = output_dir / "14_dictionary_meaning_attempts.jsonl"
-    meaning_failures_path = output_dir / "14_dictionary_meaning_failures.jsonl"
-
-    rows_with_meanings = read_required_jsonl(
-        meaning_output_path,
-        built_from="14_dictionary_candidates_with_meanings.jsonl",
-        target="14_dictionary_meaning_failures.jsonl",
-    )
-
-    initialize_jsonl_file(meaning_attempts_path)
-    initialize_jsonl_file(meaning_failures_path)
-
-    def on_batch_complete(snapshot: DictionaryMeaningBatchSnapshot) -> None:
-        append_jsonl(meaning_attempts_path, snapshot.attempt_rows)
-        write_jsonl(meaning_output_path, snapshot.rows)
-        write_jsonl(meaning_failures_path, snapshot.unresolved_failure_rows)
-
-    generation_outputs = build_dictionary_meaning_generation_outputs(
-        rows_with_meanings,
-        client=client,
-        on_progress=on_progress,
-        on_batch_complete=on_batch_complete,
-    )
-    write_jsonl(meaning_output_path, generation_outputs.rows)
-    write_jsonl(meaning_failures_path, generation_outputs.failure_rows)
-    if artifact_callback is not None:
-        artifact_callback(
-            "14_dictionary_candidates_with_meanings",
-            generation_outputs.rows,
-        )
-    return generation_outputs

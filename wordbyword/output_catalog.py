@@ -21,9 +21,6 @@ OPTIONAL_OUTPUT_FILES = [
     "13_dictionary_candidates_with_generated_examples.jsonl",
     "13_generated_example_attempts.jsonl",
     "13_generated_example_failures.jsonl",
-    "14_dictionary_candidates_with_meanings.jsonl",
-    "14_dictionary_meaning_attempts.jsonl",
-    "14_dictionary_meaning_failures.jsonl",
 ]
 
 LEGACY_OUTPUT_FILES = [
@@ -122,14 +119,6 @@ OPTIONAL_PIPELINE_STAGES = [
         "file": "13_dictionary_candidates_with_generated_examples.jsonl",
         "description": "Stage-12 dictionary candidates with new Ollama-written candidate examples for rows that still lacked a cleaned replacement.",
     },
-    {
-        "stage": "14",
-        "file": "14_dictionary_candidates_with_meanings.jsonl",
-        "description": (
-            "Stage-13 dictionary candidates with a 'meaning' field populated from the bundled "
-            "한국어기초사전 lookup, falling back to N/A for terms that need an Ollama-written meaning."
-        ),
-    },
 ]
 
 
@@ -139,7 +128,6 @@ def all_output_files(
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
     include_generated_dictionary_candidates: bool = False,
-    include_dictionary_meanings: bool = False,
 ) -> list[str]:
     return [
         *BASE_OUTPUT_FILES,
@@ -163,15 +151,6 @@ def all_output_files(
             if include_generated_dictionary_candidates
             else []
         ),
-        *(
-            [
-                "14_dictionary_candidates_with_meanings.jsonl",
-                "14_dictionary_meaning_attempts.jsonl",
-                "14_dictionary_meaning_failures.jsonl",
-            ]
-            if include_dictionary_meanings
-            else []
-        ),
     ]
 
 
@@ -181,7 +160,6 @@ def pipeline_stages(
     include_cleaned_dictionary_candidates: bool = False,
     include_linked_dictionary_candidates: bool = False,
     include_generated_dictionary_candidates: bool = False,
-    include_dictionary_meanings: bool = False,
 ) -> list[dict[str, str]]:
     return [
         *BASE_PIPELINE_STAGES,
@@ -189,5 +167,4 @@ def pipeline_stages(
         *([OPTIONAL_PIPELINE_STAGES[1]] if include_cleaned_dictionary_candidates else []),
         *([OPTIONAL_PIPELINE_STAGES[2]] if include_linked_dictionary_candidates else []),
         *([OPTIONAL_PIPELINE_STAGES[3]] if include_generated_dictionary_candidates else []),
-        *([OPTIONAL_PIPELINE_STAGES[4]] if include_dictionary_meanings else []),
     ]
