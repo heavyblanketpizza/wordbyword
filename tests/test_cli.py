@@ -8,6 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wordbyword.cli import (
+    DEFAULT_INPUT_DIR,
+    DEFAULT_REFERENCE_DICTIONARY_PATH,
+    build_parser,
     add_reference_meanings,
     generate_missing_meanings,
     link_cleaned_examples,
@@ -20,6 +23,19 @@ from wordbyword.cli import (
 from wordbyword.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.llm import CompletionResult
 from wordbyword.pipeline import PipelineResult
+
+
+class ParserDefaultsTest(unittest.TestCase):
+    def test_dictionary_input_defaults_live_under_build_dictionary(self) -> None:
+        args = build_parser().parse_args([])
+
+        self.assertEqual(args.input, DEFAULT_INPUT_DIR)
+        self.assertEqual(args.input, Path("build-dictionary/original"))
+        self.assertEqual(args.reference_dictionary, DEFAULT_REFERENCE_DICTIONARY_PATH)
+        self.assertEqual(
+            args.reference_dictionary,
+            Path("build-dictionary/references/reference-dictionary.jsonl"),
+        )
 
 
 class ShowDistributionCliTest(unittest.TestCase):

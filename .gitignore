@@ -12,10 +12,20 @@ wheels/
 
 # uv/cache and generated dictionary build artifacts
 .uv-cache/
-build-dictionary/
 output/
-references/
+build-dictionary/*
 
-# Local source documents; keep the folder placeholder only.
-original/*
-!original/.gitkeep
+# Local dictionary inputs inside the build folder; keep placeholders only.
+!build-dictionary/original/
+build-dictionary/original/*
+!build-dictionary/original/.gitkeep
+!build-dictionary/references/
+build-dictionary/references/*
+!build-dictionary/references/.gitkeep
+
+# Legacy local input folders; ignore them if recreated by older commands.
+/original/
+/references/
+
+# Mature source materials for rewriting; keep all content local.
+class-source-materials/

@@ -6,7 +6,7 @@ The project is currently a vocabulary-and-example preparation pipeline. It does 
 
 ## Current Shape
 
-- Input: Korean PDFs, `.txt`, and `.md` files under `original/`.
+- Input: Korean PDFs, `.txt`, and `.md` files under `build-dictionary/original/`.
 - Base run: deterministic extraction and scoring from source documents into numbered CSV/JSONL artifacts.
 - Optional LLM runs: saved-output cleanup stages that use Ollama to curate example sentences, filter dictionary candidates, link cleaned examples, generate missing examples, and retry failed generated examples.
 - Near-term product objective: turn the cleaned dictionary candidates into a 학년별 vocabulary profile that an LLM can use while rewriting mature source material for younger readers.
@@ -14,15 +14,34 @@ The project is currently a vocabulary-and-example preparation pipeline. It does 
 
 ## Folder Layout
 
-- Put original books and documents in `original/`.
+- Put original books and documents in `build-dictionary/original/`.
 - Run the pipeline with `uv --no-cache run python -m wordbyword`.
 - Generated files are written to `build-dictionary/`.
+- Put the reference meaning dictionary at `build-dictionary/references/reference-dictionary.jsonl`.
+- Only `.gitkeep` placeholders are tracked for those local input folders; PDFs and reference JSONL stay ignored.
 
 Supported source formats:
 
 - `.pdf`
 - `.txt`
 - `.md`
+
+## Source Material Parsing
+
+Use this first when preparing mature class materials for later LLM rewriting:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-chemistryprize2025.pdf
+```
+
+The command writes one source-specific bundle under `class-source-materials/parsed/<source-id>/`:
+
+- `manifest.json`: source metadata, checksum, counts, and bundle file map.
+- `canonical_content.json`: canonical intermediate representation with ordered text, table, image, drawing, OCR, and vision fields.
+- `canonical_blocks.jsonl`: one model-friendly block per line for chunking and later rewrite prompts.
+- `assets/images/`, `assets/tables/`, `assets/drawings/`, and `assets/pages/`: extracted or rendered visual assets for later OCR/vision enrichment.
+
+Current deterministic extraction supports PDF/EPUB through PyMuPDF, plain text/Markdown/HTML snapshots, and standalone image files. OCR text and vision descriptions are represented as explicit empty fields for the next enrichment stage; visual blocks are marked with `needs_ocr` and/or `needs_vision`.
 
 ## Outputs
 
@@ -44,7 +63,7 @@ The pipeline writes these files:
 - `13_vocabulary_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, treats the rows as selected vocabulary, preserves cleaned-example wins, and writes a completely new example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
 - `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
 - `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
-- `14_vocabulary_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
+- `14_vocabulary_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `build-dictionary/references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
 - `15_final_dictionary.jsonl`: final dictionary artifact. It keeps the `14` row shape and writes Korean meanings for rows whose `meaning` field is empty, using the canonical key and example sentence as context.
 - `README.md`: a generated guide for reading the `build-dictionary/` folder in pipeline order.
 
@@ -59,7 +78,7 @@ uv --no-cache run python -m wordbyword
 Useful options:
 
 ```bash
-uv --no-cache run python -m wordbyword --input original --output build-dictionary
+uv --no-cache run python -m wordbyword --input build-dictionary/original --output build-dictionary
 uv --no-cache run python -m wordbyword --include-punctuation
 uv --no-cache run python -m wordbyword --include-numbers
 uv --no-cache run python -m wordbyword --clean-example-sentences
@@ -72,7 +91,7 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings
 uv --no-cache run python -m wordbyword --show-distribution
 ```
 
-The default pipeline run is deterministic and rebuilds `01` through `09` from `original/`.
+The default pipeline run is deterministic and rebuilds `01` through `09` from `build-dictionary/original/`.
 
 The LLM cleanup stages are intentionally separate and reuse saved artifacts from `build-dictionary/`:
 
@@ -92,7 +111,7 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings
 - `--link-cleaned-examples` reads saved `build-dictionary/10_cleaned_example_sentences.csv` and `build-dictionary/11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
 - `--generate-missing-examples` reads saved `build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl` to write selected vocabulary in `13_vocabulary_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
 - `--retry-generated-examples` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
-- `--add-reference-meanings` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `references/reference-dictionary.jsonl` to write `14_vocabulary_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
+- `--add-reference-meanings` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/references/reference-dictionary.jsonl` to write `14_vocabulary_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
 - `--generate-missing-meanings` reads saved `build-dictionary/14_vocabulary_with_meanings.jsonl` and asks Ollama to write Korean meanings for rows whose `meaning` field is empty, writing `15_final_dictionary.jsonl`.
 - `--show-distribution` renders the terminal distribution panel for an existing `11_cleaned_dictionary_candidates.jsonl` without making LLM calls.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
@@ -148,7 +167,7 @@ uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-mode
 uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
 ```
 
-The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_vocabulary_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `references/reference-dictionary.jsonl`:
+The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_vocabulary_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `build-dictionary/references/reference-dictionary.jsonl`:
 
 ```bash
 uv --no-cache run python -m wordbyword --add-reference-meanings

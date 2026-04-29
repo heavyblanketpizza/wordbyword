@@ -18,7 +18,7 @@ from wordbyword.terminal_ui import (
 class TerminalUiTest(unittest.TestCase):
     def test_render_boot_screen_keeps_mode_without_old_profile_copy(self) -> None:
         rendered = render_boot_screen(
-            input_dir=Path("original"),
+            input_dir=Path("build-dictionary/original"),
             output_dir=Path("build-dictionary"),
             clean_example_sentences=True,
             sentence_cleanup_model="gemma4:31b",
@@ -52,7 +52,7 @@ class TerminalUiTest(unittest.TestCase):
 
         rendered = render_completion_screen(
             result,
-            input_dir=Path("original"),
+            input_dir=Path("build-dictionary/original"),
             include_punctuation=False,
             include_numbers=False,
             clean_example_sentences=False,
@@ -84,7 +84,7 @@ class TerminalUiTest(unittest.TestCase):
 
         rendered = render_completion_screen(
             result,
-            input_dir=Path("original"),
+            input_dir=Path("build-dictionary/original"),
             include_punctuation=True,
             include_numbers=True,
             clean_example_sentences=True,

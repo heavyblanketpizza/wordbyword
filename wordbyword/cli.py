@@ -10,6 +10,11 @@ from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBat
 from wordbyword.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
+from wordbyword.source_materials import (
+    DEFAULT_PARSED_SOURCE_ROOT,
+    SourceMaterialParseError,
+    parse_source_material,
+)
 from wordbyword.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
@@ -24,6 +29,10 @@ from wordbyword.saved_outputs import (
     write_meaning_dictionary_candidates_from_saved,
 )
 
+DEFAULT_OUTPUT_DIR = Path("build-dictionary")
+DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_DIR / "original"
+DEFAULT_REFERENCE_DICTIONARY_PATH = DEFAULT_OUTPUT_DIR / "references" / "reference-dictionary.jsonl"
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -33,13 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path("original"),
-        help="Folder containing source PDFs, .txt, or .md files. Defaults to ./original.",
+        default=DEFAULT_INPUT_DIR,
+        help="Folder containing source PDFs, .txt, or .md files. Defaults to ./build-dictionary/original.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("build-dictionary"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Folder where dictionary build artifacts are written. Defaults to ./build-dictionary.",
     )
     parser.add_argument(
@@ -95,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Use saved build-dictionary/13_vocabulary_with_generated_examples.jsonl and "
-            "references/reference-dictionary.jsonl to write "
+            "build-dictionary/references/reference-dictionary.jsonl to write "
             "14_vocabulary_with_meanings.jsonl."
         ),
     )
@@ -111,10 +120,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reference-dictionary",
         type=Path,
-        default=Path("references/reference-dictionary.jsonl"),
+        default=DEFAULT_REFERENCE_DICTIONARY_PATH,
         help=(
             "Reference JSONL with canonical_key and meaning fields for --add-reference-meanings. "
-            "Defaults to references/reference-dictionary.jsonl."
+            "Defaults to build-dictionary/references/reference-dictionary.jsonl."
         ),
     )
     parser.add_argument(
@@ -142,6 +151,30 @@ def build_parser() -> argparse.ArgumentParser:
             "defaults to <output-dir>/11_cleaned_dictionary_candidates.jsonl."
         ),
     )
+    parser.add_argument(
+        "--parse-source-material",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Parse one class source material into a canonical IR bundle with extracted image, "
+            "table, drawing, and OCR/vision placeholder assets."
+        ),
+    )
+    parser.add_argument(
+        "--source-output-root",
+        type=Path,
+        default=DEFAULT_PARSED_SOURCE_ROOT,
+        help=(
+            "Root folder for --parse-source-material bundles. "
+            "Defaults to class-source-materials/parsed."
+        ),
+    )
+    parser.add_argument(
+        "--source-id",
+        default=None,
+        help="Optional stable id/folder name for --parse-source-material.",
+    )
     return parser
 
 
@@ -149,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.parse_source_material is not None:
+        return parse_source_material_cli(
+            source_path=args.parse_source_material,
+            output_root=args.source_output_root,
+            source_id=args.source_id,
+        )
     if args.show_distribution is not None:
         return show_distribution(
             jsonl_path=resolve_distribution_path(args.show_distribution, args.output),
@@ -405,6 +444,38 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
     )
     sys.stdout.write(rendered)
     sys.stdout.write("\n")
+    sys.stdout.flush()
+    return 0
+
+
+def parse_source_material_cli(
+    *,
+    source_path: Path,
+    output_root: Path,
+    source_id: str | None,
+) -> int:
+    try:
+        bundle = parse_source_material(
+            source_path,
+            output_root=output_root,
+            source_id=source_id,
+        )
+    except SourceMaterialParseError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    stats = bundle.ir.statistics
+    sys.stdout.write(
+        "source material parsed\n"
+        f"  source_id: {bundle.source_id}\n"
+        f"  output_dir: {bundle.output_dir}\n"
+        f"  canonical_json: {bundle.canonical_json_path}\n"
+        f"  canonical_jsonl: {bundle.canonical_jsonl_path}\n"
+        f"  blocks: {stats['block_count']}\n"
+        f"  assets: {stats['asset_count']}\n"
+        f"  needs_ocr: {stats['needs_ocr_count']}\n"
+        f"  needs_vision: {stats['needs_vision_count']}\n"
+    )
     sys.stdout.flush()
     return 0
 
