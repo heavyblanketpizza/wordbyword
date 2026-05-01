@@ -10,15 +10,7 @@ from unittest.mock import patch
 import fitz
 
 from wordbyword.cli import main
-from wordbyword.source_materials import (
-    AgenticOllamaProgress,
-    OllamaVisionClient,
-    OllamaVisionResponse,
-    discover_source_materials,
-    parse_source_material,
-    parse_source_materials,
-    source_id_for,
-)
+from wordbyword.source_materials import discover_source_materials, parse_source_material, parse_source_materials, source_id_for
 
 
 class SourceMaterialWorkspaceTest(unittest.TestCase):
@@ -104,100 +96,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             manifest = json.loads((output_root / "lesson" / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["parser"]["status"], "skipped")
 
-    def test_agentic_ollama_parse_writes_separate_page_outputs(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            source_path = root / "sample.pdf"
-            output_root = root / "parsed"
-            write_sample_pdf(source_path)
-            progress_events: list[AgenticOllamaProgress] = []
-
-            bundle = parse_source_material(
-                source_path,
-                output_root=output_root,
-                agentic_ollama_parse=True,
-                agentic_ollama_max_pages=1,
-                agentic_ollama_client=FakeOllamaVisionClient(),
-                agentic_ollama_progress=progress_events.append,
-            )
-
-            self.assertTrue((bundle.output_dir / "agentic_ollama_content.md").is_file())
-            self.assertTrue((bundle.output_dir / "agentic_ollama_assets.json").is_file())
-            self.assertTrue((bundle.output_dir / "agentic_ollama_pages.json").is_file())
-            self.assertTrue((bundle.output_dir / "agentic_ollama_report.json").is_file())
-
-            manifest = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["files"]["agentic_ollama_content_markdown"], "agentic_ollama_content.md")
-            self.assertEqual(manifest["files"]["agentic_ollama_assets_json"], "agentic_ollama_assets.json")
-            self.assertEqual(manifest["agentic_parsers"][0]["status"], "parsed")
-
-            content = (bundle.output_dir / "agentic_ollama_content.md").read_text(encoding="utf-8")
-            self.assertIn("Agentic Water Cycle", content)
-
-            assets = json.loads((bundle.output_dir / "agentic_ollama_assets.json").read_text(encoding="utf-8"))
-            self.assertEqual([asset["kind"] for asset in assets], ["table", "diagram"])
-            self.assertEqual(assets[0]["source_image_path"], "assets/page-0001.png")
-
-            pages = json.loads((bundle.output_dir / "agentic_ollama_pages.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(pages), 1)
-            self.assertEqual(pages[0]["status"], "parsed")
-            self.assertEqual(pages[0]["parsed_json"]["page_number"], 1)
-
-            report = json.loads((bundle.output_dir / "agentic_ollama_report.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["attempted_pages"], 1)
-            self.assertEqual(report["parsed_pages"], 1)
-            self.assertEqual(report["failed_pages"], 0)
-            self.assertEqual(report["captured_asset_count"], 2)
-            self.assertEqual([event.phase for event in progress_events], ["start", "complete"])
-            self.assertEqual(progress_events[-1].completed_pages, 1)
-            self.assertEqual(progress_events[-1].parsed_pages, 1)
-
-    def test_ollama_vision_client_sends_schema_format_and_base64_image(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            image_path = Path(workspace) / "page.png"
-            image_path.write_bytes(b"image-bytes")
-            captured: dict[str, object] = {}
-
-            class FakeResponse:
-                def __enter__(self) -> "FakeResponse":
-                    return self
-
-                def __exit__(self, *args: object) -> None:
-                    return None
-
-                def read(self) -> bytes:
-                    return json.dumps({"message": {"content": "{}"}}).encode("utf-8")
-
-            def fake_urlopen(http_request: object, timeout: float) -> FakeResponse:
-                captured["url"] = getattr(http_request, "full_url")
-                captured["timeout"] = timeout
-                body = getattr(http_request, "data")
-                captured["body"] = json.loads(body.decode("utf-8"))
-                return FakeResponse()
-
-            with patch("wordbyword.source_materials.request.urlopen", fake_urlopen):
-                client = OllamaVisionClient(
-                    model="gemma4:31b",
-                    base_url="http://localhost:11434/",
-                    timeout_seconds=12.0,
-                )
-                client.parse_page(
-                    image_path=image_path,
-                    page_number=1,
-                    page_count=1,
-                    prompt="parse",
-                )
-
-            body = captured["body"]
-            self.assertIsInstance(body, dict)
-            assert isinstance(body, dict)
-            self.assertEqual(captured["url"], "http://localhost:11434/api/chat")
-            self.assertEqual(captured["timeout"], 12.0)
-            self.assertEqual(body["model"], "gemma4:31b")
-            self.assertEqual(body["messages"][0]["images"], ["aW1hZ2UtYnl0ZXM="])
-            self.assertEqual(body["format"]["type"], "object")
-            self.assertIn("reading_order_markdown", body["format"]["properties"])
-
     def test_batch_prepares_separate_folder_for_each_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -252,43 +150,3 @@ def write_sample_pdf(path: Path) -> None:
     page.insert_text((40, 95), "Water moves through the air and land.", fontsize=11)
     document.save(path)
     document.close()
-
-
-class FakeOllamaVisionClient:
-    def parse_page(self, **kwargs: object) -> OllamaVisionResponse:
-        page_number = int(kwargs["page_number"])
-        return OllamaVisionResponse(
-            content=json.dumps(
-                {
-                    "page_number": page_number,
-                    "reading_order_markdown": "# Agentic Water Cycle\n\nWater moves through the air and land.",
-                    "headings": ["Agentic Water Cycle"],
-                    "paragraphs": ["Water moves through the air and land."],
-                    "tables": [
-                        {
-                            "id": "water-cycle-table",
-                            "caption": "Cycle stages",
-                            "markdown": "| Stage | Description |\n| --- | --- |\n| Evaporation | Water rises. |",
-                            "notes": "",
-                            "confidence": 0.9,
-                        }
-                    ],
-                    "figures": [
-                        {
-                            "id": "water-cycle-diagram",
-                            "kind": "diagram",
-                            "caption": "Water Cycle",
-                            "visible_text": "Water Cycle",
-                            "description": "A simple water-cycle diagram.",
-                            "page_region": "upper page",
-                            "confidence": 0.8,
-                        }
-                    ],
-                    "footnotes_or_footer": [],
-                    "uncertain_text": [],
-                    "parser_notes": [],
-                    "confidence": 0.95,
-                }
-            ),
-            raw={"message": {"content": "ok"}},
-        )

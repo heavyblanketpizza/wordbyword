@@ -54,23 +54,6 @@ uv --no-cache run python -m wordbyword --parse-source-materials class-source-mat
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --skip-pdf-parse
 ```
 
-Experimental agentic page-image parsing can also be run through local Ollama:
-
-```bash
-uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-physicsprize2025.pdf --agentic-ollama-parse --agentic-ollama-model gemma4:31b --agentic-ollama-max-pages 1
-```
-
-This renders PDF pages to `assets/page-*.png`, sends page images to the Ollama vision model, validates responses against a JSON schema, and writes separate outputs:
-
-- `agentic_ollama_content.md`: combined page-by-page model parse.
-- `agentic_ollama_assets.json`: flattened table and figure captures from the model parse.
-- `agentic_ollama_pages.json`: raw and parsed per-page model responses.
-- `agentic_ollama_report.json`: attempted, parsed, failed, and skipped page counts.
-
-For large local models, keep `--agentic-ollama-workers 1` unless you know the Ollama host has enough memory for concurrent image requests. Use `--agentic-ollama-format json` or `--agentic-ollama-format none` only when a local model cannot handle schema-constrained output.
-
-When run in an interactive terminal, source-material parsing now shows the same Tokyo Night terminal treatment as the dictionary pipeline: a parse boot banner plus a live `AGENTIC` page bar with completed, parsed, failed, skipped, percentage, and model counters.
-
 ## Outputs
 
 The pipeline writes these files:

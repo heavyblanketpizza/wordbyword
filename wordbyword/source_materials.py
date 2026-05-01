@@ -5,15 +5,10 @@ import json
 import mimetypes
 import re
 import shutil
-import time
-from base64 import b64encode
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Mapping, Protocol
-from urllib import error, request
+from typing import Any, Literal
 
 import fitz
 import pymupdf4llm
@@ -22,13 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 WORKSPACE_SCHEMA_VERSION = "wordbyword.source_material_workspace.v1"
 PDF_PARSE_SCHEMA_VERSION = "wordbyword.heuristic_pdf_parse.v1"
-AGENTIC_OLLAMA_PARSE_SCHEMA_VERSION = "wordbyword.agentic_ollama_pdf_parse.v1"
-AgenticOllamaResponseFormat = Literal["schema", "json", "none"]
-AgenticCapturedAssetKind = Literal["table", "figure", "photo", "diagram", "chart", "equation", "other"]
-DEFAULT_AGENTIC_OLLAMA_MODEL = "gemma4:31b"
-DEFAULT_AGENTIC_OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT: AgenticOllamaResponseFormat = "schema"
-DEFAULT_AGENTIC_OLLAMA_WORKERS = 1
 DEFAULT_SOURCE_MATERIAL_ROOT = Path("class-source-materials")
 DEFAULT_PARSED_SOURCE_ROOT = DEFAULT_SOURCE_MATERIAL_ROOT / "parsed"
 SUPPORTED_SOURCE_EXTENSIONS = {
@@ -57,10 +45,6 @@ REMOVED_GENERATED_FILES = {
     "document_model.json",
     "parser_output.json",
     "quality_report.json",
-    "agentic_ollama_content.md",
-    "agentic_ollama_assets.json",
-    "agentic_ollama_pages.json",
-    "agentic_ollama_report.json",
 }
 REMOVED_ASSET_SUBFOLDERS = {
     "drawings",
@@ -87,7 +71,7 @@ class SourceMetadata(BaseModel):
 class ParserMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal["parsed", "not_run", "skipped", "partial", "failed"]
+    status: Literal["parsed", "not_run", "skipped"]
     name: str
     version: str = ""
     reason: str = ""
@@ -104,10 +88,6 @@ class FileManifest(BaseModel):
     document_model_json: str | None = None
     parser_output_json: str | None = None
     quality_report_json: str | None = None
-    agentic_ollama_content_markdown: str | None = None
-    agentic_ollama_assets_json: str | None = None
-    agentic_ollama_pages_json: str | None = None
-    agentic_ollama_report_json: str | None = None
 
 
 class SourceManifest(BaseModel):
@@ -116,7 +96,6 @@ class SourceManifest(BaseModel):
     schema_version: str
     source: SourceMetadata
     parser: ParserMetadata
-    agentic_parsers: list[ParserMetadata] = Field(default_factory=list)
     files: FileManifest
 
 
@@ -192,208 +171,6 @@ class ParsedPdfDocument(BaseModel):
     assets: list[AssetMetadata]
 
 
-class AgenticOllamaTable(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = ""
-    caption: str = ""
-    markdown: str = ""
-    notes: str = ""
-    confidence: float = Field(default=0.0, ge=0, le=1)
-
-
-class AgenticOllamaFigure(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = ""
-    kind: Literal["figure", "photo", "diagram", "chart", "equation", "other"] = "figure"
-    caption: str = ""
-    visible_text: str = ""
-    description: str = ""
-    page_region: str = ""
-    confidence: float = Field(default=0.0, ge=0, le=1)
-
-
-class AgenticOllamaParsedPage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    page_number: int
-    reading_order_markdown: str
-    headings: list[str] = Field(default_factory=list)
-    paragraphs: list[str] = Field(default_factory=list)
-    tables: list[AgenticOllamaTable] = Field(default_factory=list)
-    figures: list[AgenticOllamaFigure] = Field(default_factory=list)
-    footnotes_or_footer: list[str] = Field(default_factory=list)
-    uncertain_text: list[str] = Field(default_factory=list)
-    parser_notes: list[str] = Field(default_factory=list)
-    confidence: float = Field(default=0.0, ge=0, le=1)
-
-
-class AgenticOllamaCapturedAsset(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    page: int
-    kind: AgenticCapturedAssetKind
-    source_image_path: str
-    caption: str = ""
-    markdown: str = ""
-    visible_text: str = ""
-    description: str = ""
-    page_region: str = ""
-    notes: str = ""
-    confidence: float = Field(default=0.0, ge=0, le=1)
-
-
-class AgenticOllamaPageResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    page: int
-    image_path: str
-    status: Literal["parsed", "failed"]
-    markdown: str = ""
-    parsed_json: dict[str, Any] | None = None
-    raw_response: str = ""
-    error: str = ""
-    duration_seconds: float = Field(ge=0)
-
-
-class AgenticOllamaReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: str
-    parser: ParserMetadata
-    source: SourceMetadata
-    page_count: int = Field(ge=0)
-    attempted_pages: int = Field(ge=0)
-    parsed_pages: int = Field(ge=0)
-    failed_pages: int = Field(ge=0)
-    skipped_pages: int = Field(ge=0)
-    captured_asset_count: int = Field(ge=0)
-    captured_table_count: int = Field(ge=0)
-    captured_figure_count: int = Field(ge=0)
-    warnings: list[str]
-    pages: list[AgenticOllamaPageResult]
-
-
-@dataclass(frozen=True)
-class OllamaVisionResponse:
-    content: str
-    raw: dict[str, Any]
-
-
-class SupportsOllamaVisionClient(Protocol):
-    def parse_page(
-        self,
-        *,
-        image_path: Path,
-        page_number: int,
-        page_count: int,
-        prompt: str,
-    ) -> OllamaVisionResponse: ...
-
-
-@dataclass(frozen=True)
-class AgenticOllamaProgress:
-    phase: Literal["start", "page", "complete"]
-    source_id: str
-    source_filename: str
-    model: str
-    page_number: int
-    attempted_pages: int
-    document_pages: int
-    completed_pages: int
-    parsed_pages: int
-    failed_pages: int
-    skipped_pages: int
-    current_image_path: str = ""
-
-
-AgenticOllamaProgressCallback = Callable[[AgenticOllamaProgress], None]
-
-
-class OllamaVisionClient:
-    def __init__(
-        self,
-        *,
-        model: str,
-        base_url: str = DEFAULT_AGENTIC_OLLAMA_BASE_URL,
-        timeout_seconds: float = 300.0,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        response_format: AgenticOllamaResponseFormat = DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT,
-        json_mode: bool | None = None,
-    ) -> None:
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.temperature = temperature
-        self.max_output_tokens = max_output_tokens
-        self.response_format = response_format
-        if json_mode is not None:
-            self.response_format = "json" if json_mode else "none"
-
-    def parse_page(
-        self,
-        *,
-        image_path: Path,
-        page_number: int,
-        page_count: int,
-        prompt: str,
-    ) -> OllamaVisionResponse:
-        body: dict[str, Any] = {
-            "model": self.model,
-            "stream": False,
-            "think": False,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": [b64encode(image_path.read_bytes()).decode("ascii")],
-                }
-            ],
-            "options": {
-                "temperature": self.temperature,
-                "num_predict": self.max_output_tokens,
-            },
-        }
-        if self.response_format == "schema":
-            body["format"] = AgenticOllamaParsedPage.model_json_schema()
-        elif self.response_format == "json":
-            body["format"] = "json"
-        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        http_request = request.Request(
-            f"{self.base_url}/api/chat",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise SourceMaterialParseError(
-                f"Ollama request failed for page {page_number}/{page_count} "
-                f"with HTTP {exc.code}: {detail}"
-            ) from exc
-        except error.URLError as exc:
-            raise SourceMaterialParseError(
-                f"Ollama request failed for page {page_number}/{page_count}: {exc.reason}"
-            ) from exc
-        except json.JSONDecodeError as exc:
-            raise SourceMaterialParseError("Ollama returned invalid JSON.") from exc
-
-        message = raw.get("message")
-        if not isinstance(message, Mapping):
-            raise SourceMaterialParseError("Ollama response did not include a message object.")
-        content = message.get("content")
-        return OllamaVisionResponse(
-            content=content if isinstance(content, str) else "",
-            raw=_jsonable(raw),
-        )
-
-
 @dataclass(frozen=True)
 class SourceMaterialBundle:
     source_id: str
@@ -425,18 +202,6 @@ def parse_source_material(
     render_pages: bool = True,
     render_dpi: int = 144,
     image_dpi: int = 180,
-    agentic_ollama_parse: bool = False,
-    agentic_ollama_model: str = DEFAULT_AGENTIC_OLLAMA_MODEL,
-    agentic_ollama_base_url: str = DEFAULT_AGENTIC_OLLAMA_BASE_URL,
-    agentic_ollama_timeout_seconds: float = 300.0,
-    agentic_ollama_max_pages: int | None = None,
-    agentic_ollama_temperature: float = 0.0,
-    agentic_ollama_max_output_tokens: int = 4096,
-    agentic_ollama_response_format: AgenticOllamaResponseFormat = DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT,
-    agentic_ollama_workers: int = DEFAULT_AGENTIC_OLLAMA_WORKERS,
-    agentic_ollama_json_mode: bool = False,
-    agentic_ollama_client: SupportsOllamaVisionClient | None = None,
-    agentic_ollama_progress: AgenticOllamaProgressCallback | None = None,
 ) -> SourceMaterialBundle:
     source_path = source_path.expanduser()
     if not source_path.is_file():
@@ -493,31 +258,6 @@ def parse_source_material(
             parser_metadata=parser_metadata,
         )
 
-    if suffix == ".pdf" and agentic_ollama_parse:
-        agentic_result = _parse_pdf_with_agentic_ollama(
-            source_path=source_path,
-            output_dir=output_dir,
-            assets_dir=assets_dir,
-            source_metadata=source_metadata,
-            model=agentic_ollama_model,
-            base_url=agentic_ollama_base_url,
-            timeout_seconds=agentic_ollama_timeout_seconds,
-            max_pages=agentic_ollama_max_pages,
-            temperature=agentic_ollama_temperature,
-            max_output_tokens=agentic_ollama_max_output_tokens,
-            response_format=(
-                "json" if agentic_ollama_json_mode else agentic_ollama_response_format
-            ),
-            workers=agentic_ollama_workers,
-            render_dpi=render_dpi,
-            client=agentic_ollama_client,
-            progress=agentic_ollama_progress,
-        )
-        manifest = _with_agentic_ollama_manifest_entries(
-            manifest,
-            parser_metadata=agentic_result.parser,
-        )
-
     manifest_path = output_dir / "manifest.json"
     _write_json(manifest_path, manifest)
     return SourceMaterialBundle(
@@ -538,17 +278,6 @@ def parse_source_materials(
     render_pages: bool = True,
     render_dpi: int = 144,
     image_dpi: int = 180,
-    agentic_ollama_parse: bool = False,
-    agentic_ollama_model: str = DEFAULT_AGENTIC_OLLAMA_MODEL,
-    agentic_ollama_base_url: str = DEFAULT_AGENTIC_OLLAMA_BASE_URL,
-    agentic_ollama_timeout_seconds: float = 300.0,
-    agentic_ollama_max_pages: int | None = None,
-    agentic_ollama_temperature: float = 0.0,
-    agentic_ollama_max_output_tokens: int = 4096,
-    agentic_ollama_response_format: AgenticOllamaResponseFormat = DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT,
-    agentic_ollama_workers: int = DEFAULT_AGENTIC_OLLAMA_WORKERS,
-    agentic_ollama_json_mode: bool = False,
-    agentic_ollama_progress: AgenticOllamaProgressCallback | None = None,
 ) -> SourceMaterialBatchResult:
     source_paths = discover_source_materials(source_dir, output_root=output_root)
     used_source_ids: set[str] = set()
@@ -561,17 +290,6 @@ def parse_source_materials(
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
-            agentic_ollama_parse=agentic_ollama_parse,
-            agentic_ollama_model=agentic_ollama_model,
-            agentic_ollama_base_url=agentic_ollama_base_url,
-            agentic_ollama_timeout_seconds=agentic_ollama_timeout_seconds,
-            agentic_ollama_max_pages=agentic_ollama_max_pages,
-            agentic_ollama_temperature=agentic_ollama_temperature,
-            agentic_ollama_max_output_tokens=agentic_ollama_max_output_tokens,
-            agentic_ollama_response_format=agentic_ollama_response_format,
-            agentic_ollama_workers=agentic_ollama_workers,
-            agentic_ollama_json_mode=agentic_ollama_json_mode,
-            agentic_ollama_progress=agentic_ollama_progress,
         )
         for source_path in source_paths
     ]
@@ -688,449 +406,6 @@ def _parse_pdf(
     document_model_path = output_dir / "document_model.json"
     _write_json(document_model_path, parsed_document.model_dump(mode="json"))
     return parsed_document
-
-
-def _parse_pdf_with_agentic_ollama(
-    *,
-    source_path: Path,
-    output_dir: Path,
-    assets_dir: Path,
-    source_metadata: SourceMetadata,
-    model: str,
-    base_url: str,
-    timeout_seconds: float,
-    max_pages: int | None,
-    temperature: float,
-    max_output_tokens: int,
-    response_format: AgenticOllamaResponseFormat,
-    workers: int,
-    render_dpi: int,
-    client: SupportsOllamaVisionClient | None = None,
-    progress: AgenticOllamaProgressCallback | None = None,
-) -> AgenticOllamaReport:
-    page_images = _ensure_page_render_assets(
-        source_path=source_path,
-        assets_dir=assets_dir,
-        render_dpi=render_dpi,
-    )
-    attempted_images = page_images[:max_pages] if max_pages and max_pages > 0 else page_images
-    resolved_client = client or OllamaVisionClient(
-        model=model,
-        base_url=base_url,
-        timeout_seconds=timeout_seconds,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-        response_format=response_format,
-    )
-    page_count = len(page_images)
-    page_tasks = list(enumerate(attempted_images, start=1))
-    worker_count = max(1, workers)
-    attempted_count = len(page_tasks)
-    skipped_count = page_count - attempted_count
-    _emit_agentic_ollama_progress(
-        progress,
-        phase="start",
-        source_metadata=source_metadata,
-        model=model,
-        page_number=0,
-        attempted_pages=attempted_count,
-        document_pages=page_count,
-        completed_pages=0,
-        parsed_pages=0,
-        failed_pages=0,
-        skipped_pages=skipped_count,
-        current_image_path="",
-    )
-
-    def parse_task(task: tuple[int, Path]) -> AgenticOllamaPageResult:
-        page_number, image_path = task
-        return _agentic_ollama_parse_page(
-            client=resolved_client,
-            image_path=image_path,
-            page_number=page_number,
-            page_count=page_count,
-        )
-
-    page_results: list[AgenticOllamaPageResult] = []
-    completed_pages = 0
-    parsed_so_far = 0
-    failed_so_far = 0
-    if worker_count == 1 or len(page_tasks) <= 1:
-        for task in page_tasks:
-            page_result = parse_task(task)
-            page_results.append(page_result)
-            completed_pages += 1
-            parsed_so_far += 1 if page_result.status == "parsed" else 0
-            failed_so_far += 1 if page_result.status == "failed" else 0
-            _emit_agentic_ollama_progress(
-                progress,
-                phase="complete" if completed_pages >= attempted_count else "page",
-                source_metadata=source_metadata,
-                model=model,
-                page_number=page_result.page,
-                attempted_pages=attempted_count,
-                document_pages=page_count,
-                completed_pages=completed_pages,
-                parsed_pages=parsed_so_far,
-                failed_pages=failed_so_far,
-                skipped_pages=skipped_count,
-                current_image_path=page_result.image_path,
-            )
-    else:
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(parse_task, task) for task in page_tasks]
-            for future in as_completed(futures):
-                page_result = future.result()
-                page_results.append(page_result)
-                completed_pages += 1
-                parsed_so_far += 1 if page_result.status == "parsed" else 0
-                failed_so_far += 1 if page_result.status == "failed" else 0
-                _emit_agentic_ollama_progress(
-                    progress,
-                    phase="complete" if completed_pages >= attempted_count else "page",
-                    source_metadata=source_metadata,
-                    model=model,
-                    page_number=page_result.page,
-                    attempted_pages=attempted_count,
-                    document_pages=page_count,
-                    completed_pages=completed_pages,
-                    parsed_pages=parsed_so_far,
-                    failed_pages=failed_so_far,
-                    skipped_pages=skipped_count,
-                    current_image_path=page_result.image_path,
-                )
-    page_results.sort(key=lambda page: page.page)
-    if not page_tasks:
-        _emit_agentic_ollama_progress(
-            progress,
-            phase="complete",
-            source_metadata=source_metadata,
-            model=model,
-            page_number=0,
-            attempted_pages=0,
-            document_pages=page_count,
-            completed_pages=0,
-            parsed_pages=0,
-            failed_pages=0,
-            skipped_pages=skipped_count,
-            current_image_path="",
-        )
-
-    captured_assets = _agentic_ollama_captured_assets(page_results)
-    parsed_count = sum(1 for page in page_results if page.status == "parsed")
-    failed_count = sum(1 for page in page_results if page.status == "failed")
-    status: Literal["parsed", "partial", "failed"] = "parsed"
-    if parsed_count == 0 and page_results:
-        status = "failed"
-    elif failed_count or skipped_count:
-        status = "partial"
-
-    parser_metadata = ParserMetadata(
-        status=status,
-        name="ollama-vision-page-parser",
-        version="",
-        reason="" if status != "failed" else "All attempted pages failed.",
-        parsed_at=datetime.now(timezone.utc).isoformat(),
-        settings={
-            "model": model,
-            "base_url": base_url,
-            "page_image_source": "assets/page-*.png",
-            "render_dpi": render_dpi,
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-            "response_format": response_format,
-            "parallel_workers": worker_count,
-            "max_pages": max_pages or 0,
-            "prompt_contract": "Return one validated JSON object matching AgenticOllamaParsedPage.",
-            "captured_assets": "agentic_ollama_assets.json",
-        },
-    )
-    warnings: list[str] = []
-    if failed_count:
-        warnings.append(f"{failed_count} page(s) failed during Ollama vision parsing.")
-    if skipped_count:
-        warnings.append(f"{skipped_count} page(s) were skipped by the max-pages limit.")
-
-    report = AgenticOllamaReport(
-        schema_version=AGENTIC_OLLAMA_PARSE_SCHEMA_VERSION,
-        parser=parser_metadata,
-        source=source_metadata,
-        page_count=page_count,
-        attempted_pages=len(page_results),
-        parsed_pages=parsed_count,
-        failed_pages=failed_count,
-        skipped_pages=skipped_count,
-        captured_asset_count=len(captured_assets),
-        captured_table_count=sum(1 for asset in captured_assets if asset.kind == "table"),
-        captured_figure_count=sum(1 for asset in captured_assets if asset.kind != "table"),
-        warnings=warnings,
-        pages=page_results,
-    )
-    _write_agentic_ollama_outputs(
-        output_dir=output_dir,
-        report=report,
-        captured_assets=captured_assets,
-    )
-    return report
-
-
-def _agentic_ollama_parse_page(
-    *,
-    client: SupportsOllamaVisionClient,
-    image_path: Path,
-    page_number: int,
-    page_count: int,
-) -> AgenticOllamaPageResult:
-    prompt = _agentic_ollama_page_prompt(page_number=page_number, page_count=page_count)
-    started = time.monotonic()
-    raw_response = ""
-    try:
-        response = client.parse_page(
-            image_path=image_path,
-            page_number=page_number,
-            page_count=page_count,
-            prompt=prompt,
-        )
-        raw_response = response.content
-        duration = round(time.monotonic() - started, 3)
-        parsed_page = _validated_agentic_page(response.content, expected_page_number=page_number)
-        parsed_json = parsed_page.model_dump(mode="json")
-        markdown = _markdown_from_agentic_response(response.content, parsed_json)
-        return AgenticOllamaPageResult(
-            page=page_number,
-            image_path=f"assets/{image_path.name}",
-            status="parsed",
-            markdown=markdown,
-            parsed_json=parsed_json,
-            raw_response=raw_response,
-            duration_seconds=duration,
-        )
-    except Exception as exc:
-        duration = round(time.monotonic() - started, 3)
-        return AgenticOllamaPageResult(
-            page=page_number,
-            image_path=f"assets/{image_path.name}",
-            status="failed",
-            raw_response=raw_response,
-            error=str(exc),
-            duration_seconds=duration,
-        )
-
-
-def _emit_agentic_ollama_progress(
-    progress: AgenticOllamaProgressCallback | None,
-    *,
-    phase: Literal["start", "page", "complete"],
-    source_metadata: SourceMetadata,
-    model: str,
-    page_number: int,
-    attempted_pages: int,
-    document_pages: int,
-    completed_pages: int,
-    parsed_pages: int,
-    failed_pages: int,
-    skipped_pages: int,
-    current_image_path: str,
-) -> None:
-    if progress is None:
-        return
-    progress(
-        AgenticOllamaProgress(
-            phase=phase,
-            source_id=source_metadata.id,
-            source_filename=source_metadata.filename,
-            model=model,
-            page_number=page_number,
-            attempted_pages=attempted_pages,
-            document_pages=document_pages,
-            completed_pages=completed_pages,
-            parsed_pages=parsed_pages,
-            failed_pages=failed_pages,
-            skipped_pages=skipped_pages,
-            current_image_path=current_image_path,
-        )
-    )
-
-
-def _agentic_ollama_page_prompt(*, page_number: int, page_count: int) -> str:
-    schema = json.dumps(AgenticOllamaParsedPage.model_json_schema(), ensure_ascii=False)
-    return (
-        "You are a meticulous document parsing agent. Parse the attached image of "
-        f"PDF page {page_number} of {page_count}.\n\n"
-        "Return exactly one JSON object matching this JSON Schema, with no markdown fence "
-        f"and no commentary:\n{schema}\n\n"
-        "Rules:\n"
-        "1. Preserve visible wording. Do not summarize or simplify.\n"
-        "2. Preserve headings, captions, page text, formulas, labels, and table content.\n"
-        "3. If a region is unreadable, record that in uncertain_text instead of guessing.\n"
-        "4. Use Markdown tables when table structure is visible.\n"
-        "5. Put visual non-table assets in figures with caption, visible_text, description, "
-        "page_region, kind, and confidence.\n"
-        "6. Use stable ids like page-0001-table-01 or page-0001-figure-01 for tables and figures.\n"
-        "7. Use empty strings or empty arrays for fields that are not visible.\n"
-        "8. Keep the output valid JSON."
-    )
-
-
-def _validated_agentic_page(content: str, *, expected_page_number: int) -> AgenticOllamaParsedPage:
-    parsed_json = _extract_json_object(content)
-    if parsed_json is None:
-        raise SourceMaterialParseError("Ollama response did not contain one JSON object.")
-    parsed_page = AgenticOllamaParsedPage.model_validate(parsed_json)
-    if parsed_page.page_number == expected_page_number:
-        return parsed_page
-    parser_notes = [
-        *parsed_page.parser_notes,
-        (
-            f"Model returned page_number {parsed_page.page_number}; "
-            f"normalized to {expected_page_number}."
-        ),
-    ]
-    return parsed_page.model_copy(
-        update={"page_number": expected_page_number, "parser_notes": parser_notes}
-    )
-
-
-def _agentic_ollama_captured_assets(
-    pages: list[AgenticOllamaPageResult],
-) -> list[AgenticOllamaCapturedAsset]:
-    assets: list[AgenticOllamaCapturedAsset] = []
-    for page in pages:
-        if page.status != "parsed" or page.parsed_json is None:
-            continue
-        tables = page.parsed_json.get("tables", [])
-        if isinstance(tables, list):
-            for index, raw_table in enumerate(tables, start=1):
-                if not isinstance(raw_table, Mapping):
-                    continue
-                assets.append(
-                    AgenticOllamaCapturedAsset(
-                        id=_asset_id(raw_table.get("id"), page.page, "table", index),
-                        page=page.page,
-                        kind="table",
-                        source_image_path=page.image_path,
-                        caption=_string_value(raw_table.get("caption")),
-                        markdown=_string_value(raw_table.get("markdown")),
-                        notes=_string_value(raw_table.get("notes")),
-                        confidence=_confidence_value(raw_table.get("confidence")),
-                    )
-                )
-        figures = page.parsed_json.get("figures", [])
-        if isinstance(figures, list):
-            for index, raw_figure in enumerate(figures, start=1):
-                if not isinstance(raw_figure, Mapping):
-                    continue
-                kind = _asset_kind_value(raw_figure.get("kind"))
-                assets.append(
-                    AgenticOllamaCapturedAsset(
-                        id=_asset_id(raw_figure.get("id"), page.page, kind, index),
-                        page=page.page,
-                        kind=kind,
-                        source_image_path=page.image_path,
-                        caption=_string_value(raw_figure.get("caption")),
-                        visible_text=_string_value(raw_figure.get("visible_text")),
-                        description=_string_value(raw_figure.get("description")),
-                        page_region=_string_value(raw_figure.get("page_region")),
-                        confidence=_confidence_value(raw_figure.get("confidence")),
-                    )
-                )
-    return assets
-
-
-def _asset_id(value: Any, page_number: int, kind: str, index: int) -> str:
-    text = _string_value(value).strip()
-    if text:
-        return text
-    return f"page-{page_number:04d}-{kind}-{index:02d}"
-
-
-def _asset_kind_value(value: Any) -> AgenticCapturedAssetKind:
-    text = _string_value(value).strip().lower()
-    if text in {"photo", "diagram", "chart", "equation", "other"}:
-        return text
-    return "figure"
-
-
-def _string_value(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (list, tuple)):
-        return "\n".join(_string_value(item) for item in value if _string_value(item))
-    return str(value)
-
-
-def _confidence_value(value: Any) -> float:
-    try:
-        confidence = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return min(max(confidence, 0.0), 1.0)
-
-
-def _write_agentic_ollama_outputs(
-    *,
-    output_dir: Path,
-    report: AgenticOllamaReport,
-    captured_assets: list[AgenticOllamaCapturedAsset],
-) -> None:
-    pages_payload = [page.model_dump(mode="json") for page in report.pages]
-    assets_payload = [asset.model_dump(mode="json") for asset in captured_assets]
-    _write_json(output_dir / "agentic_ollama_assets.json", assets_payload)
-    _write_json(output_dir / "agentic_ollama_pages.json", pages_payload)
-    _write_json(output_dir / "agentic_ollama_report.json", report.model_dump(mode="json"))
-    markdown = _compose_agentic_markdown(report.pages)
-    (output_dir / "agentic_ollama_content.md").write_text(markdown, encoding="utf-8")
-
-
-def _compose_agentic_markdown(pages: list[AgenticOllamaPageResult]) -> str:
-    sections: list[str] = []
-    for page in pages:
-        if page.status == "parsed":
-            content = page.markdown.strip() or page.raw_response.strip()
-        else:
-            content = f"_Agentic Ollama parse failed: {page.error}_"
-        sections.append(f"<!-- page:{page.page} -->\n\n{content}")
-    return "\n\n---\n\n".join(sections).strip() + "\n"
-
-
-def _ensure_page_render_assets(*, source_path: Path, assets_dir: Path, render_dpi: int) -> list[Path]:
-    page_images: list[Path] = []
-    with fitz.open(source_path) as document:
-        for index, page in enumerate(document, start=1):
-            image_path = assets_dir / f"page-{index:04d}.png"
-            if not image_path.is_file():
-                _render_page(page=page, page_number=index, assets_dir=assets_dir, dpi=render_dpi)
-            page_images.append(image_path)
-    return page_images
-
-
-def _extract_json_object(content: str) -> dict[str, Any] | None:
-    cleaned = content.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start < 0 or end <= start:
-            return None
-        try:
-            parsed = json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _markdown_from_agentic_response(content: str, parsed_json: dict[str, Any] | None) -> str:
-    if parsed_json is not None:
-        markdown = parsed_json.get("reading_order_markdown")
-        if isinstance(markdown, str) and markdown.strip():
-            return markdown.strip()
-    return content.strip()
 
 
 def _extract_markdown_chunks(*, source_path: Path, assets_dir: Path, image_dpi: int) -> list[dict[str, Any]]:
@@ -1391,7 +666,7 @@ def _source_metadata(*, source_path: Path, source_id: str) -> SourceMetadata:
 
 def _parser_metadata(
     *,
-    status: Literal["parsed", "not_run", "skipped", "partial", "failed"],
+    status: Literal["parsed", "not_run", "skipped"],
     reason: str,
     render_pages: bool,
     render_dpi: int,
@@ -1450,28 +725,6 @@ def _build_parsed_manifest(
         ),
     )
     return manifest.model_dump(mode="json", exclude_none=True)
-
-
-def _with_agentic_ollama_manifest_entries(
-    manifest: dict[str, Any],
-    *,
-    parser_metadata: ParserMetadata,
-) -> dict[str, Any]:
-    updated = dict(manifest)
-    files = dict(updated.get("files", {}))
-    files.update(
-        {
-            "agentic_ollama_content_markdown": "agentic_ollama_content.md",
-            "agentic_ollama_assets_json": "agentic_ollama_assets.json",
-            "agentic_ollama_pages_json": "agentic_ollama_pages.json",
-            "agentic_ollama_report_json": "agentic_ollama_report.json",
-        }
-    )
-    updated["files"] = files
-    agentic_parsers = list(updated.get("agentic_parsers", []))
-    agentic_parsers.append(parser_metadata.model_dump(mode="json"))
-    updated["agentic_parsers"] = agentic_parsers
-    return updated
 
 
 def _write_json(path: Path, payload: Any) -> None:
