@@ -5,7 +5,8 @@ import json
 import mimetypes
 import re
 import shutil
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -15,8 +16,20 @@ import pymupdf4llm
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from wordbyword.paddleocr_vl import (
+    PaddleOCRVLInterruptedError,
+    PaddleOCRVLPageResult,
+    PaddleOCRVLProgress,
+    PaddleOCRVLRuntimeError,
+    PaddleOCRVLSettings,
+    run_paddleocr_vl,
+)
+
 WORKSPACE_SCHEMA_VERSION = "wordbyword.source_material_workspace.v1"
 PDF_PARSE_SCHEMA_VERSION = "wordbyword.heuristic_pdf_parse.v1"
+PADDLEOCR_VL_PARSE_SCHEMA_VERSION = "wordbyword.paddleocr_vl_pdf_parse.v1"
+PdfParserName = Literal["heuristic", "paddleocr-vl"]
+SourceMaterialProgressPhase = Literal["start", "render", "load", "ocr", "write", "complete"]
 DEFAULT_SOURCE_MATERIAL_ROOT = Path("class-source-materials")
 DEFAULT_PARSED_SOURCE_ROOT = DEFAULT_SOURCE_MATERIAL_ROOT / "parsed"
 SUPPORTED_SOURCE_EXTENSIONS = {
@@ -189,6 +202,21 @@ class SourceMaterialBatchResult:
     bundles: list[SourceMaterialBundle]
 
 
+@dataclass(frozen=True)
+class SourceMaterialProgress:
+    phase: SourceMaterialProgressPhase
+    source_path: Path
+    parser: PdfParserName
+    detail: str
+    source_index: int = 1
+    total_sources: int = 1
+    completed_pages: int = 0
+    total_pages: int = 0
+
+
+SourceMaterialProgressCallback = Callable[[SourceMaterialProgress], None]
+
+
 class SourceMaterialParseError(RuntimeError):
     """Raised when a source material workspace cannot be prepared or parsed."""
 
@@ -199,9 +227,14 @@ def parse_source_material(
     output_root: Path = DEFAULT_PARSED_SOURCE_ROOT,
     source_id: str | None = None,
     parse_pdf: bool = True,
+    pdf_parser: PdfParserName = "heuristic",
     render_pages: bool = True,
     render_dpi: int = 144,
     image_dpi: int = 180,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+    progress: SourceMaterialProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
 ) -> SourceMaterialBundle:
     source_path = source_path.expanduser()
     if not source_path.is_file():
@@ -216,27 +249,52 @@ def parse_source_material(
     resolved_source_id = source_id or source_id_for(source_path)
     output_dir = output_root / resolved_source_id
     assets_dir = output_dir / "assets"
+    _emit_source_material_progress(
+        progress,
+        phase="start",
+        source_path=source_path,
+        parser=pdf_parser,
+        detail=f"preparing {source_path.name}",
+        source_index=source_index,
+        total_sources=total_sources,
+    )
     _prepare_workspace(output_dir, assets_dir)
 
     source_metadata = _source_metadata(source_path=source_path, source_id=resolved_source_id)
     if suffix == ".pdf" and parse_pdf:
         parser_metadata = _parser_metadata(
             status="parsed",
+            pdf_parser=pdf_parser,
             reason="",
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
         )
-        parse_result = _parse_pdf(
-            source_path=source_path,
-            output_dir=output_dir,
-            assets_dir=assets_dir,
-            source_metadata=source_metadata,
-            parser_metadata=parser_metadata,
-            render_pages=render_pages,
-            render_dpi=render_dpi,
-            image_dpi=image_dpi,
-        )
+        if pdf_parser == "paddleocr-vl":
+            parse_result = _parse_pdf_with_paddleocr_vl(
+                source_path=source_path,
+                output_dir=output_dir,
+                assets_dir=assets_dir,
+                source_metadata=source_metadata,
+                parser_metadata=parser_metadata,
+                render_dpi=render_dpi,
+                settings=paddleocr_vl_settings or PaddleOCRVLSettings(),
+                progress=progress,
+                source_index=source_index,
+                total_sources=total_sources,
+            )
+        else:
+            parse_result = _parse_pdf(
+                source_path=source_path,
+                output_dir=output_dir,
+                assets_dir=assets_dir,
+                source_metadata=source_metadata,
+                parser_metadata=parser_metadata,
+                render_pages=render_pages,
+                render_dpi=render_dpi,
+                image_dpi=image_dpi,
+            )
         manifest = _build_parsed_manifest(
             source_metadata=source_metadata,
             parser_metadata=parse_result.parser,
@@ -244,6 +302,7 @@ def parse_source_material(
     else:
         parser_metadata = _parser_metadata(
             status="skipped" if suffix != ".pdf" else "not_run",
+            pdf_parser=pdf_parser,
             reason=(
                 "Only PDF parsing is implemented in the current heuristic parser."
                 if suffix != ".pdf"
@@ -252,6 +311,7 @@ def parse_source_material(
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
         )
         manifest = _build_workspace_manifest(
             source_metadata=source_metadata,
@@ -260,6 +320,15 @@ def parse_source_material(
 
     manifest_path = output_dir / "manifest.json"
     _write_json(manifest_path, manifest)
+    _emit_source_material_progress(
+        progress,
+        phase="complete",
+        source_path=source_path,
+        parser=pdf_parser,
+        detail=f"prepared {resolved_source_id}",
+        source_index=source_index,
+        total_sources=total_sources,
+    )
     return SourceMaterialBundle(
         source_id=resolved_source_id,
         source_path=source_path,
@@ -275,24 +344,33 @@ def parse_source_materials(
     *,
     output_root: Path = DEFAULT_PARSED_SOURCE_ROOT,
     parse_pdf: bool = True,
+    pdf_parser: PdfParserName = "heuristic",
     render_pages: bool = True,
     render_dpi: int = 144,
     image_dpi: int = 180,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+    progress: SourceMaterialProgressCallback | None = None,
 ) -> SourceMaterialBatchResult:
     source_paths = discover_source_materials(source_dir, output_root=output_root)
     used_source_ids: set[str] = set()
-    bundles = [
-        parse_source_material(
-            source_path,
-            output_root=output_root,
-            source_id=_unique_source_id(source_path, source_dir, used_source_ids),
-            parse_pdf=parse_pdf,
-            render_pages=render_pages,
-            render_dpi=render_dpi,
-            image_dpi=image_dpi,
+    bundles: list[SourceMaterialBundle] = []
+    for index, source_path in enumerate(source_paths, start=1):
+        bundles.append(
+            parse_source_material(
+                source_path,
+                output_root=output_root,
+                source_id=_unique_source_id(source_path, source_dir, used_source_ids),
+                parse_pdf=parse_pdf,
+                pdf_parser=pdf_parser,
+                render_pages=render_pages,
+                render_dpi=render_dpi,
+                image_dpi=image_dpi,
+                paddleocr_vl_settings=paddleocr_vl_settings,
+                progress=progress,
+                source_index=index,
+                total_sources=len(source_paths),
+            )
         )
-        for source_path in source_paths
-    ]
     return SourceMaterialBatchResult(
         source_dir=source_dir,
         output_root=output_root,
@@ -331,6 +409,60 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _emit_source_material_progress(
+    progress: SourceMaterialProgressCallback | None,
+    *,
+    phase: SourceMaterialProgressPhase,
+    source_path: Path,
+    parser: PdfParserName,
+    detail: str,
+    source_index: int = 1,
+    total_sources: int = 1,
+    completed_pages: int = 0,
+    total_pages: int = 0,
+) -> None:
+    if progress is None:
+        return
+    progress(
+        SourceMaterialProgress(
+            phase=phase,
+            source_path=source_path,
+            parser=parser,
+            detail=detail,
+            source_index=source_index,
+            total_sources=total_sources,
+            completed_pages=completed_pages,
+            total_pages=total_pages,
+        )
+    )
+
+
+def _paddleocr_progress_adapter(
+    *,
+    progress: SourceMaterialProgressCallback | None,
+    source_path: Path,
+    source_index: int,
+    total_sources: int,
+) -> Callable[[PaddleOCRVLProgress], None] | None:
+    if progress is None:
+        return None
+
+    def report(paddle_progress: PaddleOCRVLProgress) -> None:
+        _emit_source_material_progress(
+            progress,
+            phase=paddle_progress.phase,
+            source_path=source_path,
+            parser="paddleocr-vl",
+            detail=paddle_progress.detail,
+            source_index=source_index,
+            total_sources=total_sources,
+            completed_pages=paddle_progress.completed_pages,
+            total_pages=paddle_progress.total_pages,
+        )
+
+    return report
 
 
 def _parse_pdf(
@@ -408,6 +540,238 @@ def _parse_pdf(
     return parsed_document
 
 
+def _parse_pdf_with_paddleocr_vl(
+    *,
+    source_path: Path,
+    output_dir: Path,
+    assets_dir: Path,
+    source_metadata: SourceMetadata,
+    parser_metadata: ParserMetadata,
+    render_dpi: int,
+    settings: PaddleOCRVLSettings,
+    progress: SourceMaterialProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
+) -> ParsedPdfDocument:
+    try:
+        return _parse_pdf_with_paddleocr_vl_impl(
+            source_path=source_path,
+            output_dir=output_dir,
+            assets_dir=assets_dir,
+            source_metadata=source_metadata,
+            parser_metadata=parser_metadata,
+            render_dpi=render_dpi,
+            settings=settings,
+            progress=progress,
+            source_index=source_index,
+            total_sources=total_sources,
+        )
+    except PaddleOCRVLInterruptedError as error:
+        _cleanup_interrupted_workspace(output_dir)
+        raise KeyboardInterrupt from error
+    except KeyboardInterrupt:
+        _cleanup_interrupted_workspace(output_dir)
+        raise
+
+
+def _parse_pdf_with_paddleocr_vl_impl(
+    *,
+    source_path: Path,
+    output_dir: Path,
+    assets_dir: Path,
+    source_metadata: SourceMetadata,
+    parser_metadata: ParserMetadata,
+    render_dpi: int,
+    settings: PaddleOCRVLSettings,
+    progress: SourceMaterialProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
+) -> ParsedPdfDocument:
+    page_render_assets_by_page = _render_pdf_page_images(
+        source_path=source_path,
+        assets_dir=assets_dir,
+        dpi=render_dpi,
+        progress=progress,
+        parser="paddleocr-vl",
+        source_index=source_index,
+        total_sources=total_sources,
+    )
+    page_image_paths = [
+        assets_dir / Path(page_render_assets_by_page[page]).name
+        for page in sorted(page_render_assets_by_page)
+    ]
+    incremental_pages: list[PaddleOCRVLPageResult] = []
+
+    def save_incremental_page(page_result: PaddleOCRVLPageResult) -> None:
+        incremental_pages.append(page_result)
+        _write_paddleocr_vl_merged_outputs(
+            output_dir=output_dir,
+            source_metadata=source_metadata,
+            parser_metadata=parser_metadata,
+            settings=settings,
+            page_render_assets_by_page=page_render_assets_by_page,
+            page_results=incremental_pages,
+            complete=False,
+        )
+
+    try:
+        paddle_result = run_paddleocr_vl(
+            page_image_paths=page_image_paths,
+            assets_dir=assets_dir,
+            settings=settings,
+            progress=_paddleocr_progress_adapter(
+                progress=progress,
+                source_path=source_path,
+                source_index=source_index,
+                total_sources=total_sources,
+            ),
+            page_result_callback=save_incremental_page,
+        )
+    except PaddleOCRVLInterruptedError:
+        raise
+    except PaddleOCRVLRuntimeError as error:
+        raise SourceMaterialParseError(str(error)) from error
+
+    _emit_source_material_progress(
+        progress,
+        phase="write",
+        source_path=source_path,
+        parser="paddleocr-vl",
+        detail="writing PaddleOCR-VL parse bundle",
+        source_index=source_index,
+        total_sources=total_sources,
+        completed_pages=len(paddle_result.pages),
+        total_pages=len(page_image_paths),
+    )
+    parser_metadata = parser_metadata.model_copy(
+        update={"version": paddle_result.parser_version}
+    )
+    content_markdown, chunks = _write_paddleocr_vl_merged_outputs(
+        output_dir=output_dir,
+        source_metadata=source_metadata,
+        parser_metadata=parser_metadata,
+        settings=paddle_result.settings,
+        page_render_assets_by_page=page_render_assets_by_page,
+        page_results=paddle_result.pages,
+        complete=True,
+    )
+
+    pages, page_render_assets = _inspect_pdf_pages(
+        source_path=source_path,
+        assets_dir=assets_dir,
+        chunks=chunks,
+        render_pages=False,
+        render_dpi=render_dpi,
+        rendered_page_assets=page_render_assets_by_page,
+    )
+    assets = _collect_assets(
+        assets_dir=assets_dir,
+        page_render_assets=page_render_assets,
+    )
+    quality_report = _quality_report(
+        source_metadata=source_metadata,
+        parser_metadata=parser_metadata,
+        content_markdown=content_markdown,
+        pages=pages,
+        assets=assets,
+        schema_version=PADDLEOCR_VL_PARSE_SCHEMA_VERSION,
+    )
+    quality_report_path = output_dir / "quality_report.json"
+    _write_json(quality_report_path, quality_report.model_dump(mode="json"))
+
+    parsed_document = ParsedPdfDocument(
+        schema_version=PADDLEOCR_VL_PARSE_SCHEMA_VERSION,
+        source=source_metadata,
+        parser=parser_metadata,
+        content_markdown_path="content.md",
+        chunks_path="chunks.json",
+        parser_output_path="parser_output.json",
+        quality_report_path="quality_report.json",
+        pages=pages,
+        assets=assets,
+    )
+    document_model_path = output_dir / "document_model.json"
+    _write_json(document_model_path, parsed_document.model_dump(mode="json"))
+    _emit_source_material_progress(
+        progress,
+        phase="write",
+        source_path=source_path,
+        parser="paddleocr-vl",
+        detail="wrote PaddleOCR-VL parse bundle",
+        source_index=source_index,
+        total_sources=total_sources,
+        completed_pages=len(paddle_result.pages),
+        total_pages=len(page_image_paths),
+    )
+    return parsed_document
+
+
+def _write_paddleocr_vl_merged_outputs(
+    *,
+    output_dir: Path,
+    source_metadata: SourceMetadata,
+    parser_metadata: ParserMetadata,
+    settings: PaddleOCRVLSettings,
+    page_render_assets_by_page: dict[int, str],
+    page_results: list[PaddleOCRVLPageResult],
+    complete: bool,
+) -> tuple[str, list[PageChunk]]:
+    sorted_page_results = sorted(page_results, key=lambda page: page.page)
+    content_sections = []
+    for page in sorted_page_results:
+        text = page.markdown.strip() or "_No text extracted on this page._"
+        content_sections.append(f"<!-- page:{page.page} -->\n\n{text}")
+    content_markdown = "\n\n---\n\n".join(content_sections).strip() + "\n"
+    content_path = output_dir / "content.md"
+    content_path.write_text(content_markdown, encoding="utf-8")
+
+    chunks = [
+        PageChunk(
+            page=page.page,
+            text=page.markdown,
+            metadata={
+                "parser": "paddleocr-vl",
+                "input_image_path": page.input_image_path,
+                "markdown_asset_paths": page.markdown_asset_paths,
+            },
+        )
+        for page in sorted_page_results
+    ]
+    chunks_path = output_dir / "chunks.json"
+    _write_json(chunks_path, [chunk.model_dump(mode="json") for chunk in chunks])
+
+    parser_output = {
+        "schema_version": PADDLEOCR_VL_PARSE_SCHEMA_VERSION,
+        "complete": complete,
+        "completed_pages": len(sorted_page_results),
+        "page_count": len(page_render_assets_by_page),
+        "source": source_metadata.model_dump(mode="json"),
+        "parser": parser_metadata.model_dump(mode="json"),
+        "settings": {
+            key: value
+            for key, value in asdict(settings).items()
+            if value is not None
+        },
+        "page_images": {
+            str(page): asset_path
+            for page, asset_path in sorted(page_render_assets_by_page.items())
+        },
+        "page_results": [
+            {
+                "page": page.page,
+                "input_image_path": page.input_image_path,
+                "markdown": page.markdown,
+                "markdown_asset_paths": page.markdown_asset_paths,
+                "raw_json": page.raw_json,
+            }
+            for page in sorted_page_results
+        ],
+    }
+    parser_output_path = output_dir / "parser_output.json"
+    _write_json(parser_output_path, parser_output)
+    return content_markdown, chunks
+
+
 def _extract_markdown_chunks(*, source_path: Path, assets_dir: Path, image_dpi: int) -> list[dict[str, Any]]:
     raw_chunks = pymupdf4llm.to_markdown(
         source_path.as_posix(),
@@ -482,6 +846,7 @@ def _inspect_pdf_pages(
     chunks: list[PageChunk],
     render_pages: bool,
     render_dpi: int,
+    rendered_page_assets: dict[int, str] | None = None,
 ) -> tuple[list[PageQuality], set[str]]:
     pages: list[PageQuality] = []
     page_render_assets: set[str] = set()
@@ -492,8 +857,10 @@ def _inspect_pdf_pages(
             image_blocks = _image_block_count(page)
             drawing_count = _drawing_count(page)
             table_count = _table_count(page)
-            render_asset = ""
-            if render_pages:
+            render_asset = (rendered_page_assets or {}).get(index, "")
+            if render_asset:
+                page_render_assets.add(render_asset)
+            elif render_pages:
                 render_asset = _render_page(page=page, page_number=index, assets_dir=assets_dir, dpi=render_dpi)
                 page_render_assets.add(render_asset)
             chunk = chunk_by_page.get(index)
@@ -514,6 +881,51 @@ def _inspect_pdf_pages(
                 )
             )
     return pages, page_render_assets
+
+
+def _render_pdf_page_images(
+    *,
+    source_path: Path,
+    assets_dir: Path,
+    dpi: int,
+    progress: SourceMaterialProgressCallback | None = None,
+    parser: PdfParserName = "heuristic",
+    source_index: int = 1,
+    total_sources: int = 1,
+) -> dict[int, str]:
+    page_assets: dict[int, str] = {}
+    with fitz.open(source_path) as document:
+        total_pages = document.page_count
+        _emit_source_material_progress(
+            progress,
+            phase="render",
+            source_path=source_path,
+            parser=parser,
+            detail=f"rendering {total_pages:,} page image(s)",
+            source_index=source_index,
+            total_sources=total_sources,
+            completed_pages=0,
+            total_pages=total_pages,
+        )
+        for index, page in enumerate(document, start=1):
+            page_assets[index] = _render_page(
+                page=page,
+                page_number=index,
+                assets_dir=assets_dir,
+                dpi=dpi,
+            )
+            _emit_source_material_progress(
+                progress,
+                phase="render",
+                source_path=source_path,
+                parser=parser,
+                detail=f"rendered page {index:,}/{total_pages:,}",
+                source_index=source_index,
+                total_sources=total_sources,
+                completed_pages=index,
+                total_pages=total_pages,
+            )
+    return page_assets
 
 
 def _render_page(*, page: fitz.Page, page_number: int, assets_dir: Path, dpi: int) -> str:
@@ -603,6 +1015,7 @@ def _quality_report(
     content_markdown: str,
     pages: list[PageQuality],
     assets: list[AssetMetadata],
+    schema_version: str = PDF_PARSE_SCHEMA_VERSION,
 ) -> QualityReport:
     warnings: list[str] = []
     needs_ocr_pages = [page.page for page in pages if page.needs_ocr]
@@ -618,7 +1031,7 @@ def _quality_report(
         )
 
     return QualityReport(
-        schema_version=PDF_PARSE_SCHEMA_VERSION,
+        schema_version=schema_version,
         parser=parser_metadata,
         source=source_metadata,
         page_count=len(pages),
@@ -650,6 +1063,11 @@ def _prepare_workspace(output_dir: Path, assets_dir: Path) -> None:
             shutil.rmtree(path)
 
 
+def _cleanup_interrupted_workspace(output_dir: Path) -> None:
+    if output_dir.is_dir():
+        shutil.rmtree(output_dir)
+
+
 def _source_metadata(*, source_path: Path, source_id: str) -> SourceMetadata:
     suffix = source_path.suffix.lower()
     return SourceMetadata(
@@ -667,11 +1085,31 @@ def _source_metadata(*, source_path: Path, source_id: str) -> SourceMetadata:
 def _parser_metadata(
     *,
     status: Literal["parsed", "not_run", "skipped"],
+    pdf_parser: PdfParserName,
     reason: str,
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
 ) -> ParserMetadata:
+    if status == "parsed" and pdf_parser == "paddleocr-vl":
+        settings = paddleocr_vl_settings or PaddleOCRVLSettings()
+        return ParserMetadata(
+            status=status,
+            name="paddleocr-vl-1.5",
+            version="",
+            reason=reason,
+            parsed_at=datetime.now(timezone.utc).isoformat(),
+            settings={
+                "primary_output": "content.md",
+                "page_image_inputs": True,
+                "render_dpi": render_dpi,
+                "image_workflow": "PDF pages are rendered to PNG before PaddleOCR-VL inference.",
+                "pipeline_version": "v1.5",
+                "asset_layout": "flat assets/ folder per source material",
+                **{key: value for key, value in asdict(settings).items() if value is not None},
+            },
+        )
     return ParserMetadata(
         status=status,
         name="pymupdf4llm+pymupdf+pillow" if status == "parsed" else "",

@@ -9,6 +9,7 @@ from pathlib import Path
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
 from wordbyword.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
+from wordbyword.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.source_materials import (
     DEFAULT_PARSED_SOURCE_ROOT,
@@ -22,6 +23,7 @@ from wordbyword.terminal_ui import (
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
+    emit_source_material_progress,
     emit_stage_update,
     render_artifact_drop,
 )
@@ -181,6 +183,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only prepare source-material workspaces; do not run the heuristic PDF parser.",
     )
     parser.add_argument(
+        "--pdf-parser",
+        choices=("heuristic", "paddleocr-vl"),
+        default="heuristic",
+        help=(
+            "PDF parser to use for source materials. Defaults to heuristic "
+            "PyMuPDF4LLM parsing; paddleocr-vl renders each PDF page to PNG and "
+            "runs PaddleOCR-VL-1.5."
+        ),
+    )
+    parser.add_argument(
         "--no-page-renders",
         action="store_true",
         help="Do not render full-page PNG review assets for parsed PDFs.",
@@ -196,6 +208,93 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=180,
         help="DPI for images extracted by PyMuPDF4LLM. Defaults to 180.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-device",
+        default=None,
+        help='Optional PaddleOCR-VL inference device, for example "cpu" or "gpu:0".',
+    )
+    parser.add_argument(
+        "--paddleocr-vl-engine",
+        default=None,
+        help='Optional PaddleOCR-VL engine, for example "paddle" or "transformers".',
+    )
+    parser.add_argument(
+        "--paddleocr-vl-rec-backend",
+        default=None,
+        help='Optional VLM recognition backend, for example "vllm-server".',
+    )
+    parser.add_argument(
+        "--paddleocr-vl-rec-server-url",
+        default=None,
+        help="Optional VLM recognition service URL.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-rec-api-model-name",
+        default=None,
+        help='Optional VLM recognition service model name, for example "PaddlePaddle/PaddleOCR-VL-1.5".',
+    )
+    parser.add_argument(
+        "--paddleocr-vl-rec-api-key",
+        default=None,
+        help="Optional VLM recognition service API key.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-doc-orientation",
+        action="store_true",
+        help="Enable PaddleOCR-VL document orientation classification.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-doc-unwarping",
+        action="store_true",
+        help="Enable PaddleOCR-VL document unwarping.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-no-layout-detection",
+        action="store_true",
+        help="Disable PaddleOCR-VL layout detection and send rendered pages directly to the VL recognizer.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-chart-recognition",
+        action="store_true",
+        help="Enable PaddleOCR-VL chart recognition.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-seal-recognition",
+        action="store_true",
+        help="Enable PaddleOCR-VL seal recognition.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-no-ocr-for-image-block",
+        action="store_true",
+        help="Disable PaddleOCR-VL OCR inside detected image blocks.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-max-new-tokens",
+        type=int,
+        default=None,
+        help="Optional max_new_tokens override for PaddleOCR-VL.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-sidecar-env",
+        type=Path,
+        default=None,
+        help=(
+            "Run PaddleOCR-VL in a separate Python environment. The environment's "
+            "bin/python or Scripts/python.exe is used as the sidecar worker."
+        ),
+    )
+    parser.add_argument(
+        "--paddleocr-vl-sidecar-python",
+        type=Path,
+        default=None,
+        help="Run PaddleOCR-VL in a sidecar using this Python executable.",
+    )
+    parser.add_argument(
+        "--paddleocr-vl-sidecar-timeout-seconds",
+        type=float,
+        default=None,
+        help="Optional timeout for one PaddleOCR-VL sidecar PDF parse.",
     )
     parser.add_argument(
         "--source-output-root",
@@ -234,18 +333,22 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.source_output_root,
             source_id=args.source_id,
             parse_pdf=not args.skip_pdf_parse,
+            pdf_parser=args.pdf_parser,
             render_pages=not args.no_page_renders,
             render_dpi=args.pdf_render_dpi,
             image_dpi=args.pdf_image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
         )
     if args.parse_source_materials is not None:
         return parse_source_materials_cli(
             source_dir=args.parse_source_materials,
             output_root=args.source_output_root,
             parse_pdf=not args.skip_pdf_parse,
+            pdf_parser=args.pdf_parser,
             render_pages=not args.no_page_renders,
             render_dpi=args.pdf_render_dpi,
             image_dpi=args.pdf_image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -513,9 +616,11 @@ def parse_source_material_cli(
     output_root: Path,
     source_id: str | None,
     parse_pdf: bool,
+    pdf_parser: str,
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
 ) -> int:
     try:
         bundle = parse_source_material(
@@ -523,10 +628,16 @@ def parse_source_material_cli(
             output_root=output_root,
             source_id=source_id,
             parse_pdf=parse_pdf,
+            pdf_parser=pdf_parser,  # type: ignore[arg-type]
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
+            progress=emit_source_material_progress,
         )
+    except KeyboardInterrupt:
+        sys.stderr.write("wordbyword: source-material parsing interrupted; partial workspace cleaned.\n")
+        return 130
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -552,19 +663,27 @@ def parse_source_materials_cli(
     source_dir: Path,
     output_root: Path,
     parse_pdf: bool,
+    pdf_parser: str,
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
 ) -> int:
     try:
         result = parse_source_materials(
             source_dir,
             output_root=output_root,
             parse_pdf=parse_pdf,
+            pdf_parser=pdf_parser,  # type: ignore[arg-type]
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
+            progress=emit_source_material_progress,
         )
+    except KeyboardInterrupt:
+        sys.stderr.write("wordbyword: source-material parsing interrupted; partial workspace cleaned.\n")
+        return 130
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -584,6 +703,33 @@ def parse_source_materials_cli(
         )
     sys.stdout.flush()
     return 0
+
+
+def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:
+    if getattr(args, "pdf_parser", "heuristic") != "paddleocr-vl":
+        return None
+    return PaddleOCRVLSettings(
+        device=args.paddleocr_vl_device,
+        engine=args.paddleocr_vl_engine,
+        vl_rec_backend=args.paddleocr_vl_rec_backend,
+        vl_rec_server_url=args.paddleocr_vl_rec_server_url,
+        vl_rec_api_model_name=args.paddleocr_vl_rec_api_model_name,
+        vl_rec_api_key=args.paddleocr_vl_rec_api_key,
+        use_doc_orientation_classify=args.paddleocr_vl_doc_orientation or None,
+        use_doc_unwarping=args.paddleocr_vl_doc_unwarping or None,
+        use_layout_detection=False if args.paddleocr_vl_no_layout_detection else None,
+        use_chart_recognition=args.paddleocr_vl_chart_recognition or None,
+        use_seal_recognition=args.paddleocr_vl_seal_recognition or None,
+        use_ocr_for_image_block=False if args.paddleocr_vl_no_ocr_for_image_block else None,
+        max_new_tokens=args.paddleocr_vl_max_new_tokens,
+        sidecar_env=args.paddleocr_vl_sidecar_env.as_posix()
+        if args.paddleocr_vl_sidecar_env is not None
+        else None,
+        sidecar_python=args.paddleocr_vl_sidecar_python.as_posix()
+        if args.paddleocr_vl_sidecar_python is not None
+        else None,
+        sidecar_timeout_seconds=args.paddleocr_vl_sidecar_timeout_seconds,
+    )
 
 
 def prompt_generated_example_retry(

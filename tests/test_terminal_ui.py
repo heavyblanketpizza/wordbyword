@@ -5,12 +5,14 @@ from pathlib import Path
 
 from wordbyword.example_cleanup import CleanupBatchProgress
 from wordbyword.pipeline import PipelineResult
+from wordbyword.source_materials import SourceMaterialProgress
 from wordbyword.terminal_ui import (
     render_artifact_drop,
     render_boot_screen,
     render_cleanup_progress,
     render_completion_screen,
     render_dictionary_distribution,
+    render_source_material_progress,
     render_stage_update,
 )
 
@@ -37,6 +39,26 @@ class TerminalUiTest(unittest.TestCase):
 
         self.assertIn("ANALYZE", rendered)
         self.assertIn("tokenizing 422 page/text unit(s)", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_source_material_progress_plain_includes_page_bar(self) -> None:
+        progress = SourceMaterialProgress(
+            phase="ocr",
+            source_path=Path("sample.pdf"),
+            parser="paddleocr-vl",
+            detail="recognized page 2/4",
+            completed_pages=2,
+            total_pages=4,
+        )
+
+        rendered = render_source_material_progress(progress, color=False, width=120)
+
+        self.assertIn("PADDLEOCR", rendered)
+        self.assertIn("sample.pdf", rendered)
+        self.assertIn("pages 2/4", rendered)
+        self.assertIn(" 50.0%", rendered)
+        self.assertIn("█", rendered)
+        self.assertIn("░", rendered)
         self.assertNotIn("\x1b[", rendered)
 
     def test_render_completion_screen_plain_mode_keeps_run_stats(self) -> None:

@@ -16,6 +16,7 @@ from wordbyword.cli import (
     link_cleaned_examples,
     load_dictionary_candidates,
     main,
+    paddleocr_vl_settings_from_args,
     prompt_generated_example_retry,
     resolve_distribution_path,
     show_distribution,
@@ -36,6 +37,60 @@ class ParserDefaultsTest(unittest.TestCase):
             args.reference_dictionary,
             Path("build-dictionary/references/reference-dictionary.jsonl"),
         )
+        self.assertEqual(args.pdf_parser, "heuristic")
+
+    def test_paddleocr_vl_settings_are_built_only_for_paddle_parser(self) -> None:
+        parser = build_parser()
+
+        heuristic_args = parser.parse_args([])
+        self.assertIsNone(paddleocr_vl_settings_from_args(heuristic_args))
+
+        paddle_args = parser.parse_args(
+            [
+                "--pdf-parser",
+                "paddleocr-vl",
+                "--paddleocr-vl-device",
+                "cpu",
+                "--paddleocr-vl-engine",
+                "paddle",
+                "--paddleocr-vl-doc-orientation",
+                "--paddleocr-vl-no-layout-detection",
+                "--paddleocr-vl-no-ocr-for-image-block",
+                "--paddleocr-vl-max-new-tokens",
+                "2048",
+                "--paddleocr-vl-sidecar-env",
+                "/tmp/paddle-env",
+                "--paddleocr-vl-sidecar-python",
+                "/tmp/paddle-env/bin/python",
+                "--paddleocr-vl-sidecar-timeout-seconds",
+                "120",
+            ]
+        )
+        settings = paddleocr_vl_settings_from_args(paddle_args)
+
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings.device, "cpu")
+        self.assertEqual(settings.engine, "paddle")
+        self.assertTrue(settings.use_doc_orientation_classify)
+        self.assertFalse(settings.use_layout_detection)
+        self.assertFalse(settings.use_ocr_for_image_block)
+        self.assertEqual(settings.max_new_tokens, 2048)
+        self.assertEqual(settings.sidecar_env, "/tmp/paddle-env")
+        self.assertEqual(settings.sidecar_python, "/tmp/paddle-env/bin/python")
+        self.assertEqual(settings.sidecar_timeout_seconds, 120)
+
+    def test_main_reports_source_material_interrupt_with_130_exit(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch("sys.stderr", stderr),
+            patch("sys.stdout", io.StringIO()),
+            patch("wordbyword.cli.parse_source_materials", side_effect=KeyboardInterrupt),
+        ):
+            exit_code = main(["--parse-source-materials", "class-source-materials"])
+
+        self.assertEqual(exit_code, 130)
+        self.assertIn("interrupted", stderr.getvalue())
 
 
 class ShowDistributionCliTest(unittest.TestCase):

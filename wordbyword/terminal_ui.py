@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, TextIO
 if TYPE_CHECKING:
     from wordbyword.example_cleanup import CleanupBatchProgress
     from wordbyword.pipeline import PipelineResult
+    from wordbyword.source_materials import SourceMaterialProgress
 
 TOKYO_NIGHT = {
     "bg": "1a1b26",
@@ -31,6 +32,10 @@ PHASE_COLORS = {
     "extract": TOKYO_NIGHT["cyan"],
     "analyze": TOKYO_NIGHT["purple"],
     "cleanup": TOKYO_NIGHT["green"],
+    "start": TOKYO_NIGHT["blue"],
+    "render": TOKYO_NIGHT["cyan"],
+    "load": TOKYO_NIGHT["purple"],
+    "ocr": TOKYO_NIGHT["green"],
     "write": TOKYO_NIGHT["orange"],
     "complete": TOKYO_NIGHT["pink"],
 }
@@ -111,6 +116,30 @@ def emit_stage_update(phase: str, detail: str, stream: TextIO | None = None) -> 
         return
     stream.write(render_stage_update(phase, detail, color=_supports_color(stream)))
     stream.write("\n")
+    stream.flush()
+
+
+def emit_source_material_progress(
+    progress: "SourceMaterialProgress",
+    *,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    line = render_source_material_progress(
+        progress,
+        color=_supports_color(stream),
+        width=_terminal_width(),
+    )
+    if progress.phase in {"render", "ocr"} and progress.total_pages > 0:
+        stream.write("\033[2K\r")
+        stream.write(line)
+        if progress.completed_pages >= progress.total_pages:
+            stream.write("\n")
+    else:
+        stream.write(line)
+        stream.write("\n")
     stream.flush()
 
 
@@ -223,6 +252,61 @@ def render_stage_update(phase: str, detail: str, *, color: bool) -> str:
     arrow = _paint("▶", fg=phase_color, bold=True, color=color)
     message = _paint(detail, fg=TOKYO_NIGHT["fg"], color=color)
     return f"{tag} {arrow} {message}"
+
+
+def render_source_material_progress(
+    progress: "SourceMaterialProgress",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    phase_color = PHASE_COLORS.get(progress.phase, TOKYO_NIGHT["blue"])
+    label = "PADDLEOCR" if progress.phase == "ocr" else progress.phase.upper()
+    tag_text = f" {label[:10]:<10} "
+    tag = _paint(
+        tag_text,
+        fg=TOKYO_NIGHT["bg"],
+        bg=phase_color,
+        bold=True,
+        color=color,
+    )
+    arrow_glyph = "▶" if progress.completed_pages <= 0 else "▣"
+    arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
+
+    source_prefix = (
+        f"{progress.source_index}/{progress.total_sources} "
+        if progress.total_sources > 1
+        else ""
+    )
+    source_label = _shorten_text(
+        f"{source_prefix}{progress.source_path.name}",
+        max_width=max(16, min(36, width // 3)),
+    )
+    if progress.phase in {"render", "ocr"} and progress.total_pages > 0:
+        total_pages = max(progress.total_pages, 1)
+        completed_pages = max(0, min(progress.completed_pages, total_pages))
+        ratio = completed_pages / total_pages
+        head_plain = f"{source_label}  pages {completed_pages}/{progress.total_pages}  "
+        tail_plain = f"  {ratio * 100:5.1f}%"
+        overhead = len(tag_text) + 1 + 1 + 1 + len(head_plain) + len(tail_plain) + 2
+        bar_width = max(8, min(28, width - overhead))
+        filled = int(round(bar_width * ratio))
+        filled = max(0, min(bar_width, filled))
+
+        bar_filled = _paint("█" * filled, fg=phase_color, bold=True, color=color)
+        bar_empty = _paint("░" * (bar_width - filled), fg=TOKYO_NIGHT["comment"], color=color)
+        bracket_open = _paint("[", fg=TOKYO_NIGHT["comment"], color=color)
+        bracket_close = _paint("]", fg=TOKYO_NIGHT["comment"], color=color)
+        head_text = _paint(head_plain, fg=TOKYO_NIGHT["fg"], color=color)
+        pct_text = _paint(f"{ratio * 100:5.1f}%", fg=TOKYO_NIGHT["yellow"], bold=True, color=color)
+        return (
+            f"{tag} {arrow} {head_text}{bracket_open}{bar_filled}{bar_empty}"
+            f"{bracket_close}  {pct_text}"
+        )
+
+    detail = progress.detail or progress.parser
+    message = f"{source_label} :: {detail}"
+    return f"{tag} {arrow} {_paint(message, fg=TOKYO_NIGHT['fg'], color=color)}"
 
 
 def render_cleanup_progress(
@@ -772,6 +856,14 @@ def _hex_to_rgb(value: str) -> tuple[int, int, int]:
 
 def _visible_len(text: str) -> int:
     return len(ANSI_RE.sub("", text))
+
+
+def _shorten_text(text: str, *, max_width: int) -> str:
+    if len(text) <= max_width:
+        return text
+    if max_width <= 3:
+        return text[:max_width]
+    return f"{text[: max_width - 3]}..."
 
 
 def _is_interactive(stream: TextIO) -> bool:

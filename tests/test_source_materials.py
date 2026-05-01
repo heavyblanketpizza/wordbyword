@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,7 +12,14 @@ from unittest.mock import patch
 import fitz
 
 from wordbyword.cli import main
-from wordbyword.source_materials import discover_source_materials, parse_source_material, parse_source_materials, source_id_for
+from wordbyword.paddleocr_vl import PaddleOCRVLInterruptedError, PaddleOCRVLSettings
+from wordbyword.source_materials import (
+    SourceMaterialProgress,
+    discover_source_materials,
+    parse_source_material,
+    parse_source_materials,
+    source_id_for,
+)
 
 
 class SourceMaterialWorkspaceTest(unittest.TestCase):
@@ -70,6 +79,244 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(quality["page_render_count"], 1)
             self.assertGreater(quality["markdown_chars"], 0)
             self.assertTrue((bundle.output_dir / "assets" / "page-0001.png").is_file())
+
+    def test_paddleocr_vl_pdf_parser_writes_page_image_parse_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_path = root / "sample.pdf"
+            output_root = root / "parsed"
+            write_sample_pdf(source_path)
+
+            FakePaddleOCRVL.init_kwargs = None
+            FakePaddleOCRVL.predict_input = None
+            with (
+                patch("wordbyword.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
+                patch("wordbyword.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
+            ):
+                bundle = parse_source_material(
+                    source_path,
+                    output_root=output_root,
+                    pdf_parser="paddleocr-vl",
+                    paddleocr_vl_settings=PaddleOCRVLSettings(device="cpu", isolated_process=False),
+                )
+
+            manifest = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.5")
+            self.assertEqual(manifest["parser"]["version"], "3.3.0")
+            self.assertEqual(manifest["parser"]["settings"]["device"], "cpu")
+            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.5")
+            self.assertEqual(FakePaddleOCRVL.init_kwargs["device"], "cpu")
+            self.assertEqual(len(FakePaddleOCRVL.predict_input), 1)
+            self.assertTrue(str(FakePaddleOCRVL.predict_input[0]).endswith("page-0001.png"))
+
+            content = (bundle.output_dir / "content.md").read_text(encoding="utf-8")
+            self.assertIn("PaddleOCR-VL text from page-0001.png", content)
+
+            chunks = json.loads((bundle.output_dir / "chunks.json").read_text(encoding="utf-8"))
+            self.assertEqual(chunks[0]["metadata"]["parser"], "paddleocr-vl")
+            self.assertEqual(chunks[0]["metadata"]["input_image_path"], "assets/page-0001.png")
+
+            parser_output = json.loads((bundle.output_dir / "parser_output.json").read_text(encoding="utf-8"))
+            self.assertEqual(parser_output["schema_version"], "wordbyword.paddleocr_vl_pdf_parse.v1")
+            self.assertEqual(parser_output["page_results"][0]["raw_json"]["parsing_res_list"][0]["block_label"], "text")
+
+            quality = json.loads((bundle.output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["schema_version"], "wordbyword.paddleocr_vl_pdf_parse.v1")
+            self.assertEqual(quality["page_render_count"], 1)
+
+    def test_paddleocr_vl_pdf_parser_reports_page_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_path = root / "sample.pdf"
+            output_root = root / "parsed"
+            write_sample_pdf(source_path)
+            events: list[SourceMaterialProgress] = []
+
+            with (
+                patch("wordbyword.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
+                patch("wordbyword.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
+            ):
+                parse_source_material(
+                    source_path,
+                    output_root=output_root,
+                    pdf_parser="paddleocr-vl",
+                    paddleocr_vl_settings=PaddleOCRVLSettings(
+                        device="progress-cpu",
+                        isolated_process=False,
+                    ),
+                    progress=events.append,
+                )
+
+            phases = [event.phase for event in events]
+            self.assertIn("start", phases)
+            self.assertIn("render", phases)
+            self.assertIn("load", phases)
+            self.assertIn("ocr", phases)
+            self.assertIn("write", phases)
+            self.assertEqual(phases[-1], "complete")
+
+            render_done = next(
+                event
+                for event in events
+                if event.phase == "render" and event.completed_pages == event.total_pages
+            )
+            self.assertEqual(render_done.completed_pages, 1)
+            self.assertEqual(render_done.total_pages, 1)
+
+            ocr_done = next(
+                event
+                for event in events
+                if event.phase == "ocr" and event.completed_pages == event.total_pages
+            )
+            self.assertEqual(ocr_done.detail, "recognized page 1/1")
+
+    def test_paddleocr_vl_sidecar_merges_incremental_page_results(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_path = root / "sample.pdf"
+            output_root = root / "parsed"
+            worker_script = root / "fake_sidecar_worker.py"
+            terminated_marker = root / "terminated.txt"
+            write_sample_pdf(source_path)
+            worker_script.write_text(
+                textwrap.dedent(
+                    """
+                    from __future__ import annotations
+
+                    import argparse
+                    import json
+                    import signal
+                    import sys
+                    import time
+                    from pathlib import Path
+
+
+                    def write_json(path: Path, payload: object) -> None:
+                        temporary_path = path.with_suffix(path.suffix + ".tmp")
+                        temporary_path.write_text(json.dumps(payload), encoding="utf-8")
+                        temporary_path.replace(path)
+
+
+                    parser = argparse.ArgumentParser()
+                    parser.add_argument("--job-json", type=Path, required=True)
+                    parser.add_argument("--output-dir", type=Path, required=True)
+                    parser.add_argument("--terminated-marker", type=Path, required=True)
+                    args = parser.parse_args()
+
+
+                    def terminate(signum: int, frame: object) -> None:
+                        args.terminated_marker.write_text("terminated", encoding="utf-8")
+                        raise SystemExit(0)
+
+
+                    signal.signal(signal.SIGTERM, terminate)
+                    job = json.loads(args.job_json.read_text(encoding="utf-8"))
+                    args.output_dir.mkdir(parents=True, exist_ok=True)
+                    for page_job in job["pages"]:
+                        page = int(page_job["page"])
+                        write_json(
+                            args.output_dir / f"page-{page:04d}.json",
+                            {
+                                "page": page,
+                                "input_image_path": f"assets/page-{page:04d}.png",
+                                "markdown": f"Sidecar text from page {page}",
+                                "raw_json": {"source": "fake-sidecar", "page": page},
+                                "markdown_asset_paths": [],
+                            },
+                        )
+                    write_json(args.output_dir / "complete.json", {"parser_version": "sidecar-test"})
+                    while True:
+                        time.sleep(1)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            def fake_sidecar_worker_command(
+                *,
+                settings: PaddleOCRVLSettings,
+                settings_path: Path,
+                job_path: Path,
+                result_dir: Path,
+                assets_dir: Path,
+            ) -> list[str]:
+                return [
+                    sys.executable,
+                    worker_script.as_posix(),
+                    "--job-json",
+                    job_path.as_posix(),
+                    "--output-dir",
+                    result_dir.as_posix(),
+                    "--terminated-marker",
+                    terminated_marker.as_posix(),
+                ]
+
+            with patch("wordbyword.paddleocr_vl._sidecar_worker_command", side_effect=fake_sidecar_worker_command):
+                bundle = parse_source_material(
+                    source_path,
+                    output_root=output_root,
+                    pdf_parser="paddleocr-vl",
+                    paddleocr_vl_settings=PaddleOCRVLSettings(
+                        sidecar_python=sys.executable,
+                        sidecar_poll_seconds=0.05,
+                    ),
+                )
+
+            content = (bundle.output_dir / "content.md").read_text(encoding="utf-8")
+            self.assertIn("Sidecar text from page 1", content)
+            self.assertFalse(list(bundle.output_dir.glob("page-*.json")))
+            self.assertTrue(terminated_marker.is_file())
+
+            parser_output = json.loads((bundle.output_dir / "parser_output.json").read_text(encoding="utf-8"))
+            self.assertTrue(parser_output["complete"])
+            self.assertEqual(parser_output["completed_pages"], 1)
+            self.assertEqual(parser_output["parser"]["version"], "sidecar-test")
+
+    def test_paddleocr_vl_interrupt_removes_partial_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_path = root / "sample.pdf"
+            output_root = root / "parsed"
+            write_sample_pdf(source_path)
+
+            with patch("wordbyword.source_materials.run_paddleocr_vl", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    parse_source_material(
+                        source_path,
+                        output_root=output_root,
+                        pdf_parser="paddleocr-vl",
+                        paddleocr_vl_settings=PaddleOCRVLSettings(
+                            device="cpu",
+                            isolated_process=False,
+                        ),
+                    )
+
+            self.assertFalse((output_root / "sample").exists())
+
+    def test_paddleocr_vl_worker_interrupt_removes_partial_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_path = root / "sample.pdf"
+            output_root = root / "parsed"
+            write_sample_pdf(source_path)
+
+            with patch(
+                "wordbyword.source_materials.run_paddleocr_vl",
+                side_effect=PaddleOCRVLInterruptedError("worker stopped"),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    parse_source_material(
+                        source_path,
+                        output_root=output_root,
+                        pdf_parser="paddleocr-vl",
+                        paddleocr_vl_settings=PaddleOCRVLSettings(
+                            device="cpu",
+                            isolated_process=False,
+                        ),
+                    )
+
+            self.assertFalse((output_root / "sample").exists())
 
     def test_cli_prepares_one_source_material_without_running_dictionary_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -150,3 +397,40 @@ def write_sample_pdf(path: Path) -> None:
     page.insert_text((40, 95), "Water moves through the air and land.", fontsize=11)
     document.save(path)
     document.close()
+
+
+class FakePaddleOCRVL:
+    init_kwargs: dict[str, object] | None = None
+    predict_input: list[str] | None = None
+
+    def __init__(self, **kwargs: object) -> None:
+        FakePaddleOCRVL.init_kwargs = kwargs
+
+    def predict(self, *, input: list[str], **kwargs: object) -> list["FakePaddleOCRVLResult"]:
+        FakePaddleOCRVL.predict_input = input
+        return [FakePaddleOCRVLResult(path) for path in input]
+
+
+class FakePaddleOCRVLResult:
+    def __init__(self, input_path: str) -> None:
+        self.input_path = input_path
+
+    @property
+    def json(self) -> dict[str, object]:
+        return {
+            "input_path": self.input_path,
+            "parsing_res_list": [
+                {
+                    "block_label": "text",
+                    "block_content": f"PaddleOCR-VL text from {Path(self.input_path).name}",
+                    "block_bbox": [10, 20, 100, 40],
+                }
+            ],
+        }
+
+    @property
+    def markdown(self) -> dict[str, object]:
+        return {
+            "markdown_texts": f"PaddleOCR-VL text from {Path(self.input_path).name}",
+            "markdown_images": {},
+        }

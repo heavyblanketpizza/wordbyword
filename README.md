@@ -46,12 +46,26 @@ The command writes one source-specific folder under `class-source-materials/pars
 
 The heuristic PDF parser is Markdown-first. It uses PyMuPDF4LLM for reading order, Markdown conversion, page chunks, and image extraction; PyMuPDF for page inspection and full-page review renders; Pillow for asset metadata; and Pydantic for validated sidecars. OCR is not run in this heuristic pass. Pages with little or no selectable text are flagged in `quality_report.json` for a later OCR or vision parser.
 
+PaddleOCR-VL-1.5 can be used as an optional PDF parser lane:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-sidecar-env .venv-paddleocr --paddleocr-vl-device cpu
+```
+
+This mode renders each PDF page to `assets/page-0001.png`, sends the page images to PaddleOCR-VL-1.5, and writes the same bundle contract: `content.md`, `chunks.json`, `document_model.json`, `parser_output.json`, and `quality_report.json`. PaddleOCR-VL is intentionally not a base dependency. Paddle documents Python 3.9-3.13 as the verified manual-install range for this path, while this project currently runs on Python 3.14, so use a separate PaddleOCR virtual environment, Docker image, or PaddleOCR-VL service when running the model locally.
+
+With `--paddleocr-vl-sidecar-env`, wordbyword activates the sidecar by running that environment's `bin/python` or `Scripts/python.exe`. `--paddleocr-vl-sidecar-python` can point directly at a Python executable instead. The main process renders page images, launches the sidecar PaddleOCR worker for each PDF, polls page results as they are produced, incrementally rewrites the merged `content.md`, `chunks.json`, and `parser_output.json`, then writes final `document_model.json` and `quality_report.json`. Final parsed outputs are per source file, not per page. When the page results are complete, wordbyword terminates any still-running sidecar process so PaddleOCR resources are released.
+
+PaddleOCR-VL inference runs in an isolated child process when no sidecar env is configured. If you stop the command with `Ctrl-C`, wordbyword terminates the child process, removes the interrupted source's partial parse workspace, and exits with code `130`.
+
 Useful source-material options:
 
 ```bash
 uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-physicsprize2025.pdf
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --no-page-renders
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --skip-pdf-parse
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
 ```
 
 ## Outputs
