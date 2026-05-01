@@ -26,9 +26,9 @@ Supported source formats:
 - `.txt`
 - `.md`
 
-## Source Material Workspaces
+## Source Material Parsing
 
-Use this first to create one isolated workspace per mature class material:
+Use this first to create one isolated parse workspace per mature class material:
 
 ```bash
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials
@@ -37,9 +37,22 @@ uv --no-cache run python -m wordbyword --parse-source-materials class-source-mat
 The command writes one source-specific folder under `class-source-materials/parsed/<source-id>/`:
 
 - `manifest.json`: source metadata, checksum, parser status, and bundle file map.
+- `content.md`: the primary human-readable and LLM-ready Markdown output for PDFs.
+- `chunks.json`: page-level Markdown chunks with parser metadata.
+- `document_model.json`: validated sidecar tying source metadata, pages, assets, and outputs together.
+- `parser_output.json`: raw structured PyMuPDF4LLM layout output for debugging and traceability.
+- `quality_report.json`: per-page extraction diagnostics, OCR flags, table warnings, and asset inventory.
 - `assets/`: a single flat folder for parser-generated images, tables, page crops, and other visual assets.
 
-The previous custom PyMuPDF extraction has been removed because its parsed JSON was not useful enough for rewrite or LLM-training-data prep. These folders are now clean parser workspaces only; the next parser layer should write high-quality Markdown/HTML and sidecar metadata into each source folder using a real document-intelligence backend such as Docling, Marker, or Unstructured.
+The heuristic PDF parser is Markdown-first. It uses PyMuPDF4LLM for reading order, Markdown conversion, page chunks, and image extraction; PyMuPDF for page inspection and full-page review renders; Pillow for asset metadata; and Pydantic for validated sidecars. OCR is not run in this heuristic pass. Pages with little or no selectable text are flagged in `quality_report.json` for a later OCR or vision parser.
+
+Useful source-material options:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-physicsprize2025.pdf
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --no-page-renders
+uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --skip-pdf-parse
+```
 
 ## Outputs
 

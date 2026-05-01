@@ -159,8 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATH",
         help=(
-            "Prepare one class source material workspace under the parsed source root. "
-            "Document-intelligence parsing is intentionally not run yet."
+            "Parse one class source material into a source-specific workspace. "
+            "PDFs are converted to Markdown-first heuristic parse artifacts."
         ),
     )
     parser.add_argument(
@@ -171,9 +171,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="DIR",
         help=(
-            "Prepare one separate parsed workspace for every supported file in a class "
-            "source-material directory. Defaults to class-source-materials when no DIR is supplied."
+            "Parse every supported file in a class source-material directory into separate "
+            "source-specific workspaces. Defaults to class-source-materials when no DIR is supplied."
         ),
+    )
+    parser.add_argument(
+        "--skip-pdf-parse",
+        action="store_true",
+        help="Only prepare source-material workspaces; do not run the heuristic PDF parser.",
+    )
+    parser.add_argument(
+        "--no-page-renders",
+        action="store_true",
+        help="Do not render full-page PNG review assets for parsed PDFs.",
+    )
+    parser.add_argument(
+        "--pdf-render-dpi",
+        type=int,
+        default=144,
+        help="DPI for full-page PNG review assets. Defaults to 144.",
+    )
+    parser.add_argument(
+        "--pdf-image-dpi",
+        type=int,
+        default=180,
+        help="DPI for images extracted by PyMuPDF4LLM. Defaults to 180.",
     )
     parser.add_argument(
         "--source-output-root",
@@ -211,11 +233,19 @@ def main(argv: list[str] | None = None) -> int:
             source_path=args.parse_source_material,
             output_root=args.source_output_root,
             source_id=args.source_id,
+            parse_pdf=not args.skip_pdf_parse,
+            render_pages=not args.no_page_renders,
+            render_dpi=args.pdf_render_dpi,
+            image_dpi=args.pdf_image_dpi,
         )
     if args.parse_source_materials is not None:
         return parse_source_materials_cli(
             source_dir=args.parse_source_materials,
             output_root=args.source_output_root,
+            parse_pdf=not args.skip_pdf_parse,
+            render_pages=not args.no_page_renders,
+            render_dpi=args.pdf_render_dpi,
+            image_dpi=args.pdf_image_dpi,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -482,25 +512,37 @@ def parse_source_material_cli(
     source_path: Path,
     output_root: Path,
     source_id: str | None,
+    parse_pdf: bool,
+    render_pages: bool,
+    render_dpi: int,
+    image_dpi: int,
 ) -> int:
     try:
         bundle = parse_source_material(
             source_path,
             output_root=output_root,
             source_id=source_id,
+            parse_pdf=parse_pdf,
+            render_pages=render_pages,
+            render_dpi=render_dpi,
+            image_dpi=image_dpi,
         )
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
+    files = bundle.manifest.get("files", {})
     sys.stdout.write(
-        "source material workspace prepared\n"
+        "source material parsed\n"
         f"  source_id: {bundle.source_id}\n"
         f"  output_dir: {bundle.output_dir}\n"
         f"  manifest: {bundle.manifest_path}\n"
         f"  assets: {bundle.assets_dir}\n"
         f"  parser_status: {bundle.manifest['parser']['status']}\n"
     )
+    for label in ("content_markdown", "quality_report_json", "document_model_json", "chunks_json"):
+        if label in files:
+            sys.stdout.write(f"  {label}: {bundle.output_dir / str(files[label])}\n")
     sys.stdout.flush()
     return 0
 
@@ -509,26 +551,36 @@ def parse_source_materials_cli(
     *,
     source_dir: Path,
     output_root: Path,
+    parse_pdf: bool,
+    render_pages: bool,
+    render_dpi: int,
+    image_dpi: int,
 ) -> int:
     try:
         result = parse_source_materials(
             source_dir,
             output_root=output_root,
+            parse_pdf=parse_pdf,
+            render_pages=render_pages,
+            render_dpi=render_dpi,
+            image_dpi=image_dpi,
         )
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
     sys.stdout.write(
-        "source material workspaces prepared\n"
+        "source materials parsed\n"
         f"  source_dir: {result.source_dir}\n"
         f"  output_root: {result.output_root}\n"
         f"  sources: {len(result.source_paths)}\n"
     )
     for bundle in result.bundles:
+        files = bundle.manifest.get("files", {})
+        content = f", content: {files['content_markdown']}" if "content_markdown" in files else ""
         sys.stdout.write(
             f"  - {bundle.source_id}: {bundle.output_dir} "
-            f"(assets: {bundle.assets_dir.name}/, parser: {bundle.manifest['parser']['status']})\n"
+            f"(assets: {bundle.assets_dir.name}/, parser: {bundle.manifest['parser']['status']}{content})\n"
         )
     sys.stdout.flush()
     return 0
