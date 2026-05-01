@@ -75,6 +75,7 @@ class LLMResponseError(RuntimeError):
 class ChatMessage:
     role: MessageRole
     content: str
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,30 @@ class OllamaChatClient(BaseChatClient):
             raw=dict(payload),
         )
 
+    def model_capabilities(self) -> set[str]:
+        response = self.transport.post_json(
+            url=f"{self.config.base_url}/api/show",
+            headers=self.headers(),
+            body={"model": self.config.model},
+            timeout_seconds=self.config.timeout_seconds,
+        )
+        capabilities = response.get("capabilities")
+        if not isinstance(capabilities, list):
+            return set()
+        return {str(capability).strip().lower() for capability in capabilities if str(capability).strip()}
+
+    def supports_images(self) -> bool:
+        return "vision" in self.model_capabilities()
+
+    def assert_supports_images(self) -> None:
+        capabilities = self.model_capabilities()
+        if "vision" not in capabilities:
+            formatted = ", ".join(sorted(capabilities)) if capabilities else "unknown"
+            raise LLMConfigurationError(
+                f"Ollama model '{self.config.model}' does not report vision support "
+                f"from /api/show capabilities ({formatted}). Use a vision-capable model."
+            )
+
 
 def normalize_provider_name(provider: str) -> ProviderName:
     normalized = provider.strip().lower()
@@ -581,7 +606,10 @@ def split_system_messages(messages: Sequence[ChatMessage]) -> tuple[str, list[Ch
 
 
 def message_row(message: ChatMessage) -> dict[str, str]:
-    return {"role": message.role, "content": message.content}
+    row = {"role": message.role, "content": message.content}
+    if message.images:
+        row["images"] = list(message.images)  # type: ignore[assignment]
+    return row
 
 
 def anthropic_messages(messages: Sequence[ChatMessage]) -> list[dict[str, Any]]:

@@ -239,6 +239,17 @@ class PipelineTest(unittest.TestCase):
                 "이 문장은 cleanup-only run에서 읽히면 안 된다.",
                 encoding="utf-8",
             )
+            stale_downstream_outputs = [
+                "11_cleaned_dictionary_candidates.jsonl",
+                "12_dictionary_candidates_with_cleaned_examples.jsonl",
+                "13_vocabulary_with_generated_examples.jsonl",
+                "13_generated_example_attempts.jsonl",
+                "13_generated_example_failures.jsonl",
+                "14_vocabulary_with_meanings.jsonl",
+                "15_final_dictionary.jsonl",
+            ]
+            for filename in stale_downstream_outputs:
+                (output_dir / filename).write_text("stale downstream output", encoding="utf-8")
 
             run_pipeline(
                 input_dir=input_dir,
@@ -248,6 +259,8 @@ class PipelineTest(unittest.TestCase):
             )
 
             self.assertTrue((output_dir / "10_cleaned_example_sentences.csv").exists())
+            for filename in stale_downstream_outputs:
+                self.assertFalse((output_dir / filename).exists())
 
             with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
                 example_sentences = list(csv.DictReader(handle))
@@ -285,6 +298,8 @@ class PipelineTest(unittest.TestCase):
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertIn("10_cleaned_example_sentences.csv", summary["outputs"])
+            for filename in stale_downstream_outputs:
+                self.assertNotIn(filename, summary["outputs"])
             self.assertEqual(summary["reviewed_example_sentences"], len(example_sentences))
             self.assertEqual(summary["cleaned_example_sentences"], len(cleaned_example_sentences))
             self.assertEqual(summary["rejected_cleaned_example_sentences"], 0)
@@ -317,6 +332,16 @@ class PipelineTest(unittest.TestCase):
                 "이 텍스트는 cleanup-only dictionary run에서 다시 분석되면 안 된다.",
                 encoding="utf-8",
             )
+            stale_downstream_outputs = [
+                "12_dictionary_candidates_with_cleaned_examples.jsonl",
+                "13_vocabulary_with_generated_examples.jsonl",
+                "13_generated_example_attempts.jsonl",
+                "13_generated_example_failures.jsonl",
+                "14_vocabulary_with_meanings.jsonl",
+                "15_final_dictionary.jsonl",
+            ]
+            for filename in stale_downstream_outputs:
+                (output_dir / filename).write_text("stale downstream output", encoding="utf-8")
 
             run_pipeline(
                 input_dir=input_dir,
@@ -327,6 +352,8 @@ class PipelineTest(unittest.TestCase):
 
             self.assertTrue((output_dir / "11_cleaned_dictionary_candidates.jsonl").exists())
             self.assertFalse((output_dir / "10_cleaned_example_sentences.csv").exists())
+            for filename in stale_downstream_outputs:
+                self.assertFalse((output_dir / filename).exists())
 
             dictionary_rows = [
                 json.loads(line)
@@ -345,6 +372,8 @@ class PipelineTest(unittest.TestCase):
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertIn("11_cleaned_dictionary_candidates.jsonl", summary["outputs"])
+            for filename in stale_downstream_outputs:
+                self.assertNotIn(filename, summary["outputs"])
             self.assertEqual(summary["reviewed_dictionary_candidates"], len(dictionary_rows))
             self.assertEqual(summary["cleaned_dictionary_candidates"], len(cleaned_dictionary_rows))
             self.assertEqual(summary["rejected_cleaned_dictionary_candidates"], 0)

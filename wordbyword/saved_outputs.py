@@ -41,6 +41,7 @@ from wordbyword.output_files import (
     write_jsonl,
     write_rows,
 )
+from wordbyword.output_catalog import OPTIONAL_OUTPUT_FILES
 from wordbyword.output_metadata import refresh_saved_output_metadata
 
 ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
@@ -107,6 +108,7 @@ def write_cleanup_outputs_from_saved(
             artifact_callback("09_example_sentences", example_sentences)
         cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
         cleaned_example_sentence_fieldnames = cleaned_example_sentence_fields()
+        remove_optional_outputs_from(output_dir, "10_cleaned_example_sentences.csv")
         initialize_rows_file(cleaned_example_sentence_path, fieldnames=cleaned_example_sentence_fieldnames)
         cleaned_example_outputs = build_cleaned_example_sentence_outputs(
             example_sentences,
@@ -133,6 +135,7 @@ def write_cleanup_outputs_from_saved(
             target="11_cleaned_dictionary_candidates.jsonl",
         )
         cleaned_dictionary_candidate_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
+        remove_optional_outputs_from(output_dir, "11_cleaned_dictionary_candidates.jsonl")
         initialize_jsonl_file(cleaned_dictionary_candidate_path)
         support_sentence_rows = resolve_dictionary_support_rows(
             output_dir,
@@ -237,8 +240,7 @@ def write_linked_dictionary_candidates_from_saved(
     cleaned_dictionary_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
 
     if not cleaned_example_path.is_file() or not cleaned_dictionary_path.is_file():
-        if linked_output_path.is_file():
-            linked_output_path.unlink()
+        remove_optional_outputs_from(output_dir, "12_dictionary_candidates_with_cleaned_examples.jsonl")
         if require_inputs:
             missing = []
             if not cleaned_example_path.is_file():
@@ -254,6 +256,7 @@ def write_linked_dictionary_candidates_from_saved(
 
     cleaned_example_rows = read_rows(cleaned_example_path)
     cleaned_dictionary_rows = read_jsonl(cleaned_dictionary_path)
+    remove_optional_outputs_from(output_dir, "12_dictionary_candidates_with_cleaned_examples.jsonl")
     linked_outputs = build_linked_dictionary_candidate_outputs(
         cleaned_dictionary_rows,
         cleaned_example_rows,
@@ -305,6 +308,7 @@ def write_generated_dictionary_candidates_from_saved(
         )
     )
 
+    remove_optional_outputs_from(output_dir, "13_vocabulary_with_generated_examples.jsonl")
     initialize_jsonl_file(generated_output_path)
     initialize_jsonl_file(generated_attempts_path)
     initialize_jsonl_file(generated_failures_path)
@@ -382,6 +386,7 @@ def retry_generated_dictionary_candidates_from_saved(
         )
     )
 
+    remove_optional_outputs_from(output_dir, "14_vocabulary_with_meanings.jsonl")
     if not failure_rows:
         generated_outputs = retry_generated_dictionary_candidate_outputs(
             generated_rows,
@@ -454,10 +459,8 @@ def write_meaning_dictionary_candidates_from_saved(
         target="14_vocabulary_with_meanings.jsonl",
     )
 
+    remove_optional_outputs_from(output_dir, "14_vocabulary_with_meanings.jsonl")
     remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir)
-    generated_meaning_output_path = output_dir / "15_final_dictionary.jsonl"
-    if generated_meaning_output_path.is_file():
-        generated_meaning_output_path.unlink()
     initialize_jsonl_file(meaning_output_path)
     meaning_outputs = build_dictionary_candidates_with_meanings(
         generated_rows,
@@ -492,6 +495,7 @@ def write_generated_meaning_dictionary_candidates_from_saved(
         built_from="14_vocabulary_with_meanings.jsonl",
         target="15_final_dictionary.jsonl",
     )
+    remove_optional_outputs_from(output_dir, "15_final_dictionary.jsonl")
     initialize_jsonl_file(generated_meaning_output_path)
     write_jsonl(
         generated_meaning_output_path,
@@ -533,6 +537,18 @@ def remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir: Path) -
     if generated_attempts_path.is_file():
         generated_attempts_path.unlink()
     remove_empty_generated_example_failures(output_dir)
+
+
+def remove_optional_outputs_from(output_dir: Path, first_filename: str) -> None:
+    try:
+        start_index = OPTIONAL_OUTPUT_FILES.index(first_filename)
+    except ValueError as error:
+        raise ValueError(f"Unknown optional output file: {first_filename}") from error
+
+    for filename in OPTIONAL_OUTPUT_FILES[start_index:]:
+        path = output_dir / filename
+        if path.is_file():
+            path.unlink()
 
 
 def remove_empty_generated_example_failures(output_dir: Path) -> bool:

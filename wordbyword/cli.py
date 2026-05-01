@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
@@ -36,6 +39,23 @@ from wordbyword.saved_outputs import (
 DEFAULT_OUTPUT_DIR = Path("build-dictionary")
 DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_DIR / "original"
 DEFAULT_REFERENCE_DICTIONARY_PATH = DEFAULT_OUTPUT_DIR / "references" / "reference-dictionary.jsonl"
+PIPELINE_CLEANUP_FLAGS = (
+    "clean_example_sentences",
+    "clean_dictionary_candidates",
+    "generate_missing_examples",
+    "retry_generated_examples",
+)
+
+
+@dataclass(frozen=True)
+class SourceParseOptions:
+    output_root: Path
+    parse_pdf: bool
+    pdf_parser: str
+    render_pages: bool
+    render_dpi: int
+    image_dpi: int
+    paddleocr_vl_settings: PaddleOCRVLSettings | None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -316,7 +336,65 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    validate_args(parser, args)
 
+    immediate_exit_code = run_immediate_command(args)
+    if immediate_exit_code is not None:
+        return immediate_exit_code
+
+    emit_boot_screen(
+        input_dir=args.input,
+        output_dir=args.output,
+        clean_example_sentences=pipeline_cleanup_requested(args),
+        sentence_cleanup_model=args.ollama_model,
+    )
+
+    try:
+        result = run_pipeline(
+            input_dir=args.input,
+            output_dir=args.output,
+            include_punctuation=args.include_punctuation,
+            include_numbers=args.include_numbers,
+            clean_example_sentences=args.clean_example_sentences,
+            clean_dictionary_candidates=args.clean_dictionary_candidates,
+            generate_missing_examples=args.generate_missing_examples,
+            retry_generated_examples=args.retry_generated_examples,
+            sentence_cleanup_model=args.ollama_model,
+            sentence_cleanup_base_url=args.ollama_base_url,
+            progress=emit_stage_update,
+            cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="example",
+                item_label="rows",
+            ),
+            dictionary_cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="dictionary",
+                item_label="terms",
+            ),
+            generated_example_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="candidate example",
+                item_label="terms",
+            ),
+            generated_example_retry_decider=generated_example_retry_decider(args),
+            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+        )
+    except PipelineUsageError as exc:
+        parser.exit(2, f"wordbyword: error: {exc}\n")
+
+    emit_completion_screen(
+        result,
+        input_dir=args.input,
+        include_punctuation=args.include_punctuation,
+        include_numbers=args.include_numbers,
+        clean_example_sentences=pipeline_cleanup_requested(args),
+        sentence_cleanup_model=args.ollama_model,
+    )
+    return 0
+
+
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.parse_source_material is not None and args.parse_source_materials is not None:
         parser.exit(
             2,
@@ -327,28 +405,41 @@ def main(argv: list[str] | None = None) -> int:
             2,
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
         )
+    if args.retry_generated_examples and (
+        args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --retry-generated-examples cannot be combined with "
+            "--clean-example-sentences, --clean-dictionary-candidates, or --generate-missing-examples.\n",
+        )
+
+
+def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.parse_source_material is not None:
+        options = source_parse_options_from_args(args)
         return parse_source_material_cli(
             source_path=args.parse_source_material,
-            output_root=args.source_output_root,
+            output_root=options.output_root,
             source_id=args.source_id,
-            parse_pdf=not args.skip_pdf_parse,
-            pdf_parser=args.pdf_parser,
-            render_pages=not args.no_page_renders,
-            render_dpi=args.pdf_render_dpi,
-            image_dpi=args.pdf_image_dpi,
-            paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
+            parse_pdf=options.parse_pdf,
+            pdf_parser=options.pdf_parser,
+            render_pages=options.render_pages,
+            render_dpi=options.render_dpi,
+            image_dpi=options.image_dpi,
+            paddleocr_vl_settings=options.paddleocr_vl_settings,
         )
     if args.parse_source_materials is not None:
+        options = source_parse_options_from_args(args)
         return parse_source_materials_cli(
             source_dir=args.parse_source_materials,
-            output_root=args.source_output_root,
-            parse_pdf=not args.skip_pdf_parse,
-            pdf_parser=args.pdf_parser,
-            render_pages=not args.no_page_renders,
-            render_dpi=args.pdf_render_dpi,
-            image_dpi=args.pdf_image_dpi,
-            paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
+            output_root=options.output_root,
+            parse_pdf=options.parse_pdf,
+            pdf_parser=options.pdf_parser,
+            render_pages=options.render_pages,
+            render_dpi=options.render_dpi,
+            image_dpi=options.image_dpi,
+            paddleocr_vl_settings=options.paddleocr_vl_settings,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -368,52 +459,46 @@ def main(argv: list[str] | None = None) -> int:
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
-    if args.retry_generated_examples and (
-        args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
-    ):
-        parser.exit(
-            2,
-            "wordbyword: error: --retry-generated-examples cannot be combined with "
-            "--clean-example-sentences, --clean-dictionary-candidates, or --generate-missing-examples.\n",
-        )
+    return None
 
-    emit_boot_screen(
-        input_dir=args.input,
-        output_dir=args.output,
-        clean_example_sentences=(
-            args.clean_example_sentences
-            or args.clean_dictionary_candidates
-            or args.generate_missing_examples
-            or args.retry_generated_examples
-        ),
-        sentence_cleanup_model=args.ollama_model,
+
+def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
+    return SourceParseOptions(
+        output_root=args.source_output_root,
+        parse_pdf=not args.skip_pdf_parse,
+        pdf_parser=args.pdf_parser,
+        render_pages=not args.no_page_renders,
+        render_dpi=args.pdf_render_dpi,
+        image_dpi=args.pdf_image_dpi,
+        paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
     )
 
-    def example_cleanup_progress(progress: CleanupBatchProgress) -> None:
+
+def pipeline_cleanup_requested(args: argparse.Namespace) -> bool:
+    return any(bool(getattr(args, flag_name)) for flag_name in PIPELINE_CLEANUP_FLAGS)
+
+
+def cleanup_progress_callback(
+    *,
+    model: str,
+    label: str,
+    item_label: str,
+) -> Callable[[CleanupBatchProgress], None]:
+    def report(progress: CleanupBatchProgress) -> None:
         emit_cleanup_progress(
             progress,
-            model=args.ollama_model,
-            label="example",
-            item_label="rows",
+            model=model,
+            label=label,
+            item_label=item_label,
         )
 
-    def dictionary_cleanup_progress(progress: CleanupBatchProgress) -> None:
-        emit_cleanup_progress(
-            progress,
-            model=args.ollama_model,
-            label="dictionary",
-            item_label="terms",
-        )
+    return report
 
-    def generated_example_progress(progress: CleanupBatchProgress) -> None:
-        emit_cleanup_progress(
-            progress,
-            model=args.ollama_model,
-            label="candidate example",
-            item_label="terms",
-        )
 
-    def generated_example_retry_decider(summary: GeneratedExampleAttemptSummary) -> bool:
+def generated_example_retry_decider(
+    args: argparse.Namespace,
+) -> Callable[[GeneratedExampleAttemptSummary], bool]:
+    def decide(summary: GeneratedExampleAttemptSummary) -> bool:
         if args.retry_generated_examples:
             return False
         return prompt_generated_example_retry(
@@ -422,7 +507,14 @@ def main(argv: list[str] | None = None) -> int:
             model=args.ollama_model,
         )
 
-    def artifact_callback(stage: str, entries: Sequence[Mapping[str, object]]) -> None:
+    return decide
+
+
+def pipeline_artifact_callback(
+    *,
+    model: str,
+) -> Callable[[str, Sequence[Mapping[str, object]]], None]:
+    def report(stage: str, entries: Sequence[Mapping[str, object]]) -> None:
         if stage == "09_example_sentences":
             emit_artifact_drop(
                 stage,
@@ -440,16 +532,13 @@ def main(argv: list[str] | None = None) -> int:
                 file_label="11_cleaned_dictionary_candidates.jsonl",
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
-                    ("model", args.ollama_model),
+                    ("model", model),
                     ("status", "cache locked"),
                 ),
             )
             return
         if stage == "12_dictionary_candidates_with_cleaned_examples":
-            replaced_count = sum(
-                1 for entry in entries
-                if bool(entry.get("example_replaced_with_cleaned_sentence"))
-            )
+            replaced_count = count_truthy(entries, "example_replaced_with_cleaned_sentence")
             emit_artifact_drop(
                 stage,
                 file_label="12_dictionary_candidates_with_cleaned_examples.jsonl",
@@ -461,10 +550,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return
         if stage == "13_vocabulary_with_generated_examples":
-            generated_count = sum(
-                1 for entry in entries
-                if bool(entry.get("example_generated_with_ollama"))
-            )
+            generated_count = count_truthy(entries, "example_generated_with_ollama")
             emit_artifact_drop(
                 stage,
                 file_label="13_vocabulary_with_generated_examples.jsonl",
@@ -472,15 +558,12 @@ def main(argv: list[str] | None = None) -> int:
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} examples"),
                     ("preserved", f"{len(entries) - generated_count:,} existing"),
-                    ("model", args.ollama_model),
+                    ("model", model),
                 ),
             )
             return
         if stage == "14_vocabulary_with_meanings":
-            matched_count = sum(
-                1 for entry in entries
-                if bool(str(entry.get("meaning", "")).strip())
-            )
+            matched_count = count_nonempty(entries, "meaning")
             emit_artifact_drop(
                 stage,
                 file_label="14_vocabulary_with_meanings.jsonl",
@@ -492,10 +575,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return
         if stage == "15_final_dictionary":
-            generated_count = sum(
-                1 for entry in entries
-                if bool(entry.get("meaning_generated_with_ollama"))
-            )
+            generated_count = count_truthy(entries, "meaning_generated_with_ollama")
             emit_artifact_drop(
                 stage,
                 file_label="15_final_dictionary.jsonl",
@@ -503,46 +583,19 @@ def main(argv: list[str] | None = None) -> int:
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} meanings"),
                     ("preserved", f"{len(entries) - generated_count:,} meanings"),
-                    ("model", args.ollama_model),
+                    ("model", model),
                 ),
             )
 
-    try:
-        result = run_pipeline(
-            input_dir=args.input,
-            output_dir=args.output,
-            include_punctuation=args.include_punctuation,
-            include_numbers=args.include_numbers,
-            clean_example_sentences=args.clean_example_sentences,
-            clean_dictionary_candidates=args.clean_dictionary_candidates,
-            generate_missing_examples=args.generate_missing_examples,
-            retry_generated_examples=args.retry_generated_examples,
-            sentence_cleanup_model=args.ollama_model,
-            sentence_cleanup_base_url=args.ollama_base_url,
-            progress=emit_stage_update,
-            cleanup_progress=example_cleanup_progress,
-            dictionary_cleanup_progress=dictionary_cleanup_progress,
-            generated_example_progress=generated_example_progress,
-            generated_example_retry_decider=generated_example_retry_decider,
-            artifact_callback=artifact_callback,
-        )
-    except PipelineUsageError as exc:
-        parser.exit(2, f"wordbyword: error: {exc}\n")
+    return report
 
-    emit_completion_screen(
-        result,
-        input_dir=args.input,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
-        clean_example_sentences=(
-            args.clean_example_sentences
-            or args.clean_dictionary_candidates
-            or args.generate_missing_examples
-            or args.retry_generated_examples
-        ),
-        sentence_cleanup_model=args.ollama_model,
-    )
-    return 0
+
+def count_truthy(entries: Sequence[Mapping[str, object]], key: str) -> int:
+    return sum(1 for entry in entries if bool(entry.get(key)))
+
+
+def count_nonempty(entries: Sequence[Mapping[str, object]], key: str) -> int:
+    return sum(1 for entry in entries if bool(str(entry.get(key, "")).strip()))
 
 
 def resolve_distribution_path(supplied: str, output_dir: Path) -> Path:
@@ -572,6 +625,26 @@ def load_dictionary_candidates(jsonl_path: Path) -> list[dict[str, object]]:
     return entries
 
 
+def emit_rendered_artifact_drop(
+    stage: str,
+    *,
+    file_label: str,
+    summary: Sequence[tuple[str, str]],
+    entries: Sequence[Mapping[str, object]] | None = None,
+) -> None:
+    rendered = render_artifact_drop(
+        stage,
+        entries=entries,
+        file_label=file_label,
+        summary=summary,
+        color=sys.stdout.isatty() and "NO_COLOR" not in os.environ,
+        width=shutil.get_terminal_size(fallback=(100, 24)).columns,
+    )
+    sys.stdout.write(rendered)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
 def show_distribution(*, jsonl_path: Path, model: str) -> int:
     if not jsonl_path.is_file():
         sys.stderr.write(
@@ -587,12 +660,7 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
-    import os
-    import shutil
-
-    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    width = shutil.get_terminal_size(fallback=(100, 24)).columns
-    rendered = render_artifact_drop(
+    emit_rendered_artifact_drop(
         "11_cleaned_dictionary_candidates",
         entries=entries,
         file_label=str(jsonl_path),
@@ -601,12 +669,7 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
             ("model", model),
             ("status", "replay // no llm calls"),
         ),
-        color=color,
-        width=width,
     )
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
     return 0
 
 
@@ -775,12 +838,7 @@ def link_cleaned_examples(*, output_dir: Path) -> int:
     assert outputs is not None
     refresh_saved_output_metadata(output_dir, linked_dictionary_outputs=outputs)
 
-    import os
-    import shutil
-
-    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    width = shutil.get_terminal_size(fallback=(100, 24)).columns
-    rendered = render_artifact_drop(
+    emit_rendered_artifact_drop(
         "12_dictionary_candidates_with_cleaned_examples",
         file_label=str(output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"),
         summary=(
@@ -789,12 +847,7 @@ def link_cleaned_examples(*, output_dir: Path) -> int:
             ("rewrite", f"{outputs.unlinked_count:,} pending"),
             ("status", "replay // no llm calls"),
         ),
-        color=color,
-        width=width,
     )
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
     return 0
 
 
@@ -808,12 +861,7 @@ def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path)
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
-    import os
-    import shutil
-
-    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    width = shutil.get_terminal_size(fallback=(100, 24)).columns
-    rendered = render_artifact_drop(
+    emit_rendered_artifact_drop(
         "14_vocabulary_with_meanings",
         file_label=str(output_dir / "14_vocabulary_with_meanings.jsonl"),
         summary=(
@@ -822,12 +870,7 @@ def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path)
             ("missing", f"{outputs.unmatched_count:,} meanings"),
             ("status", "replay // no llm calls"),
         ),
-        color=color,
-        width=width,
     )
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
     return 0
 
 
@@ -863,12 +906,7 @@ def generate_missing_meanings(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
-    import os
-    import shutil
-
-    color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    width = shutil.get_terminal_size(fallback=(100, 24)).columns
-    rendered = render_artifact_drop(
+    emit_rendered_artifact_drop(
         "15_final_dictionary",
         file_label=str(output_dir / "15_final_dictionary.jsonl"),
         summary=(
@@ -878,10 +916,5 @@ def generate_missing_meanings(
             ("missing", f"{outputs.missing_count:,} meanings"),
             ("model", model),
         ),
-        color=color,
-        width=width,
     )
-    sys.stdout.write(rendered)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
     return 0
