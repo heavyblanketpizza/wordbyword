@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from wordbyword.models import CountEntry, PageText
-from wordbyword.output_catalog import BASE_OUTPUT_FILES, LEGACY_OUTPUT_FILES
+from wordbyword.output_catalog import BASE_OUTPUT_FILES, LEGACY_OUTPUT_FILES, OPTIONAL_OUTPUT_FILES
 from wordbyword.text import clean_example_text
 
 
@@ -19,8 +19,11 @@ def cleanup_previous_outputs(
     include_generated_dictionary_candidates: bool = False,
     include_meaning_dictionary_candidates: bool = False,
 ) -> None:
+    # Optional stages are downstream of the deterministic base artifacts, so any
+    # base rebuild invalidates them even when no optional stage is being rerun.
     for filename in {
         *BASE_OUTPUT_FILES,
+        *OPTIONAL_OUTPUT_FILES,
         *(["10_cleaned_example_sentences.csv"] if include_cleaned_example_sentences else []),
         *(["11_cleaned_dictionary_candidates.jsonl"] if include_cleaned_dictionary_candidates else []),
         *(

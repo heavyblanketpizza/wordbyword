@@ -28,6 +28,17 @@ DEFAULT_PROVIDER_BASE_URLS: dict[ProviderName, str] = {
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+REDACTED_SECRET = "REDACTED"
+SENSITIVE_QUERY_PARAMETERS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "auth",
+    "client_secret",
+    "key",
+    "token",
+}
 
 SENTENCE_REWRITE_SYSTEM_PROMPT = """You rewrite Korean example sentences for learners.
 Keep the meaning faithful.
@@ -124,12 +135,13 @@ class UrlLibJsonTransport:
             with request.urlopen(http_request, timeout=timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
-            detail = read_error_body(exc)
-            raise LLMRequestError(f"Request to {url} failed with HTTP {exc.code}: {detail}") from exc
+            safe_url = redact_url(url)
+            detail = redact_sensitive_values(read_error_body(exc), url)
+            raise LLMRequestError(f"Request to {safe_url} failed with HTTP {exc.code}: {detail}") from exc
         except error.URLError as exc:
-            raise LLMRequestError(f"Request to {url} failed: {exc.reason}") from exc
+            raise LLMRequestError(f"Request to {redact_url(url)} failed: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
-            raise LLMResponseError(f"Provider at {url} returned invalid JSON.") from exc
+            raise LLMResponseError(f"Provider at {redact_url(url)} returned invalid JSON.") from exc
 
 
 class BaseChatClient:
@@ -681,3 +693,50 @@ def read_error_body(exc: error.HTTPError) -> str:
     except Exception:
         body = ""
     return body or exc.reason
+
+
+def redact_url(url: str) -> str:
+    try:
+        parts = parse.urlsplit(url)
+    except ValueError:
+        return url
+    if not parts.query:
+        return url
+
+    query_pairs = parse.parse_qsl(parts.query, keep_blank_values=True)
+    redacted_pairs = [
+        (
+            key,
+            REDACTED_SECRET if key.lower() in SENSITIVE_QUERY_PARAMETERS else value,
+        )
+        for key, value in query_pairs
+    ]
+    return parse.urlunsplit(
+        (
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            parse.urlencode(redacted_pairs),
+            parts.fragment,
+        )
+    )
+
+
+def redact_sensitive_values(text: str, *urls: str) -> str:
+    redacted = text
+    for url in urls:
+        for value in sensitive_query_values(url):
+            redacted = redacted.replace(value, REDACTED_SECRET)
+    return redacted
+
+
+def sensitive_query_values(url: str) -> list[str]:
+    try:
+        parts = parse.urlsplit(url)
+    except ValueError:
+        return []
+    values: list[str] = []
+    for key, value in parse.parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() in SENSITIVE_QUERY_PARAMETERS and value:
+            values.append(value)
+    return values

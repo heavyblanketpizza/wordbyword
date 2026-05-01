@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import io
 import os
 import unittest
 from unittest.mock import patch
+from urllib import error as url_error
 
 from wordbyword.llm import (
     ChatMessage,
     CompletionResult,
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_TEMPERATURE,
+    LLMRequestError,
+    UrlLibJsonTransport,
     build_dictionary_entry,
     build_provider_client,
     load_provider_config,
@@ -61,6 +65,34 @@ class ProviderConfigTest(unittest.TestCase):
 
 
 class ProviderClientTest(unittest.TestCase):
+    def test_url_transport_redacts_sensitive_query_values_from_errors(self) -> None:
+        transport = UrlLibJsonTransport()
+        url = (
+            "https://generativelanguage.googleapis.com/v1beta/"
+            "models/gemini-test:generateContent?key=secret-key&alt=json"
+        )
+        http_error = url_error.HTTPError(
+            url=url,
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(b"request rejected for secret-key"),
+        )
+
+        with patch("wordbyword.llm.request.urlopen", side_effect=http_error):
+            with self.assertRaises(LLMRequestError) as caught:
+                transport.post_json(
+                    url=url,
+                    headers={},
+                    body={"contents": []},
+                    timeout_seconds=1.0,
+                )
+
+        message = str(caught.exception)
+        self.assertIn("key=REDACTED", message)
+        self.assertIn("alt=json", message)
+        self.assertNotIn("secret-key", message)
+
     def test_openai_client_builds_chat_completion_request(self) -> None:
         transport = FakeTransport(
             {

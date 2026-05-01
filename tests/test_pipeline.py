@@ -44,6 +44,18 @@ class PipelineTest(unittest.TestCase):
             (output_dir / "06_expressions_raw.csv").write_text("old output", encoding="utf-8")
             (output_dir / "08_candidate_expressions.csv").write_text("old output", encoding="utf-8")
             (output_dir / "filtered_example_sentence.csv").write_text("old output", encoding="utf-8")
+            stale_optional_outputs = [
+                "10_cleaned_example_sentences.csv",
+                "11_cleaned_dictionary_candidates.jsonl",
+                "12_dictionary_candidates_with_cleaned_examples.jsonl",
+                "13_vocabulary_with_generated_examples.jsonl",
+                "13_generated_example_attempts.jsonl",
+                "13_generated_example_failures.jsonl",
+                "14_vocabulary_with_meanings.jsonl",
+                "15_final_dictionary.jsonl",
+            ]
+            for filename in stale_optional_outputs:
+                (output_dir / filename).write_text("old optional output", encoding="utf-8")
             (input_dir / "sample.txt").write_text(
                 "● 1 2 한국어 표현을\u2003공부하고 있다. ●\n"
                 "?\n\n"
@@ -71,7 +83,8 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "07_rejected_terms.csv").exists())
             self.assertTrue((output_dir / "08_dictionary_candidates.jsonl").exists())
             self.assertTrue((output_dir / "09_example_sentences.csv").exists())
-            self.assertFalse((output_dir / "10_cleaned_example_sentences.csv").exists())
+            for filename in stale_optional_outputs:
+                self.assertFalse((output_dir / filename).exists())
             self.assertTrue((output_dir / "README.md").exists())
             self.assertFalse((output_dir / "tokens.csv").exists())
             self.assertFalse((output_dir / "expressions.csv").exists())
