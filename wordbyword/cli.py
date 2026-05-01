@@ -11,6 +11,11 @@ from wordbyword.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
 from wordbyword.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.source_materials import (
+    AgenticOllamaProgress,
+    DEFAULT_AGENTIC_OLLAMA_BASE_URL,
+    DEFAULT_AGENTIC_OLLAMA_MODEL,
+    DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT,
+    DEFAULT_AGENTIC_OLLAMA_WORKERS,
     DEFAULT_PARSED_SOURCE_ROOT,
     DEFAULT_SOURCE_MATERIAL_ROOT,
     SourceMaterialParseError,
@@ -18,10 +23,12 @@ from wordbyword.source_materials import (
     parse_source_materials,
 )
 from wordbyword.terminal_ui import (
+    emit_agentic_ollama_progress,
     emit_artifact_drop,
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
+    emit_source_material_boot_screen,
     emit_stage_update,
     render_artifact_drop,
 )
@@ -198,6 +205,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="DPI for images extracted by PyMuPDF4LLM. Defaults to 180.",
     )
     parser.add_argument(
+        "--agentic-ollama-parse",
+        action="store_true",
+        help=(
+            "Run the separate page-image-to-Ollama parser and write agentic_ollama_* "
+            "outputs beside the heuristic parse."
+        ),
+    )
+    parser.add_argument(
+        "--agentic-ollama-model",
+        default=DEFAULT_AGENTIC_OLLAMA_MODEL,
+        help=f"Ollama vision/OCR model for --agentic-ollama-parse. Defaults to {DEFAULT_AGENTIC_OLLAMA_MODEL}.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-base-url",
+        default=None,
+        help="Optional Ollama base URL for --agentic-ollama-parse. Defaults to --ollama-base-url or http://localhost:11434.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-timeout",
+        type=float,
+        default=300.0,
+        help="Per-page Ollama request timeout in seconds. Defaults to 300.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-max-pages",
+        type=int,
+        default=0,
+        help="Maximum PDF pages to send to Ollama. Use 0 for all pages. Defaults to 0.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-temperature",
+        type=float,
+        default=0.0,
+        help="Ollama sampling temperature for page parsing. Defaults to 0.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-max-output-tokens",
+        type=int,
+        default=4096,
+        help="Ollama num_predict for each page parse. Defaults to 4096.",
+    )
+    parser.add_argument(
+        "--agentic-ollama-format",
+        choices=("schema", "json", "none"),
+        default=DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT,
+        help=(
+            "Ollama response format for the agentic page parser. "
+            f"Defaults to {DEFAULT_AGENTIC_OLLAMA_RESPONSE_FORMAT}."
+        ),
+    )
+    parser.add_argument(
+        "--agentic-ollama-workers",
+        type=int,
+        default=DEFAULT_AGENTIC_OLLAMA_WORKERS,
+        help=(
+            "Concurrent page requests for the agentic parser. "
+            f"Defaults to {DEFAULT_AGENTIC_OLLAMA_WORKERS}."
+        ),
+    )
+    parser.add_argument(
+        "--agentic-ollama-json-mode",
+        action="store_true",
+        help="Deprecated alias for --agentic-ollama-format json.",
+    )
+    parser.add_argument(
         "--source-output-root",
         type=Path,
         default=DEFAULT_PARSED_SOURCE_ROOT,
@@ -237,6 +309,26 @@ def main(argv: list[str] | None = None) -> int:
             render_pages=not args.no_page_renders,
             render_dpi=args.pdf_render_dpi,
             image_dpi=args.pdf_image_dpi,
+            agentic_ollama_parse=args.agentic_ollama_parse,
+            agentic_ollama_model=args.agentic_ollama_model,
+            agentic_ollama_base_url=(
+                args.agentic_ollama_base_url
+                or args.ollama_base_url
+                or DEFAULT_AGENTIC_OLLAMA_BASE_URL
+            ),
+            agentic_ollama_timeout_seconds=args.agentic_ollama_timeout,
+            agentic_ollama_max_pages=(
+                args.agentic_ollama_max_pages
+                if args.agentic_ollama_max_pages > 0
+                else None
+            ),
+            agentic_ollama_temperature=args.agentic_ollama_temperature,
+            agentic_ollama_max_output_tokens=args.agentic_ollama_max_output_tokens,
+            agentic_ollama_response_format=(
+                "json" if args.agentic_ollama_json_mode else args.agentic_ollama_format
+            ),
+            agentic_ollama_workers=args.agentic_ollama_workers,
+            agentic_ollama_json_mode=args.agentic_ollama_json_mode,
         )
     if args.parse_source_materials is not None:
         return parse_source_materials_cli(
@@ -246,6 +338,26 @@ def main(argv: list[str] | None = None) -> int:
             render_pages=not args.no_page_renders,
             render_dpi=args.pdf_render_dpi,
             image_dpi=args.pdf_image_dpi,
+            agentic_ollama_parse=args.agentic_ollama_parse,
+            agentic_ollama_model=args.agentic_ollama_model,
+            agentic_ollama_base_url=(
+                args.agentic_ollama_base_url
+                or args.ollama_base_url
+                or DEFAULT_AGENTIC_OLLAMA_BASE_URL
+            ),
+            agentic_ollama_timeout_seconds=args.agentic_ollama_timeout,
+            agentic_ollama_max_pages=(
+                args.agentic_ollama_max_pages
+                if args.agentic_ollama_max_pages > 0
+                else None
+            ),
+            agentic_ollama_temperature=args.agentic_ollama_temperature,
+            agentic_ollama_max_output_tokens=args.agentic_ollama_max_output_tokens,
+            agentic_ollama_response_format=(
+                "json" if args.agentic_ollama_json_mode else args.agentic_ollama_format
+            ),
+            agentic_ollama_workers=args.agentic_ollama_workers,
+            agentic_ollama_json_mode=args.agentic_ollama_json_mode,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -516,7 +628,29 @@ def parse_source_material_cli(
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
+    agentic_ollama_parse: bool,
+    agentic_ollama_model: str,
+    agentic_ollama_base_url: str,
+    agentic_ollama_timeout_seconds: float,
+    agentic_ollama_max_pages: int | None,
+    agentic_ollama_temperature: float,
+    agentic_ollama_max_output_tokens: int,
+    agentic_ollama_response_format: str,
+    agentic_ollama_workers: int,
+    agentic_ollama_json_mode: bool,
 ) -> int:
+    emit_source_material_boot_screen(
+        source_path=source_path,
+        output_root=output_root,
+        batch=False,
+        parse_pdf=parse_pdf,
+        agentic_ollama_parse=agentic_ollama_parse,
+        agentic_ollama_model=agentic_ollama_model,
+    )
+
+    def agentic_progress(progress: AgenticOllamaProgress) -> None:
+        emit_agentic_ollama_progress(progress)
+
     try:
         bundle = parse_source_material(
             source_path,
@@ -526,6 +660,17 @@ def parse_source_material_cli(
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            agentic_ollama_parse=agentic_ollama_parse,
+            agentic_ollama_model=agentic_ollama_model,
+            agentic_ollama_base_url=agentic_ollama_base_url,
+            agentic_ollama_timeout_seconds=agentic_ollama_timeout_seconds,
+            agentic_ollama_max_pages=agentic_ollama_max_pages,
+            agentic_ollama_temperature=agentic_ollama_temperature,
+            agentic_ollama_max_output_tokens=agentic_ollama_max_output_tokens,
+            agentic_ollama_response_format=agentic_ollama_response_format,
+            agentic_ollama_workers=agentic_ollama_workers,
+            agentic_ollama_json_mode=agentic_ollama_json_mode,
+            agentic_ollama_progress=agentic_progress,
         )
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
@@ -540,7 +685,16 @@ def parse_source_material_cli(
         f"  assets: {bundle.assets_dir}\n"
         f"  parser_status: {bundle.manifest['parser']['status']}\n"
     )
-    for label in ("content_markdown", "quality_report_json", "document_model_json", "chunks_json"):
+    for label in (
+        "content_markdown",
+        "quality_report_json",
+        "document_model_json",
+        "chunks_json",
+        "agentic_ollama_content_markdown",
+        "agentic_ollama_assets_json",
+        "agentic_ollama_report_json",
+        "agentic_ollama_pages_json",
+    ):
         if label in files:
             sys.stdout.write(f"  {label}: {bundle.output_dir / str(files[label])}\n")
     sys.stdout.flush()
@@ -555,7 +709,29 @@ def parse_source_materials_cli(
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
+    agentic_ollama_parse: bool,
+    agentic_ollama_model: str,
+    agentic_ollama_base_url: str,
+    agentic_ollama_timeout_seconds: float,
+    agentic_ollama_max_pages: int | None,
+    agentic_ollama_temperature: float,
+    agentic_ollama_max_output_tokens: int,
+    agentic_ollama_response_format: str,
+    agentic_ollama_workers: int,
+    agentic_ollama_json_mode: bool,
 ) -> int:
+    emit_source_material_boot_screen(
+        source_path=source_dir,
+        output_root=output_root,
+        batch=True,
+        parse_pdf=parse_pdf,
+        agentic_ollama_parse=agentic_ollama_parse,
+        agentic_ollama_model=agentic_ollama_model,
+    )
+
+    def agentic_progress(progress: AgenticOllamaProgress) -> None:
+        emit_agentic_ollama_progress(progress)
+
     try:
         result = parse_source_materials(
             source_dir,
@@ -564,6 +740,17 @@ def parse_source_materials_cli(
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
+            agentic_ollama_parse=agentic_ollama_parse,
+            agentic_ollama_model=agentic_ollama_model,
+            agentic_ollama_base_url=agentic_ollama_base_url,
+            agentic_ollama_timeout_seconds=agentic_ollama_timeout_seconds,
+            agentic_ollama_max_pages=agentic_ollama_max_pages,
+            agentic_ollama_temperature=agentic_ollama_temperature,
+            agentic_ollama_max_output_tokens=agentic_ollama_max_output_tokens,
+            agentic_ollama_response_format=agentic_ollama_response_format,
+            agentic_ollama_workers=agentic_ollama_workers,
+            agentic_ollama_json_mode=agentic_ollama_json_mode,
+            agentic_ollama_progress=agentic_progress,
         )
     except SourceMaterialParseError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
@@ -578,9 +765,14 @@ def parse_source_materials_cli(
     for bundle in result.bundles:
         files = bundle.manifest.get("files", {})
         content = f", content: {files['content_markdown']}" if "content_markdown" in files else ""
+        agentic = (
+            f", agentic: {files['agentic_ollama_content_markdown']}"
+            if "agentic_ollama_content_markdown" in files
+            else ""
+        )
         sys.stdout.write(
             f"  - {bundle.source_id}: {bundle.output_dir} "
-            f"(assets: {bundle.assets_dir.name}/, parser: {bundle.manifest['parser']['status']}{content})\n"
+            f"(assets: {bundle.assets_dir.name}/, parser: {bundle.manifest['parser']['status']}{content}{agentic})\n"
         )
     sys.stdout.flush()
     return 0

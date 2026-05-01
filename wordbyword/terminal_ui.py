@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, TextIO
 if TYPE_CHECKING:
     from wordbyword.example_cleanup import CleanupBatchProgress
     from wordbyword.pipeline import PipelineResult
+    from wordbyword.source_materials import AgenticOllamaProgress
 
 TOKYO_NIGHT = {
     "bg": "1a1b26",
@@ -105,6 +106,35 @@ def emit_boot_screen(
     stream.flush()
 
 
+def emit_source_material_boot_screen(
+    *,
+    source_path: Path,
+    output_root: Path,
+    batch: bool,
+    parse_pdf: bool,
+    agentic_ollama_parse: bool,
+    agentic_ollama_model: str,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    stream.write(
+        render_source_material_boot_screen(
+            source_path=source_path,
+            output_root=output_root,
+            batch=batch,
+            parse_pdf=parse_pdf,
+            agentic_ollama_parse=agentic_ollama_parse,
+            agentic_ollama_model=agentic_ollama_model,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+
+
 def emit_stage_update(phase: str, detail: str, stream: TextIO | None = None) -> None:
     stream = sys.stdout if stream is None else stream
     if not _is_interactive(stream):
@@ -138,6 +168,26 @@ def emit_cleanup_progress(
     stream.write("\033[2K\r")
     stream.write(line)
     if progress.phase == "complete" and progress.completed_batches >= progress.total_batches:
+        stream.write("\n")
+    stream.flush()
+
+
+def emit_agentic_ollama_progress(
+    progress: "AgenticOllamaProgress",
+    *,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    line = render_agentic_ollama_progress(
+        progress,
+        color=_supports_color(stream),
+        width=_terminal_width(),
+    )
+    stream.write("\033[2K\r")
+    stream.write(line)
+    if progress.phase == "complete":
         stream.write("\n")
     stream.flush()
 
@@ -217,6 +267,52 @@ def render_boot_screen(
     return "\n".join(lines)
 
 
+def render_source_material_boot_screen(
+    *,
+    source_path: Path,
+    output_root: Path,
+    batch: bool,
+    parse_pdf: bool,
+    agentic_ollama_parse: bool,
+    agentic_ollama_model: str,
+    color: bool,
+    width: int = 100,
+) -> str:
+    source_label = "source_dir" if batch else "source"
+    mode_parts = ["heuristic pdf" if parse_pdf else "workspace only"]
+    if agentic_ollama_parse:
+        mode_parts.append(f"agentic ollama // {agentic_ollama_model}")
+    else:
+        mode_parts.append("agentic off")
+    banner = _paint(
+        " SOURCE MATERIAL // TOKYO NIGHT PARSE BOOT ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=TOKYO_NIGHT["purple"],
+        bold=True,
+        color=color,
+    )
+    glyph_palette = (TOKYO_NIGHT["cyan"], TOKYO_NIGHT["purple"], TOKYO_NIGHT["pink"])
+    glyph = [
+        _paint(line, fg=glyph_palette[index], bold=index == 1, color=color)
+        for index, line in enumerate(BOOT_GLYPH)
+    ]
+    underline = _paint("=" * min(width, 72), fg=TOKYO_NIGHT["comment"], color=color)
+    steps = _paint(
+        "▶ prepare ─► render pages ─► ollama vision ─► write bundle",
+        fg=TOKYO_NIGHT["cyan"],
+        bold=True,
+        color=color,
+    )
+    details = [
+        f"{source_label:<10} :: {source_path}",
+        f"output    :: {output_root}",
+        f"mode      :: {' + '.join(mode_parts)}",
+    ]
+    lines = [*glyph, banner, underline, steps]
+    lines.extend(_paint(line, fg=TOKYO_NIGHT["fg"], color=color) for line in details)
+    return "\n".join(lines)
+
+
 def render_stage_update(phase: str, detail: str, *, color: bool) -> str:
     phase_color = PHASE_COLORS.get(phase, TOKYO_NIGHT["blue"])
     tag = _paint(f" {phase.upper():<8} ", fg=TOKYO_NIGHT["bg"], bg=phase_color, bold=True, color=color)
@@ -268,6 +364,52 @@ def render_cleanup_progress(
     pct_text = _paint(f"{ratio * 100:5.1f}%", fg=TOKYO_NIGHT["yellow"], bold=True, color=color)
     suffix_text = _paint(suffix_plain, fg=TOKYO_NIGHT["comment"], color=color) if suffix_plain else ""
 
+    return (
+        f"{tag} {arrow} {head_text}{bracket_open}{bar_filled}{bar_empty}{bracket_close}  "
+        f"{pct_text}{suffix_text}"
+    )
+
+
+def render_agentic_ollama_progress(
+    progress: "AgenticOllamaProgress",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    phase_color = TOKYO_NIGHT["purple"] if progress.failed_pages == 0 else TOKYO_NIGHT["orange"]
+    tag_text = " AGENTIC   "
+    tag = _paint(
+        tag_text,
+        fg=TOKYO_NIGHT["bg"],
+        bg=phase_color,
+        bold=True,
+        color=color,
+    )
+    arrow_glyph = "▶" if progress.phase == "start" else "▣"
+    arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
+
+    attempted_pages = max(progress.attempted_pages, 1)
+    ratio = max(0.0, min(1.0, progress.completed_pages / attempted_pages))
+    page_label = "--" if progress.page_number <= 0 else f"{progress.page_number:02d}"
+    skipped_plain = f" skipped {progress.skipped_pages}" if progress.skipped_pages else ""
+    head_plain = (
+        f"{progress.source_id}  page {page_label}/{progress.document_pages:02d}  "
+        f"done {progress.completed_pages}/{progress.attempted_pages}  "
+        f"parsed {progress.parsed_pages} failed {progress.failed_pages}{skipped_plain}  "
+    )
+    tail_plain = f"  {ratio * 100:5.1f}% :: {progress.model}"
+    overhead = len(tag_text) + 1 + 1 + 1 + len(head_plain) + len(tail_plain) + 2
+    bar_width = max(8, min(28, width - overhead))
+    filled = int(round(bar_width * ratio))
+    filled = max(0, min(bar_width, filled))
+    bar_filled = _paint("█" * filled, fg=phase_color, bold=True, color=color)
+    bar_empty = _paint("░" * (bar_width - filled), fg=TOKYO_NIGHT["comment"], color=color)
+    bracket_open = _paint("[", fg=TOKYO_NIGHT["comment"], color=color)
+    bracket_close = _paint("]", fg=TOKYO_NIGHT["comment"], color=color)
+
+    head_text = _paint(head_plain, fg=TOKYO_NIGHT["fg"], color=color)
+    pct_text = _paint(f"{ratio * 100:5.1f}%", fg=TOKYO_NIGHT["yellow"], bold=True, color=color)
+    suffix_text = _paint(f" :: {progress.model}", fg=TOKYO_NIGHT["comment"], color=color)
     return (
         f"{tag} {arrow} {head_text}{bracket_open}{bar_filled}{bar_empty}{bracket_close}  "
         f"{pct_text}{suffix_text}"

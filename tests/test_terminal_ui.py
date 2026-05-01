@@ -5,12 +5,15 @@ from pathlib import Path
 
 from wordbyword.example_cleanup import CleanupBatchProgress
 from wordbyword.pipeline import PipelineResult
+from wordbyword.source_materials import AgenticOllamaProgress
 from wordbyword.terminal_ui import (
+    render_agentic_ollama_progress,
     render_artifact_drop,
     render_boot_screen,
     render_cleanup_progress,
     render_completion_screen,
     render_dictionary_distribution,
+    render_source_material_boot_screen,
     render_stage_update,
 )
 
@@ -31,6 +34,25 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("mode    :: ollama cleanup online // gemma4:31b", rendered)
         self.assertNotIn("profile ::", rendered)
         self.assertNotIn("style   ::", rendered)
+
+    def test_render_source_material_boot_screen_includes_agentic_mode(self) -> None:
+        rendered = render_source_material_boot_screen(
+            source_path=Path("class-source-materials"),
+            output_root=Path("class-source-materials/parsed"),
+            batch=True,
+            parse_pdf=True,
+            agentic_ollama_parse=True,
+            agentic_ollama_model="gemma4:31b",
+            color=False,
+            width=100,
+        )
+
+        self.assertIn("SOURCE MATERIAL // TOKYO NIGHT PARSE BOOT", rendered)
+        self.assertIn("prepare", rendered)
+        self.assertIn("ollama vision", rendered)
+        self.assertIn("source_dir :: class-source-materials", rendered)
+        self.assertIn("agentic ollama // gemma4:31b", rendered)
+        self.assertNotIn("\x1b[", rendered)
 
     def test_render_stage_update_plain_mode_is_scan_friendly(self) -> None:
         rendered = render_stage_update("analyze", "tokenizing 422 page/text unit(s)", color=False)
@@ -162,6 +184,55 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("terms 50/120", rendered)
         self.assertIn("gemma4:31b", rendered)
 
+    def test_render_agentic_ollama_progress_plain_includes_page_bar_and_counts(self) -> None:
+        progress = AgenticOllamaProgress(
+            phase="page",
+            source_id="popular-physicsprize2025",
+            source_filename="popular-physicsprize2025.pdf",
+            model="gemma4:31b",
+            page_number=3,
+            attempted_pages=6,
+            document_pages=8,
+            completed_pages=3,
+            parsed_pages=2,
+            failed_pages=1,
+            skipped_pages=2,
+            current_image_path="assets/page-0003.png",
+        )
+
+        rendered = render_agentic_ollama_progress(progress, color=False, width=140)
+
+        self.assertIn("AGENTIC", rendered)
+        self.assertIn("popular-physicsprize2025", rendered)
+        self.assertIn("page 03/08", rendered)
+        self.assertIn("done 3/6", rendered)
+        self.assertIn("parsed 2 failed 1 skipped 2", rendered)
+        self.assertIn(" 50.0%", rendered)
+        self.assertIn("gemma4:31b", rendered)
+        self.assertIn("█", rendered)
+        self.assertIn("░", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_agentic_ollama_progress_color_includes_ansi(self) -> None:
+        progress = AgenticOllamaProgress(
+            phase="start",
+            source_id="sample",
+            source_filename="sample.pdf",
+            model="gemma4:31b",
+            page_number=0,
+            attempted_pages=4,
+            document_pages=4,
+            completed_pages=0,
+            parsed_pages=0,
+            failed_pages=0,
+            skipped_pages=0,
+        )
+
+        rendered = render_agentic_ollama_progress(progress, color=True, width=120)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("AGENTIC", rendered)
+        self.assertIn("page --/04", rendered)
 
     def test_render_dictionary_distribution_includes_two_histograms(self) -> None:
         entries = [
