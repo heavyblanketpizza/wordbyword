@@ -1,0 +1,427 @@
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import fitz
+from docx import Document
+from PIL import Image
+
+from wordbyword.class_printing.printable import (
+    A4_HEIGHT_PT,
+    A4_WIDTH_PT,
+    DEFAULT_PRINT_OUTPUT_ROOT,
+    PrintableMaterialError,
+    build_printable_context,
+    build_printable_prompt,
+    parse_and_validate_print_plan_response,
+    print_class_material,
+)
+from wordbyword.cli import main
+from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
+
+
+class PrintableContextTest(unittest.TestCase):
+    def test_default_print_outputs_use_separate_printable_root(self) -> None:
+        self.assertEqual(
+            DEFAULT_PRINT_OUTPUT_ROOT,
+            Path("printable-for-class") / "grade1-ko-a4-ollama",
+        )
+
+    def test_prompt_uses_rewritten_content_and_asset_catalog(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            bundle_dir = write_rewritten_fixture(Path(workspace) / "rewritten")
+
+            context = build_printable_context(bundle_dir)
+            prompt = build_printable_prompt(context)
+
+            self.assertEqual(context.source_id, "lesson")
+            self.assertIn("asset_catalog", prompt.user_prompt)
+            self.assertIn('"asset_id": "fig1"', prompt.user_prompt)
+            self.assertIn("rewritten_content_markdown", prompt.user_prompt)
+            self.assertIn("어린이가 읽기 쉬운 과학 이야기입니다.", prompt.user_prompt)
+            self.assertIn("Return JSON exactly in this shape", prompt.user_prompt)
+
+
+class PrintableMaterialTest(unittest.TestCase):
+    def test_print_class_material_writes_pdf_docx_and_audit_artifacts(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_rewritten_fixture(root / "rewritten")
+            output_root = root / "printable"
+            client = RecordingPrintableClient()
+
+            outputs = print_class_material(
+                bundle_dir,
+                output_root=output_root,
+                client=client,
+                model="fake-ollama",
+                font_path=font_path,
+            )
+
+            self.assertTrue(outputs.accepted)
+            output_dir = output_root / "lesson"
+            for filename in (
+                "print_plan.json",
+                "content.md",
+                "material.pdf",
+                "material.docx",
+                "attempts.jsonl",
+                "failures.jsonl",
+                "quality_report.json",
+                "manifest.json",
+            ):
+                self.assertTrue((output_dir / filename).is_file(), filename)
+            self.assertTrue((output_dir / "assets" / "fig1.png").is_file())
+
+            with fitz.open(output_dir / "material.pdf") as pdf:
+                self.assertGreaterEqual(pdf.page_count, 1)
+                self.assertAlmostEqual(pdf[0].rect.width, A4_WIDTH_PT, delta=0.5)
+                self.assertAlmostEqual(pdf[0].rect.height, A4_HEIGHT_PT, delta=0.5)
+
+            docx = Document(str(output_dir / "material.docx"))
+            paragraphs = "\n".join(paragraph.text for paragraph in docx.paragraphs)
+            self.assertIn("쉬운 과학 이야기", paragraphs)
+            self.assertIn("어린이가 읽기 쉬운 첫 문장입니다.", paragraphs)
+            self.assertGreaterEqual(len(docx.inline_shapes), 1)
+
+            quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["status"], "written")
+            self.assertEqual(quality["selected_image_count"], 1)
+            self.assertEqual(quality["output_formats"], ["pdf", "docx"])
+            attempts = read_jsonl(output_dir / "attempts.jsonl")
+            self.assertTrue(attempts[0]["accepted"])
+            self.assertEqual(attempts[0]["selected_asset_ids"], ["fig1"])
+
+    def test_invalid_print_plan_is_rejected_and_logged_without_material_files(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_rewritten_fixture(root / "rewritten")
+            output_root = root / "printable"
+            client = RecordingPrintableClient(
+                response={
+                    "source_id": "lesson",
+                    "title": "쉬운 과학 이야기",
+                    "subtitle": "",
+                    "body_font_size_pt": 13,
+                    "sections": [{"heading": "이야기", "paragraphs": ["어린이가 읽는 글입니다."]}],
+                    "selected_images": [
+                        {
+                            "asset_id": "missing",
+                            "placement": "after_title",
+                            "caption": "",
+                            "alt_text": "",
+                        }
+                    ],
+                }
+            )
+
+            outputs = print_class_material(
+                bundle_dir,
+                output_root=output_root,
+                client=client,
+                model="fake-ollama",
+                font_path=font_path,
+            )
+
+            self.assertFalse(outputs.accepted)
+            output_dir = output_root / "lesson"
+            self.assertFalse((output_dir / "material.pdf").exists())
+            self.assertFalse((output_dir / "material.docx").exists())
+            failures = read_jsonl(output_dir / "failures.jsonl")
+            self.assertIn("unknown asset_id", failures[0]["failure_reason"])
+            quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["status"], "failed")
+
+    def test_print_plan_validation_rejects_bad_shapes_and_worksheet_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            context = build_printable_context(write_rewritten_fixture(Path(workspace) / "rewritten"))
+            base = {
+                "source_id": "lesson",
+                "title": "쉬운 과학 이야기",
+                "subtitle": "",
+                "body_font_size_pt": 13,
+                "sections": [{"heading": "이야기", "paragraphs": ["어린이가 읽는 글입니다."]}],
+                "selected_images": [],
+            }
+            scenarios = [
+                ("wrong source", {**base, "source_id": "other"}, "source_id"),
+                ("bad font size", {**base, "body_font_size_pt": 16}, "schema validation"),
+                (
+                    "too many images",
+                    {
+                        **base,
+                        "selected_images": [
+                            {"asset_id": "fig1"},
+                            {"asset_id": "page-0001"},
+                            {"asset_id": "fig1"},
+                        ],
+                    },
+                    "schema validation",
+                ),
+                (
+                    "worksheet heading",
+                    {**base, "sections": [{"heading": "Questions", "paragraphs": ["어린이가 읽는 글입니다."]}]},
+                    "worksheet-like",
+                ),
+                (
+                    "raw image markup",
+                    {**base, "sections": [{"heading": "이야기", "paragraphs": ["![그림](assets/fig1.png)"]}]},
+                    "raw image markup",
+                ),
+                ("markdown fence", "```json\n{}\n```", "markdown fence"),
+            ]
+
+            for name, payload, expected in scenarios:
+                with self.subTest(name=name):
+                    content = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+                    with self.assertRaises(PrintableMaterialError) as error:
+                        parse_and_validate_print_plan_response(
+                            CompletionResult(provider="ollama", model="fake", content=content),
+                            context=context,
+                        )
+                    self.assertIn(expected, str(error.exception))
+
+
+class PrintableCliTest(unittest.TestCase):
+    def test_cli_prints_one_class_material_without_running_dictionary_pipeline(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_rewritten_fixture(root / "rewritten")
+            output_root = root / "printable"
+            client = RecordingPrintableClient()
+
+            stdout = io.StringIO()
+            with (
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            ):
+                exit_code = main(
+                    [
+                        "--print-class-material",
+                        str(bundle_dir),
+                        "--print-output-root",
+                        str(output_root),
+                        "--print-font-path",
+                        str(font_path),
+                        "--ollama-model",
+                        "fake-ollama",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            self.assertTrue((output_root / "lesson" / "material.pdf").is_file())
+            self.assertIn("printable class material written", stdout.getvalue())
+
+    def test_cli_prints_all_class_materials_without_running_dictionary_pipeline(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            rewritten_root = root / "rewritten"
+            write_rewritten_fixture(rewritten_root, source_id="lesson")
+            write_rewritten_fixture(rewritten_root, source_id="lesson-two")
+            output_root = root / "printable"
+            client = RecordingPrintableClient()
+
+            stdout = io.StringIO()
+            with (
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            ):
+                exit_code = main(
+                    [
+                        "--print-class-materials",
+                        str(rewritten_root),
+                        "--print-output-root",
+                        str(output_root),
+                        "--print-font-path",
+                        str(font_path),
+                        "--ollama-model",
+                        "fake-ollama",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            self.assertTrue((output_root / "lesson" / "material.docx").is_file())
+            self.assertTrue((output_root / "lesson-two" / "material.docx").is_file())
+            self.assertIn("written: 2", stdout.getvalue())
+
+
+class RecordingPrintableClient:
+    def __init__(self, response: object | None = None) -> None:
+        self.response = response
+        self.calls: list[tuple[dict[str, object], list[ChatMessage]]] = []
+
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self.calls.append(
+            (
+                {
+                    "temperature": temperature,
+                    "max_output_tokens": max_output_tokens,
+                    "json_mode": json_mode,
+                },
+                messages,
+            )
+        )
+        source_id = source_id_from_prompt(messages[1].content)
+        content = self.response or {
+            "source_id": source_id,
+            "title": "쉬운 과학 이야기",
+            "subtitle": "읽기 자료",
+            "body_font_size_pt": 13,
+            "sections": [
+                {
+                    "heading": "이야기",
+                    "paragraphs": [
+                        "어린이가 읽기 쉬운 첫 문장입니다.",
+                        "그림을 보며 내용을 천천히 읽습니다.",
+                    ],
+                }
+            ],
+            "selected_images": [
+                {
+                    "asset_id": "fig1",
+                    "placement": "after_title",
+                    "caption": "그림을 함께 봅니다.",
+                    "alt_text": "과학 그림",
+                }
+            ],
+        }
+        return CompletionResult(
+            provider="ollama",
+            model="fake-ollama",
+            content=content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
+        )
+
+
+def write_rewritten_fixture(root: Path, *, source_id: str = "lesson") -> Path:
+    bundle_dir = root / source_id
+    assets_dir = bundle_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    Image.new("RGB", (160, 100), color=(230, 240, 250)).save(assets_dir / "fig1.png")
+    Image.new("RGB", (120, 160), color=(240, 240, 230)).save(assets_dir / "page-0001.png")
+    (bundle_dir / "content.md").write_text(
+        "\n".join(
+            [
+                "<!-- page:1 -->",
+                "# 쉬운 과학 이야기",
+                "",
+                "어린이가 읽기 쉬운 과학 이야기입니다.",
+                "",
+                '<div><img src="assets/fig1.png" alt="Figure" /></div>',
+                "",
+                "그림도 함께 봅니다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (bundle_dir / "chunks.json").write_text(
+        json.dumps(
+            [
+                {
+                    "page": 1,
+                    "status": "rewritten",
+                    "source_text": "source",
+                    "rewritten_markdown": "어린이가 읽기 쉬운 과학 이야기입니다.",
+                    "assets": [
+                        {
+                            "asset_id": "fig1",
+                            "path": "assets/fig1.png",
+                            "kind": "extracted_image",
+                            "page": 1,
+                            "width": 160,
+                            "height": 100,
+                            "mime_type": "image/png",
+                            "byte_size": (assets_dir / "fig1.png").stat().st_size,
+                            "caption": "과학 그림",
+                        }
+                    ],
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (bundle_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "wordbyword.source_rewrite.v1",
+                "source": {
+                    "id": source_id,
+                    "filename": f"{source_id}.pdf",
+                    "sha256": "sha",
+                },
+                "parser": {"name": "test-parser", "version": "1"},
+                "rewrite": {
+                    "target_profile": "grade1-ko",
+                    "mode": "vocabulary_guided",
+                    "model": "fake-ollama",
+                },
+                "files": {
+                    "assets": "assets/",
+                    "content_markdown": "content.md",
+                    "chunks_json": "chunks.json",
+                    "quality_report_json": "quality_report.json",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (bundle_dir / "quality_report.json").write_text(
+        json.dumps({"schema_version": "wordbyword.source_rewrite.v1"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return bundle_dir
+
+
+def read_jsonl(path: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def source_id_from_prompt(prompt: str) -> str:
+    for line in prompt.splitlines():
+        if line.startswith("source_id:"):
+            return line.split(":", 1)[1].strip()
+    return "lesson"
+
+
+def korean_font_or_skip(test_case: unittest.TestCase) -> Path:
+    candidates = [
+        Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
+        Path("/Library/Fonts/NanumGothic.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    test_case.skipTest("No Korean-capable font file available for printable rendering test.")

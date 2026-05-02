@@ -107,6 +107,37 @@ uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materi
 
 Vocabulary-guided outputs are written under `rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
 
+## Printable Class Materials
+
+After a source has been rewritten, run the printable stage to create A4 classroom handouts as both PDF and DOCX. This is a separate downstream workflow: it reads rewritten bundles and writes outputs under `printable-for-class/grade1-ko-a4-ollama/`.
+
+```bash
+uv --no-cache run python -m wordbyword --print-class-material rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --ollama-model gemma4:31b
+```
+
+The printable stage asks Ollama for a strict JSON print plan, then renders the final files deterministically. The model may choose up to two existing image assets from the rewritten bundle; it does not author PDF or DOCX directly and it cannot use external images.
+
+Printable outputs are written per source:
+
+- `print_plan.json`: validated LLM JSON plan for the handout.
+- `content.md`: Markdown audit copy generated from the print plan.
+- `material.pdf`: A4 printable PDF.
+- `material.docx`: editable A4 Word document.
+- `attempts.jsonl`: printable-plan prompt and model response.
+- `failures.jsonl`: rejected printable-plan attempts.
+- `quality_report.json`: render status, font, section count, image count, and PDF page count.
+- `manifest.json`: source rewrite metadata, model, render settings, and file map.
+- `assets/`: copied rewritten-bundle assets referenced by the plan.
+
+Useful printable options:
+
+```bash
+uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-body-font-size 13
+uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
+uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-output-root printable-for-class/grade1-ko-a4-ollama
+```
+
 ## Outputs
 
 The pipeline writes these files:

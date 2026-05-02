@@ -629,7 +629,7 @@ class SourceRewriteCliTest(unittest.TestCase):
                 )
 
         self.assertEqual(error.exception.code, 2)
-        self.assertIn("parse/rewrite source-material commands cannot be combined", stderr.getvalue())
+        self.assertIn("parse/rewrite/print source-material commands cannot be combined", stderr.getvalue())
 
 
 class RecordingRewriteClient:

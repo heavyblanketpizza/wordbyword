@@ -41,6 +41,12 @@ from wordbyword.class_rewriting.rewrite import (
     rewrite_whole_source_material as rewrite_whole_parsed_source_material,
     rewrite_whole_source_materials as rewrite_whole_parsed_source_materials,
 )
+from wordbyword.class_printing.printable import (
+    DEFAULT_PRINT_OUTPUT_ROOT,
+    PrintableMaterialError,
+    print_class_material,
+    print_class_materials,
+)
 from wordbyword.cli.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
@@ -437,6 +443,45 @@ def build_parser() -> argparse.ArgumentParser:
             f"{DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT} for vocabulary-guided rewrites."
         ),
     )
+    parser.add_argument(
+        "--print-class-material",
+        type=Path,
+        default=None,
+        metavar="REWRITTEN_BUNDLE_DIR",
+        help=(
+            "Create A4 PDF and DOCX printable reading material from one rewritten source-material bundle."
+        ),
+    )
+    parser.add_argument(
+        "--print-class-materials",
+        type=Path,
+        default=None,
+        metavar="REWRITTEN_ROOT",
+        help=(
+            "Create A4 PDF and DOCX printable reading materials for every rewritten bundle under a root."
+        ),
+    )
+    parser.add_argument(
+        "--print-output-root",
+        type=Path,
+        default=DEFAULT_PRINT_OUTPUT_ROOT,
+        help=(
+            "Root folder for printable class-material outputs. "
+            f"Defaults to {DEFAULT_PRINT_OUTPUT_ROOT}."
+        ),
+    )
+    parser.add_argument(
+        "--print-font-path",
+        type=Path,
+        default=None,
+        help="Optional Korean-capable font file for printable PDF/DOCX rendering.",
+    )
+    parser.add_argument(
+        "--print-body-font-size",
+        type=int,
+        default=None,
+        help="Optional printable body font size override from 11 to 15 points.",
+    )
     return parser
 
 
@@ -511,11 +556,13 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.rewrite_whole_source_materials is not None,
         args.rewrite_vocabulary_guided_source_material is not None,
         args.rewrite_vocabulary_guided_source_materials is not None,
+        args.print_class_material is not None,
+        args.print_class_materials is not None,
     ]
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
             2,
-            "wordbyword: error: parse/rewrite source-material commands cannot be combined.\n",
+            "wordbyword: error: parse/rewrite/print source-material commands cannot be combined.\n",
         )
     if args.parse_source_materials is not None and args.source_id:
         parser.exit(
@@ -529,10 +576,17 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         or args.rewrite_whole_source_materials is not None
         or args.rewrite_vocabulary_guided_source_material is not None
         or args.rewrite_vocabulary_guided_source_materials is not None
+        or args.print_class_material is not None
+        or args.print_class_materials is not None
     ) and args.source_id:
         parser.exit(
             2,
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
+        )
+    if args.print_body_font_size is not None and not 11 <= args.print_body_font_size <= 15:
+        parser.exit(
+            2,
+            "wordbyword: error: --print-body-font-size must be between 11 and 15.\n",
         )
     if args.retry_generated_examples and (
         args.clean_example_sentences or args.clean_dictionary_candidates or args.generate_missing_examples
@@ -613,6 +667,24 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             dictionary_path=rewrite_dictionary_path_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
+        )
+    if args.print_class_material is not None:
+        return print_class_material_cli(
+            rewritten_bundle_dir=args.print_class_material,
+            output_root=args.print_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            font_path=args.print_font_path,
+            body_font_size=args.print_body_font_size,
+        )
+    if args.print_class_materials is not None:
+        return print_class_materials_cli(
+            rewritten_root=args.print_class_materials,
+            output_root=args.print_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            font_path=args.print_font_path,
+            body_font_size=args.print_body_font_size,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -1231,8 +1303,116 @@ def rewrite_vocabulary_guided_source_materials_cli(
     return 0 if failed_pages == 0 and outputs.source_outputs else 1
 
 
+def print_class_material_cli(
+    *,
+    rewritten_bundle_dir: Path,
+    output_root: Path,
+    model: str,
+    base_url: str | None,
+    font_path: Path | None,
+    body_font_size: int | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=600.0,
+        max_output_tokens=16384,
+    )
+    try:
+        try:
+            outputs = print_class_material(
+                rewritten_bundle_dir,
+                output_root=output_root,
+                client=client,
+                model=model,
+                font_path=font_path,
+                body_font_size=body_font_size,
+                progress=emit_printable_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (PrintableMaterialError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "printable class material written\n"
+        f"  source_id: {outputs.source_id}\n"
+        f"  output_dir: {outputs.output_dir}\n"
+        f"  status: {'written' if outputs.accepted else 'failed'}\n"
+    )
+    if outputs.accepted:
+        sys.stdout.write(
+            f"  pdf: {outputs.output_dir / 'material.pdf'}\n"
+            f"  docx: {outputs.output_dir / 'material.docx'}\n"
+        )
+    else:
+        sys.stdout.write(f"  failure: {outputs.failure_reason}\n")
+    sys.stdout.flush()
+    return 0 if outputs.accepted else 1
+
+
+def print_class_materials_cli(
+    *,
+    rewritten_root: Path,
+    output_root: Path,
+    model: str,
+    base_url: str | None,
+    font_path: Path | None,
+    body_font_size: int | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=600.0,
+        max_output_tokens=16384,
+    )
+    try:
+        try:
+            outputs = print_class_materials(
+                rewritten_root,
+                output_root=output_root,
+                client=client,
+                model=model,
+                font_path=font_path,
+                body_font_size=body_font_size,
+                progress=emit_printable_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (PrintableMaterialError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    failed = sum(1 for output in outputs.source_outputs if not output.accepted)
+    written = sum(1 for output in outputs.source_outputs if output.accepted)
+    sys.stdout.write(
+        "printable class materials written\n"
+        f"  rewritten_root: {outputs.rewritten_root}\n"
+        f"  output_root: {outputs.output_root}\n"
+        f"  sources: {len(outputs.source_outputs)}\n"
+        f"  skipped_sources: {len(outputs.skipped_sources)}\n"
+        f"  written: {written}\n"
+        f"  failed: {failed}\n"
+    )
+    for output in outputs.source_outputs:
+        sys.stdout.write(
+            f"  - {output.source_id}: {output.output_dir} "
+            f"({'written' if output.accepted else 'failed'})\n"
+        )
+    for skipped in outputs.skipped_sources:
+        sys.stdout.write(f"  - skipped {skipped['source_dir']}: {skipped['reason']}\n")
+    sys.stdout.flush()
+    return 0 if failed == 0 and written > 0 else 1
+
+
 def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"rewrite source [{source_id}] {detail}\n")
+    sys.stdout.flush()
+
+
+def emit_printable_progress(source_id: str, detail: str) -> None:
+    sys.stdout.write(f"print class [{source_id}] {detail}\n")
     sys.stdout.flush()
 
 
