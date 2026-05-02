@@ -9,6 +9,7 @@ wheels/
 
 # Virtual environments
 .venv
+.venv*/
 
 # uv/cache and generated dictionary build artifacts
 .uv-cache/

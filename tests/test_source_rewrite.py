@@ -53,11 +53,53 @@ class SourceRewriteContextTest(unittest.TestCase):
 
             self.assertEqual(outputs.failed_page_count, 0)
             self.assertEqual(client.preflight_count, 1)
-            first_user_message = client.calls[0][1][1]
-            self.assertIn("asset_id=fig1", first_user_message.content)
-            self.assertIn("asset_id=page-0001", first_user_message.content)
-            self.assertEqual(first_user_message.images[0], base64.b64encode(b"fig1").decode("ascii"))
-            self.assertEqual(first_user_message.images[1], base64.b64encode(b"page1").decode("ascii"))
+            messages = client.calls[0][1]
+            image_messages = [message for message in messages if message.images]
+            joined_prompt = "\n\n".join(message.content for message in messages)
+            self.assertEqual(len(image_messages), 1)
+            self.assertIn('<img src="assets/fig1.png"', image_messages[0].content)
+            self.assertEqual(image_messages[0].images, (base64.b64encode(b"fig1").decode("ascii"),))
+            text_before_index = next(
+                index
+                for index, message in enumerate(messages)
+                if "The machine shows energy." in message.content
+            )
+            image_index = next(index for index, message in enumerate(messages) if message.images)
+            text_after_index = next(
+                index
+                for index, message in enumerate(messages)
+                if "The final sentence stays after the caption." in message.content
+            )
+            self.assertLess(text_before_index, image_index)
+            self.assertLess(image_index, text_after_index)
+            self.assertNotIn("asset_id=fig1", joined_prompt)
+            self.assertNotIn("asset_id=page-0001", joined_prompt)
+            self.assertNotIn("# Source Context Packet", joined_prompt)
+            self.assertNotIn("## Attached Assets", joined_prompt)
+            self.assertNotIn("[[asset", joined_prompt)
+
+            attempts = read_jsonl(outputs.output_dir / "attempts.jsonl")
+            self.assertEqual(attempts[0]["attached_asset_ids"], ["fig1"])
+            prompt_image_rows = [
+                row for row in attempts[0]["prompt_messages"] if row["attached_asset_ids"]
+            ]
+            self.assertEqual(prompt_image_rows[0]["attached_asset_ids"], ["fig1"])
+
+    def test_missing_content_linked_image_fails_before_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(root / "parsed")
+            (bundle_dir / "assets" / "fig1.png").unlink()
+
+            with self.assertRaises(SourceRewriteError) as error:
+                rewrite_source_material(
+                    bundle_dir,
+                    output_root=root / "rewritten",
+                    client=RecordingRewriteClient(),
+                    model="fake-vision",
+                )
+
+            self.assertIn("Missing asset file for rewrite prompt", str(error.exception))
 
     def test_unsupported_image_model_fails_before_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -89,12 +131,13 @@ class SourceRewriteContextTest(unittest.TestCase):
                 model="fake-vision",
             )
 
-            first_page_prompt = client.calls[0][1][1].content
-            second_page_prompt = client.calls[1][1][1].content
+            first_page_prompt = joined_message_content(client.calls[0][1])
+            second_page_prompt = joined_message_content(client.calls[1][1])
             self.assertIn("Second page source explains the ending.", first_page_prompt)
             self.assertIn("The machine shows energy.", second_page_prompt)
             self.assertIn("current_page: 1", first_page_prompt)
             self.assertIn("current_page: 2", second_page_prompt)
+            self.assertEqual(first_page_prompt.count("The machine shows energy."), 1)
 
     def test_rewritten_markdown_preserves_page_markers_and_asset_links(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -149,14 +192,18 @@ class WholeDocumentRewriteTest(unittest.TestCase):
             self.assertEqual(outputs.rewritten_page_count, 2)
             self.assertEqual(client.preflight_count, 1)
             self.assertEqual(len(client.calls), 1)
-            user_message = client.calls[0][1][1]
-            self.assertIn("The machine shows energy.", user_message.content)
-            self.assertIn("Second page source explains the ending.", user_message.content)
-            self.assertIn("asset_id=fig1", user_message.content)
-            self.assertIn("<!-- page:1 -->", user_message.content)
-            self.assertIn("<!-- page:2 -->", user_message.content)
-            self.assertEqual(user_message.images[0], base64.b64encode(b"fig1").decode("ascii"))
-            self.assertEqual(user_message.images[1], base64.b64encode(b"page1").decode("ascii"))
+            messages = client.calls[0][1]
+            joined_prompt = joined_message_content(messages)
+            image_messages = [message for message in messages if message.images]
+            self.assertIn("The machine shows energy.", joined_prompt)
+            self.assertIn("Second page source explains the ending.", joined_prompt)
+            self.assertIn("<!-- page:1 -->", joined_prompt)
+            self.assertIn("<!-- page:2 -->", joined_prompt)
+            self.assertNotIn("asset_id=fig1", joined_prompt)
+            self.assertNotIn("# Source Context Packet", joined_prompt)
+            self.assertNotIn("[[asset", joined_prompt)
+            self.assertEqual(len(image_messages), 1)
+            self.assertEqual(image_messages[0].images, (base64.b64encode(b"fig1").decode("ascii"),))
 
             content = (outputs.output_dir / "content.md").read_text(encoding="utf-8")
             self.assertIn("<!-- page:1 -->", content)
@@ -175,9 +222,13 @@ class WholeDocumentRewriteTest(unittest.TestCase):
 
             manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["rewrite"]["mode"], "whole_document")
+            self.assertEqual(manifest["rewrite"]["asset_mode"], "content-linked-interleaved-images")
+            self.assertEqual(manifest["rewrite"]["attached_image_count"], 1)
             quality = json.loads((outputs.output_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["rewrite_mode"], "whole_document")
             self.assertEqual(quality["failed_page_count"], 0)
+            self.assertEqual(quality["asset_mode"], "content-linked-interleaved-images")
+            self.assertEqual(quality["attached_image_count"], 1)
 
     def test_whole_document_rewrite_records_preflight_failure(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -355,7 +406,8 @@ class RecordingRewriteClient:
                 messages,
             )
         )
-        page = 1 if "current_page: 1" in messages[1].content else 2
+        joined_prompt = joined_message_content(messages)
+        page = 1 if "current_page: 1" in joined_prompt else 2
         image_block = (
             '\n\n<div><img src="assets/fig1.png" alt="Figure" /></div>\n\n'
             if page == 1
@@ -435,6 +487,18 @@ class UnsupportedVisionClient(RecordingRewriteClient):
         raise LLMConfigurationError("no vision")
 
 
+def joined_message_content(messages: list[ChatMessage]) -> str:
+    return "\n\n".join(message.content for message in messages)
+
+
+def read_jsonl(path: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 def write_parsed_fixture(
     parsed_root: Path,
     *,
@@ -447,7 +511,13 @@ def write_parsed_fixture(
     (assets_dir / "fig1.png").write_bytes(b"fig1")
     (assets_dir / "page-0001.png").write_bytes(b"page1")
     page_texts = pages or [page_one_text()]
-    (bundle_dir / "content.md").write_text("\n\n---\n\n".join(page_texts), encoding="utf-8")
+    (bundle_dir / "content.md").write_text(
+        "\n\n---\n\n".join(
+            f"<!-- page:{index} -->\n\n{page_text}"
+            for index, page_text in enumerate(page_texts, start=1)
+        ),
+        encoding="utf-8",
+    )
     (bundle_dir / "chunks.json").write_text(
         json.dumps(
             [

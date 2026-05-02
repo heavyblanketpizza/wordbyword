@@ -78,18 +78,18 @@ uv --no-cache run python -m wordbyword --rewrite-source-materials class-source-m
 uv --no-cache run python -m wordbyword --rewrite-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-The rewrite stage builds a full interleaved `context_packet.md` for each parsed source, attaches the parsed image assets to every page-level Ollama request, and writes outputs under `class-source-materials/rewritten/grade1-ko-ollama/<source-id>/`:
+The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `class-source-materials/rewritten/grade1-ko-ollama/<source-id>/`:
 
 - `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
 - `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
-- `context_packet.md`: audit copy of the full source context given to the model.
-- `attempts.jsonl`: every page rewrite attempt, prompt, response, attached asset ids, and validation result.
+- `context_packet.md`: audit copy of parsed source metadata, assets, and interleaved content for debugging.
+- `attempts.jsonl`: every page rewrite attempt, ordered prompt messages, response, attached asset ids, and validation result.
 - `failures.jsonl`: unresolved page rewrite failures.
 - `quality_report.json`: rewrite counts, image attachment counts, and soft QA metrics.
 - `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
 - `assets/`: copied parsed assets so Markdown image links remain local.
 
-For comparison, the whole-document rewrite workflow sends the full interleaved parsed source to Ollama in one request per source, instead of one request per page:
+For comparison, the whole-document rewrite workflow sends the full parsed `content.md` to Ollama in one interleaved text/image request per source, instead of one request per page:
 
 ```bash
 uv --no-cache run python -m wordbyword --rewrite-whole-source-materials class-source-materials/parsed --ollama-model gemma4:31b

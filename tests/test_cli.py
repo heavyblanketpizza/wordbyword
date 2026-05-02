@@ -453,7 +453,7 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             stdout = io.StringIO()
             with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline, patch(
-                "wordbyword.cli.ollama_client",
+                "wordbyword.cli.app.ollama_client",
                 return_value=GeneratedMeaningClient(),
             ):
                 exit_code = main(["--generate-missing-meanings", "--output", str(output_dir)])

@@ -11,3 +11,10 @@ dependencies = [
     "pymupdf>=1.27.2.2",
     "pymupdf4llm>=0.2.2",
 ]
+
+[project.scripts]
+wordbyword = "wordbyword.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"

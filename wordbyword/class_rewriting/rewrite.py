@@ -104,9 +104,24 @@ class ContextPacket:
     source_filename: str
     parser_name: str
     parser_version: str
+    source_content_markdown: str
     content_markdown: str
     pages: tuple[RewritePage, ...]
     assets: tuple[RewriteAsset, ...]
+
+
+@dataclass(frozen=True)
+class PromptMessage:
+    message: ChatMessage
+    attached_assets: tuple[RewriteAsset, ...] = ()
+
+
+@dataclass(frozen=True)
+class RewritePrompt:
+    messages: tuple[ChatMessage, ...]
+    user_prompt: str
+    prompt_messages: tuple[dict[str, object], ...]
+    attached_assets: tuple[RewriteAsset, ...]
 
 
 @dataclass(frozen=True)
@@ -166,10 +181,15 @@ def rewrite_source_material(
     prepare_output_dir(output_dir)
     copy_assets(parsed_bundle_dir, output_dir)
 
-    attached_assets = attachable_assets(parsed_bundle_dir, context.assets)
-    if require_images and attached_assets:
+    content_assets = content_linked_assets(context)
+    if require_images and content_assets:
         assert_client_supports_images(client)
-    image_payloads = image_payloads_for_assets(parsed_bundle_dir, attached_assets)
+    image_payloads_by_path = image_payloads_by_asset_path(
+        parsed_bundle_dir,
+        content_assets,
+        require_images=require_images,
+    )
+    attached_assets = assets_with_payloads(content_assets, image_payloads_by_path)
 
     context_packet_path = output_dir / "context_packet.md"
     context_packet_path.write_text(context.content_markdown, encoding="utf-8")
@@ -190,8 +210,7 @@ def rewrite_source_material(
             client,
             context=context,
             page=page,
-            attached_assets=attached_assets,
-            image_payloads=image_payloads,
+            image_payloads_by_path=image_payloads_by_path,
             model=model,
         )
         attempt_rows.append(attempt)
@@ -288,13 +307,19 @@ def rewrite_whole_source_material(
     initialize_jsonl_file(attempts_path)
     initialize_jsonl_file(failures_path)
 
-    attached_assets = attachable_assets(parsed_bundle_dir, context.assets)
-    image_payloads: tuple[str, ...] = ()
+    content_assets = content_linked_assets(context)
+    attached_assets: tuple[RewriteAsset, ...] = ()
+    image_payloads_by_path: dict[str, str] = {}
     preflight_error = ""
     try:
-        if require_images and attached_assets:
+        if require_images and content_assets:
             assert_client_supports_images(client)
-        image_payloads = image_payloads_for_assets(parsed_bundle_dir, attached_assets)
+        image_payloads_by_path = image_payloads_by_asset_path(
+            parsed_bundle_dir,
+            content_assets,
+            require_images=require_images,
+        )
+        attached_assets = assets_with_payloads(content_assets, image_payloads_by_path)
     except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
         preflight_error = str(exc)
 
@@ -303,15 +328,14 @@ def rewrite_whole_source_material(
         failed_whole_document_attempt(
             context=context,
             model=model,
-            attached_assets=attached_assets,
+            image_payloads_by_path=image_payloads_by_path,
             failure_reason=preflight_error,
         )
         if preflight_error
         else rewrite_whole_document_with_full_context(
             client,
             context=context,
-            attached_assets=attached_assets,
-            image_payloads=image_payloads,
+            image_payloads_by_path=image_payloads_by_path,
             model=model,
         )
     )
@@ -414,6 +438,7 @@ def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
         raise SourceRewriteError(f"Missing parsed quality report: {quality_report_path}")
 
     chunks = read_json_list(chunks_path)
+    source_content_markdown = content_path.read_text(encoding="utf-8")
     quality_report = read_json_object(quality_report_path)
     source_id = str(source.get("id") or parsed_bundle_dir.name)
     assets = assets_from_quality_report(quality_report)
@@ -451,6 +476,7 @@ def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
         source_filename=str(source.get("filename") or ""),
         parser_name=str(parser.get("name") or ""),
         parser_version=str(parser.get("version") or ""),
+        source_content_markdown=source_content_markdown,
         content_markdown=content_markdown,
         pages=tuple(pages),
         assets=tuple(assets),
@@ -571,7 +597,7 @@ def strip_html(text: str) -> str:
     return HTML_TAG_PATTERN.sub("", text).strip()
 
 
-def fallback_asset(path: str, *, page: int) -> RewriteAsset:
+def fallback_asset(path: str, *, page: int | None) -> RewriteAsset:
     return RewriteAsset(
         asset_id=Path(path).stem,
         path=path,
@@ -618,16 +644,67 @@ def page_from_path(path: str) -> int | None:
     return int(match.group(1))
 
 
-def attachable_assets(parsed_bundle_dir: Path, assets: Sequence[RewriteAsset]) -> list[RewriteAsset]:
-    return [
-        asset
-        for asset in assets
-        if (parsed_bundle_dir / asset.path).is_file()
-        and (
-            asset.mime_type.startswith("image/")
-            or Path(asset.path).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
-        )
-    ]
+def content_linked_assets(context: ContextPacket) -> tuple[RewriteAsset, ...]:
+    assets_by_path = {asset.path: asset for asset in context.assets}
+    linked_assets: list[RewriteAsset] = []
+    seen: set[str] = set()
+    for path, page in content_image_references(context.source_content_markdown):
+        if path in seen:
+            continue
+        linked_assets.append(assets_by_path.get(path) or fallback_asset(path, page=page))
+        seen.add(path)
+    return tuple(linked_assets)
+
+
+def content_image_references(content_markdown: str) -> list[tuple[str, int | None]]:
+    references: list[tuple[str, int | None]] = []
+    current_page: int | None = None
+    for line in content_markdown.splitlines():
+        page_match = CONTENT_PAGE_MARKER_PATTERN.search(line)
+        if page_match:
+            current_page = int(page_match.group(1))
+        for path in IMAGE_SRC_PATTERN.findall(line):
+            references.append((path, current_page or page_from_path(path)))
+    return references
+
+
+def is_image_asset(asset: RewriteAsset) -> bool:
+    return asset.mime_type.startswith("image/") or Path(asset.path).suffix.lower() in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".bmp",
+        ".gif",
+    }
+
+
+def image_payloads_by_asset_path(
+    parsed_bundle_dir: Path,
+    assets: Sequence[RewriteAsset],
+    *,
+    require_images: bool,
+) -> dict[str, str]:
+    payloads: dict[str, str] = {}
+    for asset in assets:
+        if not is_image_asset(asset):
+            if require_images:
+                raise SourceRewriteError(f"Referenced asset is not an image for rewrite prompt: {asset.path}")
+            continue
+        asset_path = parsed_bundle_dir / asset.path
+        if not asset_path.is_file():
+            if require_images:
+                raise SourceRewriteError(f"Missing asset file for rewrite prompt: {asset_path}")
+            continue
+        payloads[asset.path] = base64.b64encode(asset_path.read_bytes()).decode("ascii")
+    return payloads
+
+
+def assets_with_payloads(
+    assets: Sequence[RewriteAsset],
+    image_payloads_by_path: Mapping[str, str],
+) -> tuple[RewriteAsset, ...]:
+    return tuple(asset for asset in assets if asset.path in image_payloads_by_path)
 
 
 def assert_client_supports_images(client: SupportsCompletion) -> None:
@@ -645,14 +722,127 @@ def assert_client_supports_images(client: SupportsCompletion) -> None:
         raise SourceRewriteError(f"Could not verify Ollama image support: {exc}") from exc
 
 
-def image_payloads_for_assets(parsed_bundle_dir: Path, assets: Sequence[RewriteAsset]) -> tuple[str, ...]:
-    payloads: list[str] = []
-    for asset in assets:
-        asset_path = parsed_bundle_dir / asset.path
-        if not asset_path.is_file():
-            raise SourceRewriteError(f"Missing asset file for rewrite prompt: {asset_path}")
-        payloads.append(base64.b64encode(asset_path.read_bytes()).decode("ascii"))
-    return tuple(payloads)
+def build_interleaved_rewrite_prompt(
+    context: ContextPacket,
+    *,
+    final_instruction: str,
+    image_payloads_by_path: Mapping[str, str],
+) -> RewritePrompt:
+    assets_by_path = {asset.path: asset for asset in context.assets}
+    prompt_messages: list[PromptMessage] = [
+        PromptMessage(
+            ChatMessage(
+                role="system",
+                content=GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+            )
+        ),
+        PromptMessage(
+            ChatMessage(
+                role="user",
+                content=(
+                    "Parsed source content.md follows. Text and images are in the original "
+                    "document order."
+                ),
+            )
+        ),
+    ]
+    prompt_messages.extend(
+        interleaved_content_messages(
+            context.source_content_markdown,
+            assets_by_path=assets_by_path,
+            image_payloads_by_path=image_payloads_by_path,
+        )
+    )
+    prompt_messages.append(PromptMessage(ChatMessage(role="user", content=final_instruction)))
+    rows = tuple(prompt_message_row(prompt_message) for prompt_message in prompt_messages)
+    attached_assets = unique_prompt_assets(prompt_messages)
+    return RewritePrompt(
+        messages=tuple(prompt_message.message for prompt_message in prompt_messages),
+        user_prompt=debug_user_prompt(rows),
+        prompt_messages=rows,
+        attached_assets=attached_assets,
+    )
+
+
+def interleaved_content_messages(
+    content_markdown: str,
+    *,
+    assets_by_path: Mapping[str, RewriteAsset],
+    image_payloads_by_path: Mapping[str, str],
+) -> tuple[PromptMessage, ...]:
+    messages: list[PromptMessage] = []
+    text_buffer: list[str] = []
+    current_page: int | None = None
+
+    def flush_text() -> None:
+        content = "".join(text_buffer).strip()
+        if content:
+            messages.append(PromptMessage(ChatMessage(role="user", content=content)))
+        text_buffer.clear()
+
+    for line in content_markdown.splitlines(keepends=True):
+        page_match = CONTENT_PAGE_MARKER_PATTERN.search(line)
+        if page_match:
+            current_page = int(page_match.group(1))
+        image_paths = IMAGE_SRC_PATTERN.findall(line)
+        if not image_paths:
+            text_buffer.append(line)
+            continue
+
+        line_assets: list[RewriteAsset] = []
+        line_payloads: list[str] = []
+        for image_path in image_paths:
+            payload = image_payloads_by_path.get(image_path)
+            if not payload:
+                continue
+            line_assets.append(
+                assets_by_path.get(image_path)
+                or fallback_asset(image_path, page=current_page or page_from_path(image_path))
+            )
+            line_payloads.append(payload)
+
+        if not line_payloads:
+            text_buffer.append(line)
+            continue
+
+        flush_text()
+        messages.append(
+            PromptMessage(
+                ChatMessage(role="user", content=line.strip(), images=tuple(line_payloads)),
+                attached_assets=tuple(line_assets),
+            )
+        )
+
+    flush_text()
+    return tuple(messages)
+
+
+def prompt_message_row(prompt_message: PromptMessage) -> dict[str, object]:
+    return {
+        "role": prompt_message.message.role,
+        "content": prompt_message.message.content,
+        "attached_asset_ids": [asset.asset_id for asset in prompt_message.attached_assets],
+    }
+
+
+def debug_user_prompt(prompt_messages: Sequence[Mapping[str, object]]) -> str:
+    return "\n\n".join(
+        str(message.get("content") or "")
+        for message in prompt_messages
+        if message.get("role") == "user"
+    ).strip()
+
+
+def unique_prompt_assets(prompt_messages: Sequence[PromptMessage]) -> tuple[RewriteAsset, ...]:
+    assets: list[RewriteAsset] = []
+    seen: set[str] = set()
+    for prompt_message in prompt_messages:
+        for asset in prompt_message.attached_assets:
+            if asset.path in seen:
+                continue
+            assets.append(asset)
+            seen.add(asset.path)
+    return tuple(assets)
 
 
 def rewrite_page_with_full_context(
@@ -660,18 +850,14 @@ def rewrite_page_with_full_context(
     *,
     context: ContextPacket,
     page: RewritePage,
-    attached_assets: Sequence[RewriteAsset],
-    image_payloads: tuple[str, ...],
+    image_payloads_by_path: Mapping[str, str],
     model: str,
 ) -> dict[str, object]:
-    user_prompt = build_page_rewrite_prompt(context, page, attached_assets)
+    prompt = build_page_rewrite_prompt(context, page, image_payloads_by_path)
     metrics: dict[str, object] = source_page_metrics(page.source_text)
     try:
         result = client.complete(
-            [
-                ChatMessage(role="system", content=GRADE_ONE_REWRITE_SYSTEM_PROMPT),
-                ChatMessage(role="user", content=user_prompt, images=image_payloads),
-            ],
+            list(prompt.messages),
             temperature=0.2,
             max_output_tokens=max(2048, min(8192, len(page.source_text) * 2)),
             json_mode=True,
@@ -693,8 +879,9 @@ def rewrite_page_with_full_context(
             "page": page.page,
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": user_prompt,
-            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
             "response": result.content,
             "rewritten_markdown": rewritten_markdown,
             "accepted": True,
@@ -707,8 +894,9 @@ def rewrite_page_with_full_context(
             "page": page.page,
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": user_prompt,
-            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
             "response": "",
             "rewritten_markdown": "",
             "accepted": False,
@@ -720,39 +908,30 @@ def rewrite_page_with_full_context(
 def build_page_rewrite_prompt(
     context: ContextPacket,
     page: RewritePage,
-    attached_assets: Sequence[RewriteAsset],
-) -> str:
-    asset_lines = (
-        "\n".join(
-            asset.prompt_row(image_index=index)
-            for index, asset in enumerate(attached_assets, start=1)
-        )
-        if attached_assets
-        else "No images are attached."
-    )
+    image_payloads_by_path: Mapping[str, str],
+) -> RewritePrompt:
     required_shape = {
         "source_id": context.source_id,
         "page": page.page,
         "rewritten_markdown": "...",
     }
-    return "\n".join(
+    instruction = "\n".join(
         [
-            "Full interleaved document context packet:",
-            context.content_markdown,
-            "",
-            "Attached image order:",
-            asset_lines,
-            "",
             "Rewrite request:",
             f"source_id: {context.source_id}",
             f"current_page: {page.page}",
-            "",
-            "Current page source markdown:",
-            page.context_markdown,
+            f"Rewrite only the source page marked {page_marker(page.page)} from the parsed content.md above.",
+            "Use the full parsed document and interleaved images above for context.",
+            "Preserve every image/html block from the current page exactly where it belongs.",
             "",
             "Return JSON exactly in this shape:",
             json.dumps(required_shape, ensure_ascii=False),
         ]
+    )
+    return build_interleaved_rewrite_prompt(
+        context,
+        final_instruction=instruction,
+        image_payloads_by_path=image_payloads_by_path,
     )
 
 
@@ -760,19 +939,15 @@ def rewrite_whole_document_with_full_context(
     client: SupportsCompletion,
     *,
     context: ContextPacket,
-    attached_assets: Sequence[RewriteAsset],
-    image_payloads: tuple[str, ...],
+    image_payloads_by_path: Mapping[str, str],
     model: str,
 ) -> dict[str, object]:
-    user_prompt = build_whole_document_rewrite_prompt(context, attached_assets)
+    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path)
     metrics: dict[str, object] = source_document_metrics(context)
     result: CompletionResult | None = None
     try:
         result = client.complete(
-            [
-                ChatMessage(role="system", content=GRADE_ONE_REWRITE_SYSTEM_PROMPT),
-                ChatMessage(role="user", content=user_prompt, images=image_payloads),
-            ],
+            list(prompt.messages),
             temperature=0.2,
             max_output_tokens=whole_document_max_output_tokens(context),
             json_mode=True,
@@ -794,8 +969,9 @@ def rewrite_whole_document_with_full_context(
             "rewrite_mode": "whole_document",
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": user_prompt,
-            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
             "response": result.content,
             "rewritten_markdown": rewritten_markdown,
             "accepted": True,
@@ -809,8 +985,9 @@ def rewrite_whole_document_with_full_context(
             "rewrite_mode": "whole_document",
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": user_prompt,
-            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
             "response": result.content if result is not None else "",
             "rewritten_markdown": "",
             "accepted": False,
@@ -823,17 +1000,19 @@ def failed_whole_document_attempt(
     *,
     context: ContextPacket,
     model: str,
-    attached_assets: Sequence[RewriteAsset],
+    image_payloads_by_path: Mapping[str, str],
     failure_reason: str,
 ) -> dict[str, object]:
+    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path)
     return {
         "source_id": context.source_id,
         "page": None,
         "rewrite_mode": "whole_document",
         "model": model,
         "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-        "user_prompt": build_whole_document_rewrite_prompt(context, attached_assets),
-        "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+        "user_prompt": prompt.user_prompt,
+        "prompt_messages": list(prompt.prompt_messages),
+        "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
         "response": "",
         "rewritten_markdown": "",
         "accepted": False,
@@ -844,45 +1023,36 @@ def failed_whole_document_attempt(
 
 def build_whole_document_rewrite_prompt(
     context: ContextPacket,
-    attached_assets: Sequence[RewriteAsset],
-) -> str:
-    asset_lines = (
-        "\n".join(
-            asset.prompt_row(image_index=index)
-            for index, asset in enumerate(attached_assets, start=1)
-        )
-        if attached_assets
-        else "No images are attached."
-    )
+    image_payloads_by_path: Mapping[str, str],
+) -> RewritePrompt:
     required_shape = {
         "source_id": context.source_id,
         "rewritten_markdown": "...",
     }
     page_markers = ", ".join(f"<!-- page:{page.page} -->" for page in context.pages)
-    return "\n".join(
+    instruction = "\n".join(
         [
-            "Full interleaved document context packet:",
-            context.content_markdown,
-            "",
-            "Attached image order:",
-            asset_lines,
-            "",
             "Whole-document rewrite request:",
             f"source_id: {context.source_id}",
-            "Rewrite the entire source material at once for Korean 1학년 readers.",
-            "Use the interleaved content as the source material. Do not rewrite the context packet metadata.",
+            "Rewrite the entire parsed content.md above at once for Korean 1학년 readers.",
+            "Use the full parsed document and interleaved images above as the source material.",
             f"Preserve every page marker exactly: {page_markers}",
-            "Preserve every image or asset markdown/html block exactly where it belongs in the rewritten document.",
+            "Preserve every image/html block exactly where it belongs in the rewritten document.",
             "Return one complete rewritten Markdown document, not page-by-page fragments.",
             "",
             "Return JSON exactly in this shape:",
             json.dumps(required_shape, ensure_ascii=False),
         ]
     )
+    return build_interleaved_rewrite_prompt(
+        context,
+        final_instruction=instruction,
+        image_payloads_by_path=image_payloads_by_path,
+    )
 
 
 def whole_document_max_output_tokens(context: ContextPacket) -> int:
-    return max(8192, min(32768, len(context.content_markdown) * 2))
+    return max(8192, min(32768, len(context.source_content_markdown) * 2))
 
 
 def parse_and_validate_rewrite_response(
@@ -1196,6 +1366,7 @@ def build_quality_report(
         "failed_page_count": failed_count,
         "failed_attempt_count": len(failure_rows),
         "asset_count": len(context.assets),
+        "asset_mode": "content-linked-interleaved-images",
         "attached_image_count": len(attached_assets),
         "pages": [
             {
@@ -1232,7 +1403,7 @@ def build_rewrite_manifest(
             "target_profile": target_profile,
             "mode": rewrite_mode,
             "model": model,
-            "asset_mode": "ollama-images-required",
+            "asset_mode": "content-linked-interleaved-images",
             "attached_image_count": len(attached_assets),
             "rewritten_at": datetime.now(timezone.utc).isoformat(),
         },
