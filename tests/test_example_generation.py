@@ -331,7 +331,7 @@ def candidate_term(
         "variant_count": 1,
         "variants": canonical_key if variants is None else variants,
         "quality_score": quality_score,
-        "roi_score": 0.5,
+        "roi_score": None,
         "example": f"{canonical_key} 예문",
     }
 
@@ -350,7 +350,7 @@ def dictionary_candidate(
         "count": 10,
         "document_count": 1,
         "quality_score": 0.8,
-        "roi_score": 0.5,
+        "roi_score": None,
         "example": example,
         "curation_status": "rewrite_ready",
         "example_replaced_with_cleaned_sentence": example_replaced_with_cleaned_sentence,

@@ -143,6 +143,7 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("공부하다", term_by_key)
             self.assertIn("공부하고", term_by_key["공부하다"]["variants"])
             self.assertIn("귤", term_by_key)
+            self.assertTrue(all(row["roi_score"] == "" for row in candidate_terms))
 
             with (output_dir / "07_rejected_terms.csv").open(encoding="utf-8-sig") as handle:
                 rejected = list(csv.DictReader(handle))
@@ -159,6 +160,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all(row["kind"] == "term" for row in dictionary_rows))
             self.assertTrue(all("first_source" not in row for row in dictionary_rows))
             self.assertTrue(all("first_page" not in row for row in dictionary_rows))
+            self.assertTrue(all(row["roi_score"] is None for row in dictionary_rows))
 
             with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
                 example_sentences = list(csv.DictReader(handle))
@@ -393,6 +395,7 @@ class PipelineTest(unittest.TestCase):
                 [row["canonical_key"] for row in cleaned_dictionary_rows],
                 [row["canonical_key"] for row in dictionary_rows],
             )
+            self.assertTrue(all(row["roi_score"] is None for row in cleaned_dictionary_rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertIn("11_cleaned_dictionary_candidates.jsonl", summary["outputs"])
@@ -446,6 +449,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all("example_replaced_with_cleaned_sentence" in row for row in linked_rows))
             self.assertTrue(any(bool(row["example_replaced_with_cleaned_sentence"]) for row in linked_rows))
             self.assertTrue(all(row.get("curation_status") == "rewrite_ready" for row in linked_rows))
+            self.assertTrue(all(row["roi_score"] is None for row in linked_rows))
             self.assertTrue(
                 all(
                     bool(str(row["example"]).strip())
@@ -501,7 +505,7 @@ class PipelineTest(unittest.TestCase):
                             "variant_count": 1,
                             "variants": "학교",
                             "quality_score": 0.9,
-                            "roi_score": 0.5,
+                            "roi_score": "",
                             "example": "학교 예문",
                         },
                         {
@@ -515,7 +519,7 @@ class PipelineTest(unittest.TestCase):
                             "variant_count": 1,
                             "variants": "버스",
                             "quality_score": 0.8,
-                            "roi_score": 0.5,
+                            "roi_score": "",
                             "example": "버스 예문",
                         },
                     ]
@@ -533,7 +537,7 @@ class PipelineTest(unittest.TestCase):
                                 "count": 10,
                                 "document_count": 1,
                                 "quality_score": 0.9,
-                                "roi_score": 0.5,
+                                "roi_score": None,
                                 "example": "원래 학교 예문이다.",
                                 "curation_status": "rewrite_ready",
                                 "example_replaced_with_cleaned_sentence": False,
@@ -549,7 +553,7 @@ class PipelineTest(unittest.TestCase):
                                 "count": 9,
                                 "document_count": 1,
                                 "quality_score": 0.8,
-                                "roi_score": 0.5,
+                                "roi_score": None,
                                 "example": "아침마다 버스를 타고 회사에 간다.",
                                 "curation_status": "rewrite_ready",
                                 "example_replaced_with_cleaned_sentence": True,
@@ -588,6 +592,7 @@ class PipelineTest(unittest.TestCase):
 
             self.assertEqual(len(generated_rows), 2)
             self.assertEqual(len(generated_attempt_rows), 1)
+            self.assertTrue(all(row["roi_score"] is None for row in generated_rows))
             self.assertEqual(generated_rows[0]["example"], "학생들이 학교 운동장에서 축구를 한다.")
             self.assertTrue(generated_rows[0]["example_generated_with_ollama"])
             self.assertFalse(generated_rows[0]["example_replaced_with_cleaned_sentence"])
@@ -651,7 +656,7 @@ class PipelineTest(unittest.TestCase):
                         "variant_count": 1,
                         "variants": "비슷하다",
                         "quality_score": 0.9,
-                        "roi_score": 0.5,
+                        "roi_score": "",
                         "example": "비슷하다 예문",
                     }
                 )
@@ -666,7 +671,7 @@ class PipelineTest(unittest.TestCase):
                         "count": 10,
                         "document_count": 1,
                         "quality_score": 0.9,
-                        "roi_score": 0.5,
+                        "roi_score": None,
                         "example": "비슷하다",
                         "curation_status": "rewrite_ready",
                         "example_replaced_with_cleaned_sentence": False,
@@ -700,6 +705,7 @@ class PipelineTest(unittest.TestCase):
             ]
 
             self.assertEqual(generated_rows[0]["example"], "두 그림은 서로 닮은 점이 많다.")
+            self.assertIsNone(generated_rows[0]["roi_score"])
             self.assertTrue(generated_rows[0]["example_generated_with_ollama"])
             self.assertEqual(len(generated_attempt_rows), 2)
             self.assertFalse(generated_attempt_rows[0]["accepted"])
@@ -758,7 +764,7 @@ class PipelineTest(unittest.TestCase):
                         "variant_count": 1,
                         "variants": "사과",
                         "quality_score": 0.9,
-                        "roi_score": 0.5,
+                        "roi_score": "",
                         "example": "사과 예문",
                     }
                 )
@@ -774,7 +780,7 @@ class PipelineTest(unittest.TestCase):
                             "count": 1,
                             "document_count": 1,
                             "quality_score": 0.9,
-                            "roi_score": 0.5,
+                            "roi_score": None,
                             "example": f"원래 사과 예문 {index}.",
                             "curation_status": "rewrite_ready",
                             "example_replaced_with_cleaned_sentence": False,

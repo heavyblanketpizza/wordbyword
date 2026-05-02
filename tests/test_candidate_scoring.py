@@ -8,7 +8,9 @@ from wordbyword.dictionary_build.candidates import (
     CandidateAggregate,
     dispersion_score,
     frequency_usefulness_score,
+    parse_roi_score,
     roi_score,
+    roi_score_sort_key,
     term_quality_score,
 )
 
@@ -59,7 +61,26 @@ class CandidateScoringTest(unittest.TestCase):
         self.assertGreater(POS_WEIGHTS["foreign_or_hanja"], POS_WEIGHTS["proper_or_specific_noun"])
 
     def test_roi_score_is_a_placeholder_until_dynamic_priority_logic_exists(self) -> None:
-        self.assertEqual(roi_score(), 0.5)
+        self.assertIsNone(roi_score())
+
+    def test_parse_roi_score_accepts_uncalculated_and_calculated_scores(self) -> None:
+        self.assertIsNone(parse_roi_score(None))
+        self.assertIsNone(parse_roi_score(""))
+        self.assertIsNone(parse_roi_score("   "))
+        self.assertEqual(parse_roi_score(0.0), 0.0)
+        self.assertEqual(parse_roi_score("0.5"), 0.5)
+        self.assertEqual(parse_roi_score(1.0), 1.0)
+
+    def test_parse_roi_score_rejects_out_of_range_scores(self) -> None:
+        for value in (-1.0, "-0.01", 1.01, True, "not-a-score"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    parse_roi_score(value)
+
+    def test_roi_score_sort_key_puts_uncalculated_scores_last(self) -> None:
+        rows = [None, 0.0, 0.8, 0.2, ""]
+
+        self.assertEqual(sorted(rows, key=roi_score_sort_key), [0.8, 0.2, 0.0, None, ""])
 
 
 if __name__ == "__main__":

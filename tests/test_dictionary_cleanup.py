@@ -7,6 +7,7 @@ from wordbyword.dictionary_build.dictionary_cleanup import (
     DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE,
     IndexedDictionaryCandidate,
     build_cleaned_dictionary_candidate_outputs,
+    build_dictionary_prompt_packet,
     dictionary_cleanup_batch_sizes,
     review_dictionary_cleanup_batch,
 )
@@ -44,6 +45,15 @@ class DictionaryCleanupTest(unittest.TestCase):
         self.assertIn("드소토", system_prompt)
         self.assertIn("김철수", system_prompt)
         self.assertIn("Keep ordinary Korean vocabulary", system_prompt)
+
+    def test_dictionary_cleanup_prompt_preserves_uncalculated_roi_score(self) -> None:
+        packet = build_dictionary_prompt_packet(
+            dictionary_candidate("학교"),
+            candidate_term("학교", "noun"),
+            [],
+        )
+
+        self.assertIsNone(packet["roi_score"])
 
     def test_build_cleaned_dictionary_candidate_outputs_rejects_names_and_keeps_common_words(self) -> None:
         outputs = build_cleaned_dictionary_candidate_outputs(
@@ -99,7 +109,7 @@ def dictionary_candidate(canonical_key: str, *, example: str = "") -> dict[str, 
         "count": 3,
         "document_count": 1,
         "quality_score": 0.5,
-        "roi_score": 0.5,
+        "roi_score": None,
         "example": example or f"{canonical_key} 예문입니다.",
         "curation_status": "candidate",
     }

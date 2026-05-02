@@ -19,13 +19,22 @@ from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
     parse_json_object,
 )
-from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, write_jsonl
+from wordbyword.dictionary_build.candidates import parse_roi_score
+from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, read_jsonl, write_jsonl
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
 DEFAULT_REWRITE_OUTPUT_ROOT = Path("rewritten-for-class") / "grade1-ko-ollama"
 DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
     Path("rewritten-for-class") / "grade1-ko-ollama-whole-document"
+)
+DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
+    Path("rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided"
+)
+VOCABULARY_GUIDED_CANDIDATE_LIMIT = 150
+VOCABULARY_GUIDED_SELECTION_LIMIT = 15
+VOCABULARY_GUIDED_SCORING_POLICY = (
+    "selection_score=max(quality_score, roi_score); null roi_score falls back to quality_score"
 )
 IMAGE_SRC_PATTERN = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -41,6 +50,21 @@ Use the whole document and figures for context.
 Do not add facts that are not present in the source.
 Do not use any built vocabulary, dictionary artifact, vocabulary list, or external glossary.
 Preserve the original page's image and asset markdown/html blocks exactly.
+Return only the requested JSON object."""
+
+VOCABULARY_SELECTION_SYSTEM_PROMPT = """You choose Korean learner-dictionary vocabulary to guide a story-style rewrite.
+Read the full class-source material and figures for context.
+Choose vocabulary that helps a Korean 1학년 student understand the source ideas.
+You may choose concrete familiar words for metaphors when the source concept is too abstract.
+Choose only from the offered vocabulary list.
+Return only the requested JSON object."""
+
+VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT = """You rewrite mature class-source materials into Korean for 1학년 students, about seven years old.
+Use short, natural Korean sentences.
+Keep the source concepts faithful, but write in a story-like style when it helps young readers.
+Use the selected vocabulary naturally as a guide, including metaphor when useful.
+Do not add facts that are not present in the source.
+Preserve the original page markers and every image or asset markdown/html block exactly.
 Return only the requested JSON object."""
 
 
@@ -159,6 +183,65 @@ class SourceWholeRewriteBatchOutputs:
     parsed_root: Path
     output_root: Path
     source_outputs: list[SourceWholeRewriteOutputs]
+    skipped_sources: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class VocabularyCandidate:
+    canonical_key: str
+    example: str
+    quality_score: float
+    roi_score: float | None
+    selection_score: float
+    count: int
+
+    def prompt_row(self) -> dict[str, object]:
+        return {
+            "canonical_key": self.canonical_key,
+            "example": self.example,
+        }
+
+    def json_row(self, *, reason: str = "", role: str = "") -> dict[str, object]:
+        return {
+            "canonical_key": self.canonical_key,
+            "example": self.example,
+            "quality_score": self.quality_score,
+            "roi_score": self.roi_score,
+            "selection_score": self.selection_score,
+            "count": self.count,
+            "reason": reason,
+            "role": role,
+        }
+
+
+@dataclass(frozen=True)
+class SelectedVocabulary:
+    candidate: VocabularyCandidate
+    reason: str = ""
+    role: str = ""
+
+    def json_row(self) -> dict[str, object]:
+        return self.candidate.json_row(reason=self.reason, role=self.role)
+
+
+@dataclass(frozen=True)
+class SourceVocabularyGuidedRewriteOutputs:
+    source_id: str
+    output_dir: Path
+    rewritten_page_count: int
+    failed_page_count: int
+    page_rows: list[dict[str, object]]
+    attempt_rows: list[dict[str, object]]
+    failure_rows: list[dict[str, object]]
+    selection_attempt_rows: list[dict[str, object]]
+    selected_vocabulary: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class SourceVocabularyGuidedRewriteBatchOutputs:
+    parsed_root: Path
+    output_root: Path
+    source_outputs: list[SourceVocabularyGuidedRewriteOutputs]
     skipped_sources: list[dict[str, object]]
 
 
@@ -415,6 +498,284 @@ def rewrite_whole_source_materials(
         source_outputs=source_outputs,
         skipped_sources=skipped_sources,
     )
+
+
+def rewrite_vocabulary_guided_source_material(
+    parsed_bundle_dir: Path,
+    *,
+    dictionary_path: Path,
+    output_root: Path = DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+    client: SupportsCompletion,
+    model: str,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
+    require_images: bool = True,
+    progress: ProgressCallback | None = None,
+) -> SourceVocabularyGuidedRewriteOutputs:
+    context = build_context_packet(parsed_bundle_dir)
+    if not context.pages:
+        raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
+
+    candidate_pool = load_vocabulary_guided_candidates(dictionary_path)
+    output_dir = output_root / context.source_id
+    _report(progress, context.source_id, f"preparing vocabulary-guided rewrite output at {output_dir}")
+    prepare_output_dir(output_dir)
+    copy_assets(parsed_bundle_dir, output_dir)
+    (output_dir / "context_packet.md").write_text(context.content_markdown, encoding="utf-8")
+
+    attempts_path = output_dir / "attempts.jsonl"
+    failures_path = output_dir / "failures.jsonl"
+    selection_attempts_path = output_dir / "selection_attempts.jsonl"
+    initialize_jsonl_file(attempts_path)
+    initialize_jsonl_file(failures_path)
+    initialize_jsonl_file(selection_attempts_path)
+
+    content_assets = content_linked_assets(context)
+    attached_assets: tuple[RewriteAsset, ...] = ()
+    image_payloads_by_path: dict[str, str] = {}
+    preflight_error = ""
+    try:
+        if require_images and content_assets:
+            assert_client_supports_images(client)
+        image_payloads_by_path = image_payloads_by_asset_path(
+            parsed_bundle_dir,
+            content_assets,
+            require_images=require_images,
+        )
+        attached_assets = assets_with_payloads(content_assets, image_payloads_by_path)
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+        preflight_error = str(exc)
+
+    if preflight_error:
+        selection_attempt, selected = failed_vocabulary_selection_attempt(
+            context=context,
+            candidate_pool=candidate_pool,
+            image_payloads_by_path=image_payloads_by_path,
+            model=model,
+            failure_reason=preflight_error,
+        )
+    elif not candidate_pool:
+        selection_attempt, selected = failed_vocabulary_selection_attempt(
+            context=context,
+            candidate_pool=candidate_pool,
+            image_payloads_by_path=image_payloads_by_path,
+            model=model,
+            failure_reason=f"No eligible vocabulary rows found in {dictionary_path}.",
+        )
+    else:
+        _report(progress, context.source_id, "selecting vocabulary guidance")
+        selection_attempt, selected = select_vocabulary_for_rewrite(
+            client,
+            context=context,
+            candidate_pool=candidate_pool,
+            image_payloads_by_path=image_payloads_by_path,
+            model=model,
+        )
+
+    selection_attempt_rows = [selection_attempt]
+    append_jsonl(selection_attempts_path, selection_attempt_rows)
+    selected_vocabulary_rows = [item.json_row() for item in selected]
+    write_selected_vocabulary_artifact(
+        output_dir / "selected_vocabulary.json",
+        context=context,
+        dictionary_path=dictionary_path,
+        candidate_pool=candidate_pool,
+        selected_vocabulary_rows=selected_vocabulary_rows,
+        failure_reason="" if bool(selection_attempt["accepted"]) else str(selection_attempt["failure_reason"]),
+    )
+
+    if bool(selection_attempt["accepted"]):
+        _report(progress, context.source_id, "rewriting whole document with selected vocabulary")
+        attempt = rewrite_vocabulary_guided_document_with_full_context(
+            client,
+            context=context,
+            selected_vocabulary=selected,
+            image_payloads_by_path=image_payloads_by_path,
+            model=model,
+        )
+    else:
+        attempt = failed_vocabulary_guided_document_attempt(
+            context=context,
+            model=model,
+            failure_reason="Vocabulary selection failed: " + str(selection_attempt["failure_reason"]),
+        )
+
+    attempt_rows = [attempt]
+    failure_rows = [] if bool(attempt["accepted"]) else [attempt]
+    page_rows = (
+        materialize_whole_document_page_rows(
+            context=context,
+            rewritten_markdown=str(attempt["rewritten_markdown"]),
+        )
+        if bool(attempt["accepted"])
+        else materialize_failed_whole_document_page_rows(
+            context=context,
+            failure_reason=str(attempt["failure_reason"]),
+        )
+    )
+    append_jsonl(attempts_path, attempt_rows)
+    write_jsonl(failures_path, failure_rows)
+    write_rewrite_artifacts(
+        output_dir,
+        context=context,
+        page_rows=page_rows,
+        attempt_rows=attempt_rows,
+        failure_rows=failure_rows,
+        model=model,
+        target_profile=target_profile,
+        attached_assets=attached_assets,
+        content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
+        rewrite_mode="vocabulary_guided",
+        vocabulary_guidance=vocabulary_guidance_metadata(
+            dictionary_path=dictionary_path,
+            candidate_pool=candidate_pool,
+            selected_vocabulary_rows=selected_vocabulary_rows,
+        ),
+    )
+
+    rewritten_page_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
+    failed_page_count = sum(1 for row in page_rows if row.get("status") == "failed")
+    return SourceVocabularyGuidedRewriteOutputs(
+        source_id=context.source_id,
+        output_dir=output_dir,
+        rewritten_page_count=rewritten_page_count,
+        failed_page_count=failed_page_count,
+        page_rows=page_rows,
+        attempt_rows=attempt_rows,
+        failure_rows=failure_rows,
+        selection_attempt_rows=selection_attempt_rows,
+        selected_vocabulary=selected_vocabulary_rows,
+    )
+
+
+def rewrite_vocabulary_guided_source_materials(
+    parsed_root: Path,
+    *,
+    dictionary_path: Path,
+    output_root: Path = DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+    client: SupportsCompletion,
+    model: str,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
+    require_images: bool = True,
+    progress: ProgressCallback | None = None,
+) -> SourceVocabularyGuidedRewriteBatchOutputs:
+    source_outputs: list[SourceVocabularyGuidedRewriteOutputs] = []
+    skipped_sources: list[dict[str, object]] = []
+    for bundle_dir in discover_parsed_bundles(parsed_root):
+        skip_reason = skip_reason_for_bundle(bundle_dir)
+        if skip_reason:
+            skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
+            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
+            continue
+        source_outputs.append(
+            rewrite_vocabulary_guided_source_material(
+                bundle_dir,
+                dictionary_path=dictionary_path,
+                output_root=output_root,
+                client=client,
+                model=model,
+                target_profile=target_profile,
+                require_images=require_images,
+                progress=progress,
+            )
+        )
+    return SourceVocabularyGuidedRewriteBatchOutputs(
+        parsed_root=parsed_root,
+        output_root=output_root,
+        source_outputs=source_outputs,
+        skipped_sources=skipped_sources,
+    )
+
+
+def load_vocabulary_guided_candidates(dictionary_path: Path) -> list[VocabularyCandidate]:
+    if not dictionary_path.is_file():
+        raise SourceRewriteError(f"Missing vocabulary-guided rewrite dictionary: {dictionary_path}")
+    try:
+        rows = read_jsonl(dictionary_path)
+    except (OSError, ValueError) as exc:
+        raise SourceRewriteError(f"Could not read vocabulary-guided rewrite dictionary {dictionary_path}: {exc}") from exc
+
+    candidates: list[VocabularyCandidate] = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, Mapping):
+            raise SourceRewriteError(f"Dictionary row {index} in {dictionary_path} is not a JSON object.")
+        candidate = vocabulary_candidate_from_dictionary_row(row, row_number=index, dictionary_path=dictionary_path)
+        if candidate is not None:
+            candidates.append(candidate)
+    candidates.sort(
+        key=lambda candidate: (
+            -candidate.selection_score,
+            -candidate.quality_score,
+            -candidate.count,
+            candidate.canonical_key,
+        )
+    )
+    return candidates[:VOCABULARY_GUIDED_CANDIDATE_LIMIT]
+
+
+def vocabulary_candidate_from_dictionary_row(
+    row: Mapping[str, object],
+    *,
+    row_number: int,
+    dictionary_path: Path,
+) -> VocabularyCandidate | None:
+    canonical_key = str(row.get("canonical_key", "") or "").strip()
+    example = str(row.get("example", "") or "").strip()
+    if not canonical_key or not example:
+        return None
+    quality_score = parse_selection_score(
+        row.get("quality_score"),
+        field_name="quality_score",
+        row_number=row_number,
+        dictionary_path=dictionary_path,
+    )
+    try:
+        roi_score = parse_roi_score(row.get("roi_score"))
+    except ValueError as exc:
+        raise SourceRewriteError(f"Invalid roi_score in row {row_number} of {dictionary_path}: {exc}") from exc
+    count = parse_nonnegative_int(row.get("count"), field_name="count", row_number=row_number, dictionary_path=dictionary_path)
+    selection_score = max(quality_score, roi_score) if roi_score is not None else quality_score
+    return VocabularyCandidate(
+        canonical_key=canonical_key,
+        example=example,
+        quality_score=quality_score,
+        roi_score=roi_score,
+        selection_score=selection_score,
+        count=count,
+    )
+
+
+def parse_selection_score(
+    value: object,
+    *,
+    field_name: str,
+    row_number: int,
+    dictionary_path: Path,
+) -> float:
+    if value is None or (isinstance(value, str) and not value.strip()) or isinstance(value, bool):
+        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}")
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as exc:
+        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}") from exc
+    if not 0.0 <= score <= 1.0:
+        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}")
+    return score
+
+
+def parse_nonnegative_int(
+    value: object,
+    *,
+    field_name: str,
+    row_number: int,
+    dictionary_path: Path,
+) -> int:
+    if value is None or value == "":
+        return 0
+    try:
+        count = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}") from exc
+    return max(count, 0)
 
 
 def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
@@ -727,13 +1088,14 @@ def build_interleaved_rewrite_prompt(
     *,
     final_instruction: str,
     image_payloads_by_path: Mapping[str, str],
+    system_prompt: str = GRADE_ONE_REWRITE_SYSTEM_PROMPT,
 ) -> RewritePrompt:
     assets_by_path = {asset.path: asset for asset in context.assets}
     prompt_messages: list[PromptMessage] = [
         PromptMessage(
             ChatMessage(
                 role="system",
-                content=GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+                content=system_prompt,
             )
         ),
         PromptMessage(
@@ -1021,6 +1383,378 @@ def failed_whole_document_attempt(
     }
 
 
+def select_vocabulary_for_rewrite(
+    client: SupportsCompletion,
+    *,
+    context: ContextPacket,
+    candidate_pool: Sequence[VocabularyCandidate],
+    image_payloads_by_path: Mapping[str, str],
+    model: str,
+) -> tuple[dict[str, object], list[SelectedVocabulary]]:
+    prompt = build_vocabulary_selection_prompt(
+        context,
+        candidate_pool,
+        image_payloads_by_path,
+    )
+    result: CompletionResult | None = None
+    try:
+        result = client.complete(
+            list(prompt.messages),
+            temperature=0.2,
+            max_output_tokens=max(1024, min(8192, len(candidate_pool) * 96)),
+            json_mode=True,
+        )
+        selected = parse_and_validate_vocabulary_selection_response(
+            result,
+            context=context,
+            candidate_pool=candidate_pool,
+        )
+        return (
+            {
+                "source_id": context.source_id,
+                "rewrite_mode": "vocabulary_guided",
+                "attempt_kind": "vocabulary_selection",
+                "model": model,
+                "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
+                "user_prompt": prompt.user_prompt,
+                "prompt_messages": list(prompt.prompt_messages),
+                "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+                "candidate_count": len(candidate_pool),
+                "requested_count": expected_selected_vocabulary_count(candidate_pool),
+                "response": result.content,
+                "selected_canonical_keys": [item.candidate.canonical_key for item in selected],
+                "accepted": True,
+                "failure_reason": "",
+            },
+            selected,
+        )
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+        return (
+            {
+                "source_id": context.source_id,
+                "rewrite_mode": "vocabulary_guided",
+                "attempt_kind": "vocabulary_selection",
+                "model": model,
+                "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
+                "user_prompt": prompt.user_prompt,
+                "prompt_messages": list(prompt.prompt_messages),
+                "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+                "candidate_count": len(candidate_pool),
+                "requested_count": expected_selected_vocabulary_count(candidate_pool),
+                "response": result.content if result is not None else "",
+                "selected_canonical_keys": [],
+                "accepted": False,
+                "failure_reason": str(exc),
+            },
+            [],
+        )
+
+
+def failed_vocabulary_selection_attempt(
+    *,
+    context: ContextPacket,
+    candidate_pool: Sequence[VocabularyCandidate],
+    image_payloads_by_path: Mapping[str, str],
+    model: str,
+    failure_reason: str,
+) -> tuple[dict[str, object], list[SelectedVocabulary]]:
+    prompt = build_vocabulary_selection_prompt(
+        context,
+        candidate_pool,
+        image_payloads_by_path,
+    )
+    return (
+        {
+            "source_id": context.source_id,
+            "rewrite_mode": "vocabulary_guided",
+            "attempt_kind": "vocabulary_selection",
+            "model": model,
+            "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+            "candidate_count": len(candidate_pool),
+            "requested_count": expected_selected_vocabulary_count(candidate_pool),
+            "response": "",
+            "selected_canonical_keys": [],
+            "accepted": False,
+            "failure_reason": failure_reason,
+        },
+        [],
+    )
+
+
+def rewrite_vocabulary_guided_document_with_full_context(
+    client: SupportsCompletion,
+    *,
+    context: ContextPacket,
+    selected_vocabulary: Sequence[SelectedVocabulary],
+    image_payloads_by_path: Mapping[str, str],
+    model: str,
+) -> dict[str, object]:
+    prompt = build_vocabulary_guided_rewrite_prompt(
+        context,
+        selected_vocabulary,
+        image_payloads_by_path,
+    )
+    metrics: dict[str, object] = {
+        **source_document_metrics(context),
+        "selected_vocabulary_count": len(selected_vocabulary),
+        "selected_canonical_keys": [item.candidate.canonical_key for item in selected_vocabulary],
+    }
+    result: CompletionResult | None = None
+    try:
+        result = client.complete(
+            list(prompt.messages),
+            temperature=0.2,
+            max_output_tokens=whole_document_max_output_tokens(context),
+            json_mode=True,
+        )
+        rewritten_markdown = parse_and_validate_whole_rewrite_response(
+            result,
+            context=context,
+        )
+        metrics = {
+            **metrics,
+            **rewritten_document_metrics(
+                context=context,
+                rewritten_markdown=rewritten_markdown,
+            ),
+        }
+        return {
+            "source_id": context.source_id,
+            "page": None,
+            "rewrite_mode": "vocabulary_guided",
+            "attempt_kind": "rewrite",
+            "model": model,
+            "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+            "selected_vocabulary": [item.json_row() for item in selected_vocabulary],
+            "response": result.content,
+            "rewritten_markdown": rewritten_markdown,
+            "accepted": True,
+            "failure_reason": "",
+            "metrics": metrics,
+        }
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+        return {
+            "source_id": context.source_id,
+            "page": None,
+            "rewrite_mode": "vocabulary_guided",
+            "attempt_kind": "rewrite",
+            "model": model,
+            "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+            "user_prompt": prompt.user_prompt,
+            "prompt_messages": list(prompt.prompt_messages),
+            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+            "selected_vocabulary": [item.json_row() for item in selected_vocabulary],
+            "response": result.content if result is not None else "",
+            "rewritten_markdown": "",
+            "accepted": False,
+            "failure_reason": str(exc),
+            "metrics": metrics,
+        }
+
+
+def failed_vocabulary_guided_document_attempt(
+    *,
+    context: ContextPacket,
+    model: str,
+    failure_reason: str,
+) -> dict[str, object]:
+    return {
+        "source_id": context.source_id,
+        "page": None,
+        "rewrite_mode": "vocabulary_guided",
+        "attempt_kind": "rewrite",
+        "model": model,
+        "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+        "user_prompt": "",
+        "prompt_messages": [],
+        "attached_asset_ids": [],
+        "selected_vocabulary": [],
+        "response": "",
+        "rewritten_markdown": "",
+        "accepted": False,
+        "failure_reason": failure_reason,
+        "metrics": source_document_metrics(context),
+    }
+
+
+def build_vocabulary_selection_prompt(
+    context: ContextPacket,
+    candidate_pool: Sequence[VocabularyCandidate],
+    image_payloads_by_path: Mapping[str, str],
+) -> RewritePrompt:
+    required_shape = {
+        "source_id": context.source_id,
+        "selected_vocabulary": [
+            {
+                "canonical_key": "...",
+                "reason": "...",
+                "role": "...",
+            }
+        ],
+    }
+    candidate_rows = [candidate.prompt_row() for candidate in candidate_pool]
+    instruction = "\n".join(
+        [
+            "Vocabulary-selection request:",
+            f"source_id: {context.source_id}",
+            f"Choose exactly {expected_selected_vocabulary_count(candidate_pool)} vocabulary items.",
+            "Choose only from the offered candidate_vocabulary array.",
+            "Use the parsed source material above to decide which words best support a story-style 1학년 rewrite.",
+            "The offered rows contain only canonical_key and example.",
+            "",
+            "candidate_vocabulary:",
+            json.dumps(candidate_rows, ensure_ascii=False),
+            "",
+            "Return JSON exactly in this shape:",
+            json.dumps(required_shape, ensure_ascii=False),
+        ]
+    )
+    return build_interleaved_rewrite_prompt(
+        context,
+        final_instruction=instruction,
+        image_payloads_by_path=image_payloads_by_path,
+        system_prompt=VOCABULARY_SELECTION_SYSTEM_PROMPT,
+    )
+
+
+def build_vocabulary_guided_rewrite_prompt(
+    context: ContextPacket,
+    selected_vocabulary: Sequence[SelectedVocabulary],
+    image_payloads_by_path: Mapping[str, str],
+) -> RewritePrompt:
+    required_shape = {
+        "source_id": context.source_id,
+        "rewritten_markdown": "...",
+    }
+    page_markers = ", ".join(f"<!-- page:{page.page} -->" for page in context.pages)
+    selected_rows = [item.json_row() for item in selected_vocabulary]
+    instruction = "\n".join(
+        [
+            "Vocabulary-guided whole-document rewrite request:",
+            f"source_id: {context.source_id}",
+            "Rewrite the entire parsed content.md above as a faithful story-style text for Korean 1학년 readers.",
+            "Use the selected vocabulary as the learner-friendly word palette.",
+            "Use each selected vocabulary item naturally when it can fit without distorting the source concepts.",
+            "Concrete selected words may be used as metaphors for difficult source concepts.",
+            f"Preserve every page marker exactly: {page_markers}",
+            "Preserve every image/html block exactly where it belongs in the rewritten document.",
+            "Return one complete rewritten Markdown document, not page-by-page fragments.",
+            "",
+            "selected_vocabulary:",
+            json.dumps(selected_rows, ensure_ascii=False),
+            "",
+            "Return JSON exactly in this shape:",
+            json.dumps(required_shape, ensure_ascii=False),
+        ]
+    )
+    return build_interleaved_rewrite_prompt(
+        context,
+        final_instruction=instruction,
+        image_payloads_by_path=image_payloads_by_path,
+        system_prompt=VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+    )
+
+
+def parse_and_validate_vocabulary_selection_response(
+    result: CompletionResult,
+    *,
+    context: ContextPacket,
+    candidate_pool: Sequence[VocabularyCandidate],
+) -> list[SelectedVocabulary]:
+    if MARKDOWN_FENCE in result.content:
+        raise SourceRewriteError("Vocabulary-selection response included a markdown fence.")
+    parsed = parse_json_object(result.content)
+    if str(parsed.get("source_id") or "") != context.source_id:
+        raise SourceRewriteError(f"Vocabulary-selection response omitted requested source_id '{context.source_id}'.")
+    raw_selected = parsed.get("selected_vocabulary")
+    if not isinstance(raw_selected, list):
+        raise SourceRewriteError("Vocabulary-selection response did not include selected_vocabulary as a list.")
+
+    candidate_by_key = {candidate.canonical_key: candidate for candidate in candidate_pool}
+    expected_count = expected_selected_vocabulary_count(candidate_pool)
+    if len(raw_selected) != expected_count:
+        raise SourceRewriteError(
+            f"Vocabulary-selection response selected {len(raw_selected)} row(s); expected {expected_count}."
+        )
+
+    selected: list[SelectedVocabulary] = []
+    seen_keys: set[str] = set()
+    for item in raw_selected:
+        if isinstance(item, str):
+            canonical_key = item.strip()
+            reason = ""
+            role = ""
+        elif isinstance(item, Mapping):
+            canonical_key = str(item.get("canonical_key", "") or "").strip()
+            reason = str(item.get("reason", "") or "").strip()
+            role = str(item.get("role", "") or "").strip()
+        else:
+            raise SourceRewriteError("Vocabulary-selection entries must be objects or canonical-key strings.")
+        if not canonical_key:
+            raise SourceRewriteError("Vocabulary-selection response included an empty canonical_key.")
+        if canonical_key in seen_keys:
+            raise SourceRewriteError(f"Vocabulary-selection response repeated canonical_key '{canonical_key}'.")
+        if canonical_key not in candidate_by_key:
+            raise SourceRewriteError(f"Vocabulary-selection response included unknown canonical_key '{canonical_key}'.")
+        seen_keys.add(canonical_key)
+        selected.append(SelectedVocabulary(candidate_by_key[canonical_key], reason=reason, role=role))
+    return selected
+
+
+def expected_selected_vocabulary_count(candidate_pool: Sequence[VocabularyCandidate]) -> int:
+    return min(VOCABULARY_GUIDED_SELECTION_LIMIT, len(candidate_pool))
+
+
+def write_selected_vocabulary_artifact(
+    path: Path,
+    *,
+    context: ContextPacket,
+    dictionary_path: Path,
+    candidate_pool: Sequence[VocabularyCandidate],
+    selected_vocabulary_rows: Sequence[Mapping[str, object]],
+    failure_reason: str = "",
+) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "source_id": context.source_id,
+                "dictionary_path": str(dictionary_path),
+                "candidate_count": len(candidate_pool),
+                "selected_count": len(selected_vocabulary_rows),
+                "selection_scoring_policy": VOCABULARY_GUIDED_SCORING_POLICY,
+                "selected_canonical_keys": [row.get("canonical_key", "") for row in selected_vocabulary_rows],
+                "selected_vocabulary": list(selected_vocabulary_rows),
+                "failure_reason": failure_reason,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def vocabulary_guidance_metadata(
+    *,
+    dictionary_path: Path,
+    candidate_pool: Sequence[VocabularyCandidate],
+    selected_vocabulary_rows: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    return {
+        "dictionary_path": str(dictionary_path),
+        "candidate_count": len(candidate_pool),
+        "selected_count": len(selected_vocabulary_rows),
+        "selected_canonical_keys": [row.get("canonical_key", "") for row in selected_vocabulary_rows],
+        "selection_scoring_policy": VOCABULARY_GUIDED_SCORING_POLICY,
+    }
+
+
 def build_whole_document_rewrite_prompt(
     context: ContextPacket,
     image_payloads_by_path: Mapping[str, str],
@@ -1284,6 +2018,7 @@ def write_rewrite_artifacts(
     attached_assets: Sequence[RewriteAsset],
     content_markdown: str | None = None,
     rewrite_mode: str = "page",
+    vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> None:
     (output_dir / "content.md").write_text(
         (content_markdown.strip() + "\n")
@@ -1305,6 +2040,7 @@ def write_rewrite_artifacts(
                 target_profile=target_profile,
                 attached_assets=attached_assets,
                 rewrite_mode=rewrite_mode,
+                vocabulary_guidance=vocabulary_guidance,
             ),
             ensure_ascii=False,
             indent=2,
@@ -1320,6 +2056,7 @@ def write_rewrite_artifacts(
                 target_profile=target_profile,
                 attached_assets=attached_assets,
                 rewrite_mode=rewrite_mode,
+                vocabulary_guidance=vocabulary_guidance,
             ),
             ensure_ascii=False,
             indent=2,
@@ -1352,10 +2089,11 @@ def build_quality_report(
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
     rewrite_mode: str = "page",
+    vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewritten_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
     failed_count = sum(1 for row in page_rows if row.get("status") == "failed")
-    return {
+    report = {
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
         "source_id": context.source_id,
         "target_profile": target_profile,
@@ -1378,6 +2116,9 @@ def build_quality_report(
             for row in page_rows
         ],
     }
+    if vocabulary_guidance is not None:
+        report["vocabulary_guidance"] = dict(vocabulary_guidance)
+    return report
 
 
 def build_rewrite_manifest(
@@ -1387,7 +2128,30 @@ def build_rewrite_manifest(
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
     rewrite_mode: str = "page",
+    vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
+    rewrite = {
+        "target_profile": target_profile,
+        "mode": rewrite_mode,
+        "model": model,
+        "asset_mode": "content-linked-interleaved-images",
+        "attached_image_count": len(attached_assets),
+        "rewritten_at": datetime.now(timezone.utc).isoformat(),
+    }
+    files = {
+        "assets": "assets/",
+        "content_markdown": "content.md",
+        "chunks_json": "chunks.json",
+        "context_packet_markdown": "context_packet.md",
+        "attempts_jsonl": "attempts.jsonl",
+        "failures_jsonl": "failures.jsonl",
+        "quality_report_json": "quality_report.json",
+    }
+    if vocabulary_guidance is not None:
+        rewrite["vocabulary_guidance"] = dict(vocabulary_guidance)
+        files["selection_attempts_jsonl"] = "selection_attempts.jsonl"
+        files["selected_vocabulary_json"] = "selected_vocabulary.json"
+
     return {
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
         "source": {
@@ -1399,23 +2163,8 @@ def build_rewrite_manifest(
             "name": context.parser_name,
             "version": context.parser_version,
         },
-        "rewrite": {
-            "target_profile": target_profile,
-            "mode": rewrite_mode,
-            "model": model,
-            "asset_mode": "content-linked-interleaved-images",
-            "attached_image_count": len(attached_assets),
-            "rewritten_at": datetime.now(timezone.utc).isoformat(),
-        },
-        "files": {
-            "assets": "assets/",
-            "content_markdown": "content.md",
-            "chunks_json": "chunks.json",
-            "context_packet_markdown": "context_packet.md",
-            "attempts_jsonl": "attempts.jsonl",
-            "failures_jsonl": "failures.jsonl",
-            "quality_report_json": "quality_report.json",
-        },
+        "rewrite": rewrite,
+        "files": files,
     }
 
 

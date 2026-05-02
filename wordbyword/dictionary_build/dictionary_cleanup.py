@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from wordbyword.dictionary_build.canonical_keys import row_covered_canonical_keys, split_joined_keys
+from wordbyword.dictionary_build.candidates import parse_roi_score
 from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
@@ -324,7 +325,7 @@ def build_dictionary_prompt_packet(
         "count": int(dictionary_entry.get("count", 0) or 0),
         "document_count": int(dictionary_entry.get("document_count", 0) or 0),
         "quality_score": float(dictionary_entry.get("quality_score", 0.0) or 0.0),
-        "roi_score": float(dictionary_entry.get("roi_score", 0.0) or 0.0),
+        "roi_score": parse_roi_score(dictionary_entry.get("roi_score")),
         "variants": prompt_variants(dictionary_entry.get("variants")),
         "source_example": clean_example_text(str(dictionary_entry.get("example", ""))),
         "support_sentences": list(support_sentences[:MAX_SUPPORT_SENTENCES]),

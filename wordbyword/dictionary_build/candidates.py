@@ -18,7 +18,7 @@ IDEAL_FREQUENCY_RATE = 10.0
 OVERUSED_FREQUENCY_RATE = 40.0
 EXTREME_FREQUENCY_RATE = 100.0
 EXTREME_FREQUENCY_PENALTY = -0.5
-DEFAULT_ROI_SCORE = 0.5
+DEFAULT_ROI_SCORE: float | None = None
 POS_WEIGHTS = {
     "noun": 0.9,
     "verb": 0.72,
@@ -127,7 +127,7 @@ class CandidateBuilder:
 
         term_rows.sort(
             key=lambda row: (
-                -float(row["roi_score"]),
+                roi_score_sort_key(row["roi_score"]),
                 -float(row["quality_score"]),
                 -int(row["count"]),
                 str(row["canonical_key"]),
@@ -373,8 +373,33 @@ def dispersion_score(document_count: int, total_document_count: int) -> float:
 
 
 # roi_score: Is this candidate worth prioritizing now for study, curation, or dictionary generation?
-def roi_score() -> float:
+def roi_score() -> float | None:
     return DEFAULT_ROI_SCORE
+
+
+def parse_roi_score(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"ROI score must be blank, null, or a float from 0.0 through 1.0: {value!r}")
+    if isinstance(value, str) and not value.strip():
+        return None
+
+    try:
+        score = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"ROI score must be blank, null, or a float from 0.0 through 1.0: {value!r}") from error
+
+    if not 0.0 <= score <= 1.0:
+        raise ValueError(f"ROI score must be blank, null, or a float from 0.0 through 1.0: {value!r}")
+    return score
+
+
+def roi_score_sort_key(value: object) -> tuple[int, float]:
+    score = parse_roi_score(value)
+    if score is None:
+        return (1, 0.0)
+    return (0, -score)
 
 
 def bounded_log_score(value: int, midpoint: int) -> float:

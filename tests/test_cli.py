@@ -271,6 +271,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                             {
                                 "canonical_key": "학교",
                                 "display": "학교",
+                                "roi_score": None,
                                 "example": "학교에 갑니다.",
                             },
                             ensure_ascii=False,
@@ -279,6 +280,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                             {
                                 "canonical_key": "없는말",
                                 "display": "없는말",
+                                "roi_score": None,
                                 "example": "없는말 예문",
                             },
                             ensure_ascii=False,
@@ -325,6 +327,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             ]
             self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
             self.assertEqual(rows[1]["meaning"], "")
+            self.assertTrue(all(row["roi_score"] is None for row in rows))
             self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
@@ -380,6 +383,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                                 "display": "학교",
                                 "example": "학교에 갑니다.",
                                 "curation_status": "confirmed",
+                                "roi_score": None,
                                 "meaning": "학생들이 배우는 곳.",
                             },
                             ensure_ascii=False,
@@ -390,6 +394,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                                 "display": "없는말",
                                 "example": "없는말 예문",
                                 "curation_status": "confirmed",
+                                "roi_score": None,
                                 "meaning": "",
                             },
                             ensure_ascii=False,
@@ -420,6 +425,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                 ).splitlines()
             ]
             self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
+            self.assertTrue(all(row["roi_score"] is None for row in rows))
             self.assertFalse(rows[0]["meaning_generated_with_ollama"])
             self.assertEqual(rows[1]["meaning"], "예문에서 쓰인 뜻.")
             self.assertTrue(rows[1]["meaning_generated_with_ollama"])

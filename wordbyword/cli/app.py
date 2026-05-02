@@ -30,10 +30,13 @@ from wordbyword.source_parsing.materials import (
 )
 from wordbyword.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
+    DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
     rewrite_source_material as rewrite_parsed_source_material,
     rewrite_source_materials as rewrite_parsed_source_materials,
+    rewrite_vocabulary_guided_source_material as rewrite_vocabulary_guided_parsed_source_material,
+    rewrite_vocabulary_guided_source_materials as rewrite_vocabulary_guided_parsed_source_materials,
     rewrite_whole_source_material as rewrite_whole_parsed_source_material,
     rewrite_whole_source_materials as rewrite_whole_parsed_source_materials,
 )
@@ -392,13 +395,45 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--rewrite-vocabulary-guided-source-material",
+        type=Path,
+        default=None,
+        metavar="PARSED_BUNDLE_DIR",
+        help=(
+            "Rewrite one parsed source-material bundle in one vocabulary-guided whole-document "
+            "Ollama workflow. The path should be a class-source-materials/parsed/<source-id> folder."
+        ),
+    )
+    parser.add_argument(
+        "--rewrite-vocabulary-guided-source-materials",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_PARSED_SOURCE_ROOT,
+        default=None,
+        metavar="PARSED_ROOT",
+        help=(
+            "Rewrite every parsed source-material bundle under a parsed root with vocabulary guidance. "
+            "Defaults to class-source-materials/parsed when no root is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--rewrite-dictionary",
+        type=Path,
+        default=None,
+        help=(
+            "Dictionary JSONL for vocabulary-guided rewrites. Defaults to "
+            "<--output>/15_final_dictionary.jsonl."
+        ),
+    )
+    parser.add_argument(
         "--rewrite-output-root",
         type=Path,
         default=None,
         help=(
             "Root folder for rewritten source-material outputs. Defaults to "
             f"{DEFAULT_REWRITE_OUTPUT_ROOT} for page rewrites and "
-            f"{DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT} for whole-document rewrites."
+            f"{DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT} for whole-document rewrites, and "
+            f"{DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT} for vocabulary-guided rewrites."
         ),
     )
     return parser
@@ -473,6 +508,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.rewrite_source_materials is not None,
         args.rewrite_whole_source_material is not None,
         args.rewrite_whole_source_materials is not None,
+        args.rewrite_vocabulary_guided_source_material is not None,
+        args.rewrite_vocabulary_guided_source_materials is not None,
     ]
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
@@ -489,6 +526,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         or args.rewrite_source_materials is not None
         or args.rewrite_whole_source_material is not None
         or args.rewrite_whole_source_materials is not None
+        or args.rewrite_vocabulary_guided_source_material is not None
+        or args.rewrite_vocabulary_guided_source_materials is not None
     ) and args.source_id:
         parser.exit(
             2,
@@ -558,6 +597,22 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
+    if args.rewrite_vocabulary_guided_source_material is not None:
+        return rewrite_vocabulary_guided_source_material_cli(
+            parsed_bundle_dir=args.rewrite_vocabulary_guided_source_material,
+            output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            dictionary_path=rewrite_dictionary_path_from_args(args),
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+        )
+    if args.rewrite_vocabulary_guided_source_materials is not None:
+        return rewrite_vocabulary_guided_source_materials_cli(
+            parsed_root=args.rewrite_vocabulary_guided_source_materials,
+            output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            dictionary_path=rewrite_dictionary_path_from_args(args),
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+        )
     if args.show_distribution is not None:
         return show_distribution(
             jsonl_path=resolve_distribution_path(args.show_distribution, args.output),
@@ -577,6 +632,10 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             base_url=args.ollama_base_url,
         )
     return None
+
+
+def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
+    return args.rewrite_dictionary or (args.output / "15_final_dictionary.jsonl")
 
 
 def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
@@ -1058,6 +1117,106 @@ def rewrite_whole_source_materials_cli(
         sys.stdout.write(
             f"  - {output.source_id}: {output.output_dir} "
             f"(rewritten: {output.rewritten_page_count}, failed: {output.failed_page_count})\n"
+        )
+    for skipped in outputs.skipped_sources:
+        sys.stdout.write(f"  - skipped {skipped['source_dir']}: {skipped['reason']}\n")
+    sys.stdout.flush()
+    return 0 if failed_pages == 0 and outputs.source_outputs else 1
+
+
+def rewrite_vocabulary_guided_source_material_cli(
+    *,
+    parsed_bundle_dir: Path,
+    output_root: Path,
+    dictionary_path: Path,
+    model: str,
+    base_url: str | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=1200.0,
+        max_output_tokens=32768,
+    )
+    try:
+        try:
+            outputs = rewrite_vocabulary_guided_parsed_source_material(
+                parsed_bundle_dir,
+                dictionary_path=dictionary_path,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "source material rewritten with vocabulary guidance\n"
+        f"  source_id: {outputs.source_id}\n"
+        f"  output_dir: {outputs.output_dir}\n"
+        f"  dictionary: {dictionary_path}\n"
+        f"  selected_vocabulary: {len(outputs.selected_vocabulary)}\n"
+        f"  rewritten_pages: {outputs.rewritten_page_count}\n"
+        f"  failed_pages: {outputs.failed_page_count}\n"
+        f"  content: {outputs.output_dir / 'content.md'}\n"
+    )
+    sys.stdout.flush()
+    return 0 if outputs.failed_page_count == 0 else 1
+
+
+def rewrite_vocabulary_guided_source_materials_cli(
+    *,
+    parsed_root: Path,
+    output_root: Path,
+    dictionary_path: Path,
+    model: str,
+    base_url: str | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=1200.0,
+        max_output_tokens=32768,
+    )
+    try:
+        try:
+            outputs = rewrite_vocabulary_guided_parsed_source_materials(
+                parsed_root,
+                dictionary_path=dictionary_path,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    failed_pages = sum(output.failed_page_count for output in outputs.source_outputs)
+    rewritten_pages = sum(output.rewritten_page_count for output in outputs.source_outputs)
+    selected_vocabulary_count = sum(len(output.selected_vocabulary) for output in outputs.source_outputs)
+    sys.stdout.write(
+        "source materials rewritten with vocabulary guidance\n"
+        f"  parsed_root: {outputs.parsed_root}\n"
+        f"  output_root: {outputs.output_root}\n"
+        f"  dictionary: {dictionary_path}\n"
+        f"  sources: {len(outputs.source_outputs)}\n"
+        f"  skipped_sources: {len(outputs.skipped_sources)}\n"
+        f"  selected_vocabulary: {selected_vocabulary_count}\n"
+        f"  rewritten_pages: {rewritten_pages}\n"
+        f"  failed_pages: {failed_pages}\n"
+    )
+    for output in outputs.source_outputs:
+        sys.stdout.write(
+            f"  - {output.source_id}: {output.output_dir} "
+            f"(selected: {len(output.selected_vocabulary)}, rewritten: {output.rewritten_page_count}, "
+            f"failed: {output.failed_page_count})\n"
         )
     for skipped in outputs.skipped_sources:
         sys.stdout.write(f"  - skipped {skipped['source_dir']}: {skipped['reason']}\n")

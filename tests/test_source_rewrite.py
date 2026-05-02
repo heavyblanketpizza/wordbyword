@@ -9,13 +9,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wordbyword.cli import main
-from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMConfigurationError
+from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMConfigurationError, LLMResponseError
 from wordbyword.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
+    DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
+    VocabularyCandidate,
     build_context_packet,
+    load_vocabulary_guided_candidates,
+    parse_and_validate_vocabulary_selection_response,
     rewrite_source_material,
+    rewrite_vocabulary_guided_source_material,
     rewrite_whole_source_material,
 )
 
@@ -26,6 +31,10 @@ class SourceRewriteContextTest(unittest.TestCase):
         self.assertEqual(
             DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
             Path("rewritten-for-class") / "grade1-ko-ollama-whole-document",
+        )
+        self.assertEqual(
+            DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            Path("rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided",
         )
 
     def test_context_packet_interleaves_asset_marker_before_image_block(self) -> None:
@@ -303,6 +312,169 @@ class WholeDocumentRewriteTest(unittest.TestCase):
                     self.assertIn(expected_failure, outputs.failure_rows[0]["failure_reason"])
 
 
+class VocabularyGuidedRewriteTest(unittest.TestCase):
+    def test_dictionary_candidates_rank_by_roi_or_quality_and_cap_at_top_150(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            dictionary_path = Path(workspace) / "15_final_dictionary.jsonl"
+            rows = [
+                {
+                    "canonical_key": "missing-example",
+                    "example": "",
+                    "quality_score": 1.0,
+                    "roi_score": 1.0,
+                    "count": 999,
+                },
+                {
+                    "canonical_key": "roi-wins",
+                    "example": "선물 예문입니다.",
+                    "quality_score": 0.1,
+                    "roi_score": 1.0,
+                    "count": 1,
+                },
+                {
+                    "canonical_key": "quality-only",
+                    "example": "학교 예문입니다.",
+                    "quality_score": 0.99,
+                    "roi_score": None,
+                    "count": 1,
+                },
+                *[
+                    {
+                        "canonical_key": f"단어{index:03d}",
+                        "example": f"단어{index:03d} 예문입니다.",
+                        "quality_score": round(0.8 - (index * 0.001), 3),
+                        "roi_score": None,
+                        "count": index,
+                    }
+                    for index in range(160)
+                ],
+            ]
+            write_jsonl(dictionary_path, rows)
+
+            candidates = load_vocabulary_guided_candidates(dictionary_path)
+
+            self.assertEqual(len(candidates), 150)
+            self.assertEqual(candidates[0].canonical_key, "roi-wins")
+            self.assertEqual(candidates[1].canonical_key, "quality-only")
+            self.assertNotIn("missing-example", {candidate.canonical_key for candidate in candidates})
+
+    def test_dictionary_candidates_reject_invalid_roi_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            dictionary_path = Path(workspace) / "15_final_dictionary.jsonl"
+            write_jsonl(
+                dictionary_path,
+                [
+                    {
+                        "canonical_key": "학교",
+                        "example": "학교 예문입니다.",
+                        "quality_score": 0.9,
+                        "roi_score": -0.1,
+                    }
+                ],
+            )
+
+            with self.assertRaises(SourceRewriteError):
+                load_vocabulary_guided_candidates(dictionary_path)
+
+    def test_vocabulary_selection_response_validation_rejects_bad_shapes(self) -> None:
+        context = minimal_context_packet()
+        candidates = [
+            VocabularyCandidate("선물", "선물을 받았다.", 0.9, None, 0.9, 1),
+            VocabularyCandidate("학교", "학교에 갔다.", 0.8, None, 0.8, 1),
+        ]
+        scenarios = [
+            ("wrong source", {"source_id": "other", "selected_vocabulary": ["선물", "학교"]}),
+            ("duplicate", {"source_id": "lesson", "selected_vocabulary": ["선물", "선물"]}),
+            ("unknown", {"source_id": "lesson", "selected_vocabulary": ["선물", "바다"]}),
+            ("wrong count", {"source_id": "lesson", "selected_vocabulary": ["선물"]}),
+            ("malformed", "{not json"),
+        ]
+
+        for name, payload in scenarios:
+            with self.subTest(name=name):
+                content = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+                with self.assertRaises((SourceRewriteError, LLMResponseError)):
+                    parse_and_validate_vocabulary_selection_response(
+                        CompletionResult(provider="ollama", model="fake-vision", content=content),
+                        context=context,
+                        candidate_pool=candidates,
+                    )
+
+    def test_vocabulary_guided_rewrite_runs_selection_then_story_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(
+                root / "parsed",
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            write_dictionary_fixture(dictionary_path, count=15)
+            client = RecordingVocabularyGuidedRewriteClient()
+
+            outputs = rewrite_vocabulary_guided_source_material(
+                bundle_dir,
+                dictionary_path=dictionary_path,
+                output_root=root / "rewritten-vocabulary",
+                client=client,
+                model="fake-vision",
+            )
+
+            self.assertEqual(outputs.failed_page_count, 0)
+            self.assertEqual(outputs.rewritten_page_count, 2)
+            self.assertEqual(client.preflight_count, 1)
+            self.assertEqual(len(client.calls), 2)
+            selection_prompt = joined_message_content(client.calls[0][1])
+            rewrite_prompt = joined_message_content(client.calls[1][1])
+            self.assertIn("candidate_vocabulary", selection_prompt)
+            self.assertIn('"canonical_key": "선물"', selection_prompt)
+            self.assertNotIn("selection_score", selection_prompt)
+            self.assertIn("selected_vocabulary", rewrite_prompt)
+            self.assertIn('"canonical_key": "선물"', rewrite_prompt)
+
+            content = (outputs.output_dir / "content.md").read_text(encoding="utf-8")
+            self.assertIn("<!-- page:1 -->", content)
+            self.assertIn("<!-- page:2 -->", content)
+            self.assertIn('<img src="assets/fig1.png"', content)
+            self.assertTrue((outputs.output_dir / "selection_attempts.jsonl").is_file())
+            selected = json.loads((outputs.output_dir / "selected_vocabulary.json").read_text(encoding="utf-8"))
+            self.assertEqual(selected["selected_count"], 15)
+            self.assertEqual(selected["selected_vocabulary"][0]["canonical_key"], "선물")
+            manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["rewrite"]["mode"], "vocabulary_guided")
+            self.assertIn("selected_vocabulary_json", manifest["files"])
+            quality = json.loads((outputs.output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["vocabulary_guidance"]["selected_count"], 15)
+
+    def test_vocabulary_guided_rewrite_failure_does_not_run_rewrite_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(root / "parsed")
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            write_dictionary_fixture(dictionary_path, count=15)
+            client = RecordingVocabularyGuidedRewriteClient(selection_payload={
+                "source_id": "lesson",
+                "selected_vocabulary": ["unknown"],
+            })
+
+            outputs = rewrite_vocabulary_guided_source_material(
+                bundle_dir,
+                dictionary_path=dictionary_path,
+                output_root=root / "rewritten-vocabulary",
+                client=client,
+                model="fake-vision",
+            )
+
+            self.assertEqual(len(client.calls), 1)
+            self.assertEqual(outputs.rewritten_page_count, 0)
+            self.assertEqual(outputs.failed_page_count, 1)
+            self.assertIn("Vocabulary selection failed", outputs.failure_rows[0]["failure_reason"])
+            selection_attempts = read_jsonl(outputs.output_dir / "selection_attempts.jsonl")
+            self.assertFalse(selection_attempts[0]["accepted"])
+
+
 class SourceRewriteCliTest(unittest.TestCase):
     def test_cli_rewrites_all_parsed_source_materials(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -365,7 +537,85 @@ class SourceRewriteCliTest(unittest.TestCase):
             self.assertTrue((output_root / "lesson" / "context_packet.md").is_file())
             self.assertTrue((output_root / "lesson" / "assets" / "fig1.png").is_file())
 
-    def test_cli_rejects_combined_page_and_whole_rewrite_commands(self) -> None:
+    def test_cli_rewrites_one_source_material_with_default_vocabulary_dictionary(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            parsed_root = root / "parsed"
+            output_root = root / "rewritten-vocabulary"
+            dictionary_output = root / "dictionary"
+            dictionary_output.mkdir()
+            bundle_dir = write_parsed_fixture(
+                parsed_root,
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=15)
+            client = RecordingVocabularyGuidedRewriteClient()
+
+            with patch("wordbyword.cli.app.ollama_client", return_value=client):
+                with patch("sys.stdout", io.StringIO()):
+                    exit_code = main(
+                        [
+                            "--rewrite-vocabulary-guided-source-material",
+                            str(bundle_dir),
+                            "--rewrite-output-root",
+                            str(output_root),
+                            "--output",
+                            str(dictionary_output),
+                            "--ollama-model",
+                            "fake-vision",
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(client.calls), 2)
+            self.assertTrue((output_root / "lesson" / "content.md").is_file())
+            selected = json.loads((output_root / "lesson" / "selected_vocabulary.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                selected["dictionary_path"],
+                str(dictionary_output / "15_final_dictionary.jsonl"),
+            )
+
+    def test_cli_rewrites_all_source_materials_with_explicit_vocabulary_dictionary(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            parsed_root = root / "parsed"
+            output_root = root / "rewritten-vocabulary"
+            dictionary_path = root / "custom-dictionary.jsonl"
+            write_parsed_fixture(
+                parsed_root,
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            write_skipped_fixture(parsed_root / "sample")
+            write_dictionary_fixture(dictionary_path, count=15)
+            client = RecordingVocabularyGuidedRewriteClient()
+
+            with patch("wordbyword.cli.app.ollama_client", return_value=client):
+                with patch("sys.stdout", io.StringIO()):
+                    exit_code = main(
+                        [
+                            "--rewrite-vocabulary-guided-source-materials",
+                            str(parsed_root),
+                            "--rewrite-output-root",
+                            str(output_root),
+                            "--rewrite-dictionary",
+                            str(dictionary_path),
+                            "--ollama-model",
+                            "fake-vision",
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(client.calls), 2)
+            selected = json.loads((output_root / "lesson" / "selected_vocabulary.json").read_text(encoding="utf-8"))
+            self.assertEqual(selected["dictionary_path"], str(dictionary_path))
+
+    def test_cli_rejects_combined_rewrite_commands(self) -> None:
         stderr = io.StringIO()
         with patch("sys.stderr", stderr):
             with self.assertRaises(SystemExit) as error:
@@ -373,7 +623,7 @@ class SourceRewriteCliTest(unittest.TestCase):
                     [
                         "--rewrite-source-materials",
                         "class-source-materials/parsed",
-                        "--rewrite-whole-source-materials",
+                        "--rewrite-vocabulary-guided-source-materials",
                         "class-source-materials/parsed",
                     ]
                 )
@@ -484,6 +734,67 @@ class RecordingWholeRewriteClient:
         )
 
 
+class RecordingVocabularyGuidedRewriteClient:
+    def __init__(self, selection_payload: object | None = None) -> None:
+        self.preflight_count = 0
+        self.calls: list[tuple[dict[str, object], list[ChatMessage]]] = []
+        self.selection_payload = selection_payload
+
+    def assert_supports_images(self) -> None:
+        self.preflight_count += 1
+
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self.calls.append(
+            (
+                {
+                    "temperature": temperature,
+                    "max_output_tokens": max_output_tokens,
+                    "json_mode": json_mode,
+                },
+                messages,
+            )
+        )
+        if len(self.calls) == 1:
+            content = self.selection_payload or {
+                "source_id": "lesson",
+                "selected_vocabulary": [
+                    {
+                        "canonical_key": canonical_key,
+                        "reason": "source relevant",
+                        "role": "metaphor" if canonical_key == "선물" else "support",
+                    }
+                    for canonical_key in dictionary_fixture_keys()[:15]
+                ],
+            }
+        else:
+            content = {
+                "source_id": "lesson",
+                "rewritten_markdown": (
+                    "<!-- page:1 -->\n"
+                    "# 선물처럼 쉬운 과학 이야기\n\n"
+                    "선물 이야기를 떠올리며 첫 쪽 내용을 쉽게 읽어요.\n\n"
+                    '<div><img src="assets/fig1.png" alt="Figure" /></div>\n\n'
+                    "그림도 함께 봅니다.\n\n"
+                    "---\n\n"
+                    "<!-- page:2 -->\n"
+                    "# 다음 쪽\n\n"
+                    "둘째 쪽입니다. 앞의 내용을 이어서 설명합니다."
+                ),
+            }
+        return CompletionResult(
+            provider="ollama",
+            model="fake-vision",
+            content=content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
+        )
+
+
 class UnsupportedVisionClient(RecordingRewriteClient):
     def assert_supports_images(self) -> None:
         raise LLMConfigurationError("no vision")
@@ -501,6 +812,13 @@ def read_jsonl(path: Path) -> list[dict[str, object]]:
     ]
 
 
+def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
 def rewrite_fixture_with_recording_client(root: Path):
     bundle_dir = write_parsed_fixture(root / "parsed")
     client = RecordingRewriteClient()
@@ -511,6 +829,47 @@ def rewrite_fixture_with_recording_client(root: Path):
         model="fake-vision",
     )
     return outputs, client
+
+
+def minimal_context_packet() -> object:
+    with tempfile.TemporaryDirectory() as workspace:
+        return build_context_packet(write_parsed_fixture(Path(workspace) / "parsed"))
+
+
+def dictionary_fixture_keys() -> list[str]:
+    return [
+        "선물",
+        "학교",
+        "친구",
+        "마음",
+        "빛",
+        "문",
+        "길",
+        "이야기",
+        "그림",
+        "생각",
+        "씨앗",
+        "물",
+        "손",
+        "집",
+        "꿈",
+    ]
+
+
+def write_dictionary_fixture(path: Path, *, count: int = 15) -> None:
+    rows = [
+        {
+            "canonical_key": key,
+            "display": key,
+            "example": f"{key} 예문입니다.",
+            "quality_score": round(0.95 - (index * 0.01), 3),
+            "roi_score": None,
+            "count": 100 - index,
+            "meaning": f"{key}의 뜻.",
+        }
+        for index, key in enumerate(dictionary_fixture_keys()[:count])
+    ]
+    write_jsonl(path, rows)
 
 
 def write_parsed_fixture(

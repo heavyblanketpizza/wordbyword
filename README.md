@@ -98,6 +98,15 @@ uv --no-cache run python -m wordbyword --rewrite-whole-source-material class-sou
 
 Whole-document outputs mirror the same artifact bundle under `rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
 
+The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 150 canonical keys and examples to Ollama, asks for 15 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
+
+```bash
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material class-source-materials/parsed/popular-physicsprize2025 --rewrite-dictionary build-dictionary/15_final_dictionary.jsonl --ollama-model gemma4:31b
+```
+
+Vocabulary-guided outputs are written under `rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
+
 ## Outputs
 
 The pipeline writes these files:
@@ -108,7 +117,7 @@ The pipeline writes these files:
 - `03_tokens.csv`: every tokenizer occurrence with document, page, sentence, form, POS tag, and offsets.
 - `04_surface_words.csv`: surface-level words as they appear in the source text.
 - `05_vocabulary_raw.csv`: raw unique vocabulary terms from Korean-aware morphology.
-- `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, quality scores, and ROI scores.
+- `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, quality scores, and ROI scores. ROI is blank until calculated.
 - `07_rejected_terms.csv`: vocabulary terms removed by deterministic cleanup, with rejection reasons.
 - `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for learner-dictionary curation.
 - `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
@@ -174,7 +183,7 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings
 
 Pure numbers are ignored in vocabulary and surface word outputs unless `--include-numbers` is set.
 
-The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, and assign rough deterministic quality and ROI scores for downstream review.
+The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, assign rough deterministic quality scores, and leave ROI blank/null until a priority score is calculated.
 
 ## LLM Providers And Cleanup
 

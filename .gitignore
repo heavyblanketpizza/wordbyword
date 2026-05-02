@@ -28,5 +28,6 @@ build-dictionary/references/*
 /original/
 /references/
 
-# Mature source materials for rewriting; keep all content local.
+# Local class materials and generated rewrites; keep all content local.
 class-source-materials/
+rewritten-for-class/

@@ -101,7 +101,7 @@ def dictionary_candidate(
         "count": 10,
         "document_count": 1,
         "quality_score": quality_score,
-        "roi_score": 0.5,
+        "roi_score": None,
         "example": example,
         "curation_status": "candidate",
     }
