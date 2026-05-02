@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.canonical_keys import (
+from wordbyword.dictionary_build.canonical_keys import (
     join_keys,
     ordered_unique,
     row_covered_canonical_keys,

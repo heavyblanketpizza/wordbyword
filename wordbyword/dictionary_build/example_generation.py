@@ -7,9 +7,9 @@ from typing import Any
 
 from kiwipiepy import Kiwi
 
-from wordbyword.canonical_keys import ordered_unique, sentence_candidate_keys, split_joined_keys
-from wordbyword.candidates import is_allowed_variant_tail
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.canonical_keys import ordered_unique, sentence_candidate_keys, split_joined_keys
+from wordbyword.dictionary_build.candidates import is_allowed_variant_tail
+from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
     emit_cleanup_batch_progress,
@@ -17,7 +17,7 @@ from wordbyword.example_cleanup import (
     tokenize_sentence,
     unacceptable_cleaned_sentence_reason,
 )
-from wordbyword.llm import (
+from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
     LLMResponseError,
@@ -25,7 +25,7 @@ from wordbyword.llm import (
     normalize_text_result,
     strip_markdown_fence,
 )
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.text import clean_example_text
 
 DEFAULT_GENERATED_EXAMPLE_BATCH_SIZE = 40
 MAX_PROMPT_VARIANTS = 8

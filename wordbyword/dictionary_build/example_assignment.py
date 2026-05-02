@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from wordbyword.canonical_keys import row_covered_canonical_keys
+from wordbyword.dictionary_build.canonical_keys import row_covered_canonical_keys
 
 STAGE_TWELVE_STRIPPED_FIELDS = {
     "original_example",

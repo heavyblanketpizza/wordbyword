@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from collections import Counter
 
-from wordbyword.candidates import (
+from wordbyword.dictionary_build.candidates import (
     POS_WEIGHTS,
     CandidateAggregate,
     dispersion_score,

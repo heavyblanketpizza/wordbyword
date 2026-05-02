@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.example_cleanup import (
     CleanupBatchProgress,
     build_cleaned_example_sentence_outputs,
     clean_example_sentence,
@@ -10,7 +10,7 @@ from wordbyword.example_cleanup import (
     review_cleanup_batch,
     review_cleanup_batches,
 )
-from wordbyword.llm import CompletionResult, LLMRequestError, LLMResponseError
+from wordbyword.dictionary_build.llm import CompletionResult, LLMRequestError, LLMResponseError
 
 
 class ExampleCleanupTest(unittest.TestCase):

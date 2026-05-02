@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.writers import (
+from wordbyword.dictionary_build.writers import (
     EXAMPLE_SENTENCE_COVERED_KEY_MAXIMUM,
     EXAMPLE_SENTENCE_COVERED_KEY_MINIMUM,
     FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM,

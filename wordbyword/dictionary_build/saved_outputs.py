@@ -4,15 +4,15 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
-from wordbyword.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
+from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs
+from wordbyword.dictionary_build.example_cleanup import (
     CleanedExampleOutputs,
     CleanupProgressCallback,
     build_cleaned_example_sentence_outputs,
     cleaned_example_sentence_fields,
 )
-from wordbyword.example_generation import (
+from wordbyword.dictionary_build.example_generation import (
     GeneratedExampleAttemptSummary,
     GeneratedExampleBatchSnapshot,
     GeneratedExampleOutputs,
@@ -20,16 +20,16 @@ from wordbyword.example_generation import (
     build_generated_dictionary_candidate_outputs,
     retry_generated_dictionary_candidate_outputs,
 )
-from wordbyword.llm import SupportsCompletion
-from wordbyword.meaning_assignment import (
+from wordbyword.dictionary_build.llm import SupportsCompletion
+from wordbyword.dictionary_build.meaning_assignment import (
     MeaningAssignmentOutputs,
     build_dictionary_candidates_with_meanings,
 )
-from wordbyword.meaning_generation import (
+from wordbyword.dictionary_build.meaning_generation import (
     GeneratedMeaningOutputs,
     build_generated_meaning_dictionary_outputs,
 )
-from wordbyword.output_files import (
+from wordbyword.dictionary_build.output_files import (
     append_jsonl,
     append_rows,
     initialize_jsonl_file,
@@ -41,8 +41,8 @@ from wordbyword.output_files import (
     write_jsonl,
     write_rows,
 )
-from wordbyword.output_catalog import OPTIONAL_OUTPUT_FILES
-from wordbyword.output_metadata import refresh_saved_output_metadata
+from wordbyword.dictionary_build.output_catalog import OPTIONAL_OUTPUT_FILES
+from wordbyword.dictionary_build.output_metadata import refresh_saved_output_metadata
 
 ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
 

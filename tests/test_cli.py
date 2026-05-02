@@ -21,9 +21,9 @@ from wordbyword.cli import (
     resolve_distribution_path,
     show_distribution,
 )
-from wordbyword.example_generation import GeneratedExampleAttemptSummary
-from wordbyword.llm import CompletionResult
-from wordbyword.pipeline import PipelineResult
+from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
+from wordbyword.dictionary_build.llm import CompletionResult
+from wordbyword.dictionary_build.pipeline import PipelineResult
 
 
 class ParserDefaultsTest(unittest.TestCase):
@@ -85,7 +85,7 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stderr", stderr),
             patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.parse_source_materials", side_effect=KeyboardInterrupt),
+            patch("wordbyword.cli.app.parse_source_materials", side_effect=KeyboardInterrupt),
         ):
             exit_code = main(["--parse-source-materials", "class-source-materials"])
 
@@ -179,7 +179,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 exit_code = main(["--show-distribution", str(jsonl_path)])
 
             self.assertEqual(exit_code, 0)
@@ -251,7 +251,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 exit_code = main(["--link-cleaned-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
@@ -353,7 +353,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 exit_code = main(
                     [
                         "--add-reference-meanings",
@@ -452,7 +452,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.run_pipeline") as mock_pipeline, patch(
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline, patch(
                 "wordbyword.cli.ollama_client",
                 return_value=GeneratedMeaningClient(),
             ):
@@ -466,7 +466,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+            with patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 mock_pipeline.return_value = PipelineResult(
                     documents=0,
                     extracted_pages=0,
@@ -486,7 +486,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.run_pipeline") as mock_pipeline:
+            with patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 mock_pipeline.return_value = PipelineResult(
                     documents=0,
                     extracted_pages=0,

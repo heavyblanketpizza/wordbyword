@@ -4,12 +4,12 @@ import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
     emit_cleanup_batch_progress,
 )
-from wordbyword.llm import (
+from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
     LLMResponseError,
@@ -17,7 +17,7 @@ from wordbyword.llm import (
     normalize_text_result,
     strip_markdown_fence,
 )
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.text import clean_example_text
 
 DEFAULT_GENERATED_MEANING_BATCH_SIZE = 40
 

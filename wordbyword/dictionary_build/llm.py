@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Protocol, Sequence
 from urllib import error, parse, request
 
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.text import clean_example_text
 
 ProviderName = Literal["openai", "claude", "google", "ollama"]
 MessageRole = Literal["system", "user", "assistant"]
@@ -605,10 +605,10 @@ def split_system_messages(messages: Sequence[ChatMessage]) -> tuple[str, list[Ch
     return "\n\n".join(part.strip() for part in system_parts if part.strip()), conversation
 
 
-def message_row(message: ChatMessage) -> dict[str, str]:
+def message_row(message: ChatMessage) -> dict[str, Any]:
     row = {"role": message.role, "content": message.content}
     if message.images:
-        row["images"] = list(message.images)  # type: ignore[assignment]
+        row["images"] = list(message.images)
     return row
 
 

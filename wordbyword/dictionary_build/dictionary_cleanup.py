@@ -6,14 +6,14 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
-from wordbyword.canonical_keys import row_covered_canonical_keys, split_joined_keys
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.canonical_keys import row_covered_canonical_keys, split_joined_keys
+from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
     emit_cleanup_batch_progress,
 )
-from wordbyword.llm import ChatMessage, LLMRequestError, LLMResponseError, SupportsCompletion, strip_markdown_fence
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.llm import ChatMessage, LLMRequestError, LLMResponseError, SupportsCompletion, strip_markdown_fence
+from wordbyword.dictionary_build.text import clean_example_text
 
 DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE = 40
 MAX_SUPPORT_SENTENCES = 3

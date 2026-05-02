@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from wordbyword.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
-from wordbyword.text import clean_example_text, strip_edge_curly_quotes
+from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
+from wordbyword.dictionary_build.text import clean_example_text, strip_edge_curly_quotes
 
 FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM = 0.0135
 EXAMPLE_SENTENCE_FINAL_PUNCTUATION = (".", "?", "!", '"')

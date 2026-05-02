@@ -8,16 +8,16 @@ from pathlib import Path
 
 from kiwipiepy import Kiwi
 
-from wordbyword.candidates import build_candidate_outputs
-from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
-from wordbyword.example_assignment import LinkedDictionaryOutputs
-from wordbyword.example_cleanup import (
+from wordbyword.dictionary_build.candidates import build_candidate_outputs
+from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
+from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs
+from wordbyword.dictionary_build.example_cleanup import (
     CleanedExampleOutputs,
     CleanupProgressCallback,
     build_cleaned_example_sentence_outputs,
     cleaned_example_sentence_fields,
 )
-from wordbyword.example_sentences import (
+from wordbyword.dictionary_build.example_sentences import (
     EXAMPLE_SENTENCE_COVERED_KEY_MAXIMUM,
     EXAMPLE_SENTENCE_COVERED_KEY_MINIMUM,
     FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM,
@@ -27,9 +27,9 @@ from wordbyword.example_sentences import (
     filtered_example_sentence_rows,
     filtered_high_signal_example_sentence_rows,
 )
-from wordbyword.llm import SupportsCompletion
-from wordbyword.models import CountEntry, PageText
-from wordbyword.output_catalog import (
+from wordbyword.dictionary_build.llm import SupportsCompletion
+from wordbyword.dictionary_build.models import CountEntry, PageText
+from wordbyword.dictionary_build.output_catalog import (
     BASE_OUTPUT_FILES,
     BASE_PIPELINE_STAGES,
     LEGACY_OUTPUT_FILES,
@@ -38,7 +38,7 @@ from wordbyword.output_catalog import (
     all_output_files,
     pipeline_stages,
 )
-from wordbyword.output_files import (
+from wordbyword.dictionary_build.output_files import (
     append_jsonl,
     append_rows,
     candidate_term_fields,
@@ -61,12 +61,12 @@ from wordbyword.output_files import (
     write_surface_words,
     write_vocabulary,
 )
-from wordbyword.output_metadata import (
+from wordbyword.dictionary_build.output_metadata import (
     refresh_saved_output_metadata,
     write_output_readme,
     write_summary,
 )
-from wordbyword.saved_outputs import (
+from wordbyword.dictionary_build.saved_outputs import (
     resolve_dictionary_support_rows,
     write_cleanup_outputs_from_saved,
     write_generated_meaning_dictionary_candidates_from_saved,

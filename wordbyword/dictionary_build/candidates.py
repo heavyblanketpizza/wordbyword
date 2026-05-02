@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 
 from kiwipiepy import Kiwi
 
-from wordbyword.models import CountEntry
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.models import CountEntry
+from wordbyword.dictionary_build.text import clean_example_text
 
 TEXT_RE = re.compile(r"[가-힣A-Za-z一-龥]")
 LOW_VALUE_BOUND_NOUNS = {"것", "거", "수", "등", "데", "바", "뿐", "채", "척", "줄", "리", "만"}

@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from wordbyword.example_cleanup import CleanupBatchProgress
-from wordbyword.pipeline import PipelineResult
-from wordbyword.source_materials import SourceMaterialProgress
-from wordbyword.terminal_ui import (
+from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
+from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.source_parsing.materials import SourceMaterialProgress
+from wordbyword.cli.terminal_ui import (
     render_artifact_drop,
     render_boot_screen,
     render_cleanup_progress,

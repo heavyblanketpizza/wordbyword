@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import unittest
 
-from wordbyword.llm import CompletionResult
-from wordbyword.meaning_generation import build_generated_meaning_dictionary_outputs
+from wordbyword.dictionary_build.llm import CompletionResult
+from wordbyword.dictionary_build.meaning_generation import build_generated_meaning_dictionary_outputs
 
 
 class MeaningGenerationTest(unittest.TestCase):

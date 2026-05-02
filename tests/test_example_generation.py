@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import unittest
 
-from wordbyword.example_generation import (
+from wordbyword.dictionary_build.example_generation import (
     BATCH_REPAIR_GENERATED_EXAMPLE_SYSTEM_PROMPT,
     build_generated_dictionary_candidate_outputs,
     retry_generated_dictionary_candidate_outputs,
 )
-from wordbyword.llm import CompletionResult
+from wordbyword.dictionary_build.llm import CompletionResult
 
 
 class ExampleGenerationTest(unittest.TestCase):

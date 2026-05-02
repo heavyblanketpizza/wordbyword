@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from wordbyword.models import CountEntry, PageText
-from wordbyword.output_catalog import BASE_OUTPUT_FILES, LEGACY_OUTPUT_FILES, OPTIONAL_OUTPUT_FILES
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.models import CountEntry, PageText
+from wordbyword.dictionary_build.output_catalog import BASE_OUTPUT_FILES, LEGACY_OUTPUT_FILES, OPTIONAL_OUTPUT_FILES
+from wordbyword.dictionary_build.text import clean_example_text
 
 
 def cleanup_previous_outputs(

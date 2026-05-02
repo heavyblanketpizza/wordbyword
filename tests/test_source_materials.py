@@ -12,8 +12,8 @@ from unittest.mock import patch
 import fitz
 
 from wordbyword.cli import main
-from wordbyword.paddleocr_vl import PaddleOCRVLInterruptedError, PaddleOCRVLSettings
-from wordbyword.source_materials import (
+from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLInterruptedError, PaddleOCRVLSettings
+from wordbyword.source_parsing.materials import (
     SourceMaterialProgress,
     discover_source_materials,
     parse_source_material,
@@ -90,8 +90,8 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             FakePaddleOCRVL.init_kwargs = None
             FakePaddleOCRVL.predict_input = None
             with (
-                patch("wordbyword.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
-                patch("wordbyword.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
+                patch("wordbyword.source_parsing.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
+                patch("wordbyword.source_parsing.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
             ):
                 bundle = parse_source_material(
                     source_path,
@@ -133,8 +133,8 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             events: list[SourceMaterialProgress] = []
 
             with (
-                patch("wordbyword.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
-                patch("wordbyword.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
+                patch("wordbyword.source_parsing.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
+                patch("wordbyword.source_parsing.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
             ):
                 parse_source_material(
                     source_path,
@@ -252,7 +252,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                     terminated_marker.as_posix(),
                 ]
 
-            with patch("wordbyword.paddleocr_vl._sidecar_worker_command", side_effect=fake_sidecar_worker_command):
+            with patch("wordbyword.source_parsing.paddleocr_vl._sidecar_worker_command", side_effect=fake_sidecar_worker_command):
                 bundle = parse_source_material(
                     source_path,
                     output_root=output_root,
@@ -280,7 +280,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             output_root = root / "parsed"
             write_sample_pdf(source_path)
 
-            with patch("wordbyword.source_materials.run_paddleocr_vl", side_effect=KeyboardInterrupt):
+            with patch("wordbyword.source_parsing.materials.run_paddleocr_vl", side_effect=KeyboardInterrupt):
                 with self.assertRaises(KeyboardInterrupt):
                     parse_source_material(
                         source_path,
@@ -302,7 +302,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             write_sample_pdf(source_path)
 
             with patch(
-                "wordbyword.source_materials.run_paddleocr_vl",
+                "wordbyword.source_parsing.materials.run_paddleocr_vl",
                 side_effect=PaddleOCRVLInterruptedError("worker stopped"),
             ):
                 with self.assertRaises(KeyboardInterrupt):

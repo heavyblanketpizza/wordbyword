@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
-    from wordbyword.example_cleanup import CleanupBatchProgress
-    from wordbyword.pipeline import PipelineResult
-    from wordbyword.source_materials import SourceMaterialProgress
+    from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
+    from wordbyword.dictionary_build.pipeline import PipelineResult
+    from wordbyword.source_parsing.materials import SourceMaterialProgress
 
 TOKYO_NIGHT = {
     "bg": "1a1b26",

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from urllib import error as url_error
 
-from wordbyword.llm import (
+from wordbyword.dictionary_build.llm import (
     ChatMessage,
     CompletionResult,
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -79,7 +79,7 @@ class ProviderClientTest(unittest.TestCase):
             fp=io.BytesIO(b"request rejected for secret-key"),
         )
 
-        with patch("wordbyword.llm.request.urlopen", side_effect=http_error):
+        with patch("wordbyword.dictionary_build.llm.request.urlopen", side_effect=http_error):
             with self.assertRaises(LLMRequestError) as caught:
                 transport.post_json(
                     url=url,
@@ -216,6 +216,38 @@ class ProviderClientTest(unittest.TestCase):
         self.assertFalse(transport.body["think"])
         self.assertEqual(transport.body["options"]["num_predict"], DEFAULT_MAX_OUTPUT_TOKENS)
         self.assertEqual(transport.body["messages"][0]["content"], "hello")
+
+    def test_ollama_client_sends_message_images(self) -> None:
+        transport = FakeTransport(
+            {
+                "message": {"content": "ollama output"},
+                "done_reason": "stop",
+            }
+        )
+
+        client = build_provider_client(
+            "ollama",
+            model="llama-test",
+            base_url="http://localhost:11434/",
+            transport=transport,
+        )
+        client.complete([ChatMessage("user", "look", images=("base64-image",))])
+
+        self.assertEqual(transport.body["messages"][0]["images"], ["base64-image"])
+
+    def test_ollama_client_reads_vision_capability_from_show_api(self) -> None:
+        transport = FakeTransport({"capabilities": ["completion", "vision"]})
+
+        client = build_provider_client(
+            "ollama",
+            model="vision-test",
+            base_url="http://localhost:11434/",
+            transport=transport,
+        )
+
+        self.assertTrue(client.supports_images())  # type: ignore[attr-defined]
+        self.assertEqual(transport.url, "http://localhost:11434/api/show")
+        self.assertEqual(transport.body["model"], "vision-test")
 
 
 class TaskHelperTest(unittest.TestCase):

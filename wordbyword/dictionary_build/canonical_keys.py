@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 
-from wordbyword.candidates import canonicalize_term, is_surface_head
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.candidates import canonicalize_term, is_surface_head
+from wordbyword.dictionary_build.text import clean_example_text
 
 COVERED_CANONICAL_KEY_FIELDS = (
     "cleaned_covered_canonical_keys",

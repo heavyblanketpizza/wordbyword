@@ -6,8 +6,8 @@ from typing import Iterable
 
 import fitz
 
-from wordbyword.models import PageText
-from wordbyword.text import clean_layout_text
+from wordbyword.dictionary_build.models import PageText
+from wordbyword.dictionary_build.text import clean_layout_text
 
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md"}
 TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "cp949", "euc-kr")

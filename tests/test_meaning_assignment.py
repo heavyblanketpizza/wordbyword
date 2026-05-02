@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.meaning_assignment import build_dictionary_candidates_with_meanings
+from wordbyword.dictionary_build.meaning_assignment import build_dictionary_candidates_with_meanings
 
 
 class MeaningAssignmentTest(unittest.TestCase):

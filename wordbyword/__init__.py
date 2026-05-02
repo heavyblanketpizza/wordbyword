@@ -1,6 +1,6 @@
 """Tools for extracting vocabulary candidates from documents."""
 
-from wordbyword.llm import (
+from wordbyword.dictionary_build.llm import (
     ChatMessage,
     CompletionResult,
     ProviderConfig,
@@ -12,6 +12,11 @@ from wordbyword.llm import (
     ollama_client,
     openai_client,
     rewrite_sentence,
+)
+from wordbyword.class_rewriting.rewrite import (
+    build_context_packet,
+    rewrite_source_material,
+    rewrite_source_materials,
 )
 
 __version__ = "0.1.0"
@@ -28,4 +33,7 @@ __all__ = [
     "ollama_client",
     "openai_client",
     "rewrite_sentence",
+    "build_context_packet",
+    "rewrite_source_material",
+    "rewrite_source_materials",
 ]

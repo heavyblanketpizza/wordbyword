@@ -9,19 +9,25 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
-from wordbyword.example_generation import GeneratedExampleAttemptSummary
-from wordbyword.llm import LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
-from wordbyword.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.pipeline import PipelineUsageError, run_pipeline
-from wordbyword.source_materials import (
+from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
+from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
+from wordbyword.dictionary_build.llm import LLMConfigurationError, LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
+from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
+from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
+from wordbyword.source_parsing.materials import (
     DEFAULT_PARSED_SOURCE_ROOT,
     DEFAULT_SOURCE_MATERIAL_ROOT,
     SourceMaterialParseError,
     parse_source_material,
     parse_source_materials,
 )
-from wordbyword.terminal_ui import (
+from wordbyword.class_rewriting.rewrite import (
+    DEFAULT_REWRITE_OUTPUT_ROOT,
+    SourceRewriteError,
+    rewrite_source_material as rewrite_parsed_source_material,
+    rewrite_source_materials as rewrite_parsed_source_materials,
+)
+from wordbyword.cli.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
     emit_cleanup_progress,
@@ -30,8 +36,8 @@ from wordbyword.terminal_ui import (
     emit_stage_update,
     render_artifact_drop,
 )
-from wordbyword.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
-from wordbyword.saved_outputs import (
+from wordbyword.dictionary_build.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
+from wordbyword.dictionary_build.saved_outputs import (
     write_generated_meaning_dictionary_candidates_from_saved,
     write_meaning_dictionary_candidates_from_saved,
 )
@@ -330,6 +336,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional stable id/folder name for --parse-source-material.",
     )
+    parser.add_argument(
+        "--rewrite-source-material",
+        type=Path,
+        default=None,
+        metavar="PARSED_BUNDLE_DIR",
+        help=(
+            "Rewrite one parsed source-material bundle for Korean 1학년 readers. "
+            "The path should be a class-source-materials/parsed/<source-id> folder."
+        ),
+    )
+    parser.add_argument(
+        "--rewrite-source-materials",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_PARSED_SOURCE_ROOT,
+        default=None,
+        metavar="PARSED_ROOT",
+        help=(
+            "Rewrite every parsed source-material bundle under a parsed root for Korean 1학년 readers. "
+            "Defaults to class-source-materials/parsed when no root is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--rewrite-output-root",
+        type=Path,
+        default=DEFAULT_REWRITE_OUTPUT_ROOT,
+        help=(
+            "Root folder for rewritten source-material outputs. "
+            f"Defaults to {DEFAULT_REWRITE_OUTPUT_ROOT}."
+        ),
+    )
     return parser
 
 
@@ -395,12 +432,23 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    if args.parse_source_material is not None and args.parse_source_materials is not None:
+    immediate_commands = [
+        args.parse_source_material is not None,
+        args.parse_source_materials is not None,
+        args.rewrite_source_material is not None,
+        args.rewrite_source_materials is not None,
+    ]
+    if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
             2,
-            "wordbyword: error: --parse-source-material and --parse-source-materials cannot be combined.\n",
+            "wordbyword: error: parse/rewrite source-material commands cannot be combined.\n",
         )
     if args.parse_source_materials is not None and args.source_id:
+        parser.exit(
+            2,
+            "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
+        )
+    if (args.rewrite_source_material is not None or args.rewrite_source_materials is not None) and args.source_id:
         parser.exit(
             2,
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
@@ -440,6 +488,20 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             render_dpi=options.render_dpi,
             image_dpi=options.image_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
+        )
+    if args.rewrite_source_material is not None:
+        return rewrite_source_material_cli(
+            parsed_bundle_dir=args.rewrite_source_material,
+            output_root=args.rewrite_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+        )
+    if args.rewrite_source_materials is not None:
+        return rewrite_source_materials_cli(
+            parsed_root=args.rewrite_source_materials,
+            output_root=args.rewrite_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -766,6 +828,95 @@ def parse_source_materials_cli(
         )
     sys.stdout.flush()
     return 0
+
+
+def rewrite_source_material_cli(
+    *,
+    parsed_bundle_dir: Path,
+    output_root: Path,
+    model: str,
+    base_url: str | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=600.0,
+        max_output_tokens=8192,
+    )
+    try:
+        outputs = rewrite_parsed_source_material(
+            parsed_bundle_dir,
+            output_root=output_root,
+            client=client,
+            model=model,
+            progress=emit_source_rewrite_progress,
+        )
+    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "source material rewritten\n"
+        f"  source_id: {outputs.source_id}\n"
+        f"  output_dir: {outputs.output_dir}\n"
+        f"  rewritten_pages: {outputs.rewritten_page_count}\n"
+        f"  failed_pages: {outputs.failed_page_count}\n"
+        f"  content: {outputs.output_dir / 'content.md'}\n"
+    )
+    sys.stdout.flush()
+    return 0 if outputs.failed_page_count == 0 else 1
+
+
+def rewrite_source_materials_cli(
+    *,
+    parsed_root: Path,
+    output_root: Path,
+    model: str,
+    base_url: str | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=600.0,
+        max_output_tokens=8192,
+    )
+    try:
+        outputs = rewrite_parsed_source_materials(
+            parsed_root,
+            output_root=output_root,
+            client=client,
+            model=model,
+            progress=emit_source_rewrite_progress,
+        )
+    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    failed_pages = sum(output.failed_page_count for output in outputs.source_outputs)
+    rewritten_pages = sum(output.rewritten_page_count for output in outputs.source_outputs)
+    sys.stdout.write(
+        "source materials rewritten\n"
+        f"  parsed_root: {outputs.parsed_root}\n"
+        f"  output_root: {outputs.output_root}\n"
+        f"  sources: {len(outputs.source_outputs)}\n"
+        f"  skipped_sources: {len(outputs.skipped_sources)}\n"
+        f"  rewritten_pages: {rewritten_pages}\n"
+        f"  failed_pages: {failed_pages}\n"
+    )
+    for output in outputs.source_outputs:
+        sys.stdout.write(
+            f"  - {output.source_id}: {output.output_dir} "
+            f"(rewritten: {output.rewritten_page_count}, failed: {output.failed_page_count})\n"
+        )
+    for skipped in outputs.skipped_sources:
+        sys.stdout.write(f"  - skipped {skipped['source_dir']}: {skipped['reason']}\n")
+    sys.stdout.flush()
+    return 0 if failed_pages == 0 and outputs.source_outputs else 1
+
+
+def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
+    sys.stdout.write(f"rewrite source [{source_id}] {detail}\n")
+    sys.stdout.flush()
 
 
 def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:

@@ -5,14 +5,14 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from wordbyword.dictionary_cleanup import CleanedDictionaryOutputs
-from wordbyword.example_assignment import LinkedDictionaryOutputs
-from wordbyword.example_cleanup import CleanedExampleOutputs
-from wordbyword.example_generation import GeneratedExampleOutputs
-from wordbyword.meaning_assignment import MeaningAssignmentOutputs
-from wordbyword.meaning_generation import GeneratedMeaningOutputs
-from wordbyword.models import CountEntry, PageText
-from wordbyword.output_catalog import all_output_files, pipeline_stages
+from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs
+from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs
+from wordbyword.dictionary_build.example_cleanup import CleanedExampleOutputs
+from wordbyword.dictionary_build.example_generation import GeneratedExampleOutputs
+from wordbyword.dictionary_build.meaning_assignment import MeaningAssignmentOutputs
+from wordbyword.dictionary_build.meaning_generation import GeneratedMeaningOutputs
+from wordbyword.dictionary_build.models import CountEntry, PageText
+from wordbyword.dictionary_build.output_catalog import all_output_files, pipeline_stages
 
 RENAMED_SUMMARY_KEYS = (
     "reviewed_missing_dictionary_examples",

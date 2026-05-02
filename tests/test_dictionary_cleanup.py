@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.dictionary_cleanup import (
+from wordbyword.dictionary_build.dictionary_cleanup import (
     BATCH_CLEAN_DICTIONARY_CANDIDATE_SYSTEM_PROMPT,
     DEFAULT_DICTIONARY_CLEANUP_BATCH_SIZE,
     IndexedDictionaryCandidate,
@@ -10,7 +10,7 @@ from wordbyword.dictionary_cleanup import (
     dictionary_cleanup_batch_sizes,
     review_dictionary_cleanup_batch,
 )
-from wordbyword.llm import CompletionResult
+from wordbyword.dictionary_build.llm import CompletionResult
 
 
 class DictionaryCleanupTest(unittest.TestCase):

@@ -7,8 +7,8 @@ from typing import Any, Mapping, Sequence
 
 from kiwipiepy import Kiwi
 
-from wordbyword.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys, split_joined_keys
-from wordbyword.llm import (
+from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys, split_joined_keys
+from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
     LLMResponseError,
@@ -17,7 +17,7 @@ from wordbyword.llm import (
     normalize_text_result,
     strip_markdown_fence,
 )
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.text import clean_example_text
 
 DEFAULT_EXAMPLE_CLEANUP_MODEL = "gemma4:31b"
 DEFAULT_CLEANUP_BATCH_SIZE = 50

@@ -7,12 +7,12 @@ import json
 
 from kiwipiepy import Kiwi
 
-from wordbyword.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
-from wordbyword.example_generation import RetryGeneratedExampleCallback
-from wordbyword.llm import SupportsCompletion, ollama_client
-from wordbyword.analyzer import KoreanAnalyzer
-from wordbyword.readers import discover_documents, document_id_for, read_document
-from wordbyword.writers import ArtifactCallback, write_cleanup_outputs_from_saved, write_outputs
+from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
+from wordbyword.dictionary_build.example_generation import RetryGeneratedExampleCallback
+from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client
+from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
+from wordbyword.dictionary_build.readers import discover_documents, document_id_for, read_document
+from wordbyword.dictionary_build.writers import ArtifactCallback, write_cleanup_outputs_from_saved, write_outputs
 
 ProgressCallback = Callable[[str, str], None]
 

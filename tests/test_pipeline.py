@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wordbyword.llm import CompletionResult
-from wordbyword.pipeline import PipelineUsageError, run_pipeline
-from wordbyword.writers import parsed_document_count
+from wordbyword.dictionary_build.llm import CompletionResult
+from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
+from wordbyword.dictionary_build.writers import parsed_document_count
 
 
 class PipelineTest(unittest.TestCase):

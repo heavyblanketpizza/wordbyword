@@ -7,8 +7,8 @@ from typing import Iterable
 
 from kiwipiepy import Kiwi
 
-from wordbyword.models import CountEntry, PageText
-from wordbyword.text import clean_example_text
+from wordbyword.dictionary_build.models import CountEntry, PageText
+from wordbyword.dictionary_build.text import clean_example_text
 
 PUNCTUATION_TAGS = {"SF", "SP", "SS", "SSO", "SSC", "SE", "SO", "SW", "SB"}
 LEXICAL_PREFIXES = ("N", "V", "M", "XR", "SL", "SH")

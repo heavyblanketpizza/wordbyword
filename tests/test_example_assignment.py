@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from wordbyword.example_assignment import build_linked_dictionary_candidate_outputs
+from wordbyword.dictionary_build.example_assignment import build_linked_dictionary_candidate_outputs
 
 
 class ExampleAssignmentTest(unittest.TestCase):

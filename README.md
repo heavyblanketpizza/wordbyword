@@ -14,6 +14,7 @@ The project is currently a vocabulary-and-example preparation pipeline. It does 
 
 ## Folder Layout
 
+- Python implementation modules are grouped by workflow under `wordbyword/dictionary_build/`, `wordbyword/source_parsing/`, `wordbyword/class_rewriting/`, and `wordbyword/cli/`.
 - Put original books and documents in `build-dictionary/original/`.
 - Run the pipeline with `uv --no-cache run python -m wordbyword`.
 - Generated files are written to `build-dictionary/`.
@@ -67,6 +68,26 @@ uv --no-cache run python -m wordbyword --parse-source-materials class-source-mat
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --skip-pdf-parse
 uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
 ```
+
+## Source Material Rewriting
+
+After source materials are parsed, run the Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
+
+```bash
+uv --no-cache run python -m wordbyword --rewrite-source-materials class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
+```
+
+The rewrite stage builds a full interleaved `context_packet.md` for each parsed source, attaches the parsed image assets to every page-level Ollama request, and writes outputs under `class-source-materials/rewritten/grade1-ko-ollama/<source-id>/`:
+
+- `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
+- `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
+- `context_packet.md`: audit copy of the full source context given to the model.
+- `attempts.jsonl`: every page rewrite attempt, prompt, response, attached asset ids, and validation result.
+- `failures.jsonl`: unresolved page rewrite failures.
+- `quality_report.json`: rewrite counts, image attachment counts, and soft QA metrics.
+- `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
+- `assets/`: copied parsed assets so Markdown image links remain local.
 
 ## Outputs
 

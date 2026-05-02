@@ -16,7 +16,7 @@ import pymupdf4llm
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from wordbyword.paddleocr_vl import (
+from wordbyword.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLPageResult,
     PaddleOCRVLProgress,
