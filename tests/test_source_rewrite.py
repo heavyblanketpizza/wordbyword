@@ -411,7 +411,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                 ],
             )
             dictionary_path = root / "15_final_dictionary.jsonl"
-            write_dictionary_fixture(dictionary_path, count=15)
+            write_dictionary_fixture(dictionary_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
             outputs = rewrite_vocabulary_guided_source_material(
@@ -440,20 +440,20 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             self.assertIn('<img src="assets/fig1.png"', content)
             self.assertTrue((outputs.output_dir / "selection_attempts.jsonl").is_file())
             selected = json.loads((outputs.output_dir / "selected_vocabulary.json").read_text(encoding="utf-8"))
-            self.assertEqual(selected["selected_count"], 15)
+            self.assertEqual(selected["selected_count"], 20)
             self.assertEqual(selected["selected_vocabulary"][0]["canonical_key"], "선물")
             manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["rewrite"]["mode"], "vocabulary_guided")
             self.assertIn("selected_vocabulary_json", manifest["files"])
             quality = json.loads((outputs.output_dir / "quality_report.json").read_text(encoding="utf-8"))
-            self.assertEqual(quality["vocabulary_guidance"]["selected_count"], 15)
+            self.assertEqual(quality["vocabulary_guidance"]["selected_count"], 20)
 
     def test_vocabulary_guided_rewrite_failure_does_not_run_rewrite_call(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             bundle_dir = write_parsed_fixture(root / "parsed")
             dictionary_path = root / "15_final_dictionary.jsonl"
-            write_dictionary_fixture(dictionary_path, count=15)
+            write_dictionary_fixture(dictionary_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient(selection_payload={
                 "source_id": "lesson",
                 "selected_vocabulary": ["unknown"],
@@ -551,7 +551,7 @@ class SourceRewriteCliTest(unittest.TestCase):
                     "# Later page\n\nSecond page source explains the ending.",
                 ],
             )
-            write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=15)
+            write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
             with patch("wordbyword.cli.app.ollama_client", return_value=client):
@@ -592,7 +592,7 @@ class SourceRewriteCliTest(unittest.TestCase):
                 ],
             )
             write_skipped_fixture(parsed_root / "sample")
-            write_dictionary_fixture(dictionary_path, count=15)
+            write_dictionary_fixture(dictionary_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
             with patch("wordbyword.cli.app.ollama_client", return_value=client):
@@ -770,7 +770,7 @@ class RecordingVocabularyGuidedRewriteClient:
                         "reason": "source relevant",
                         "role": "metaphor" if canonical_key == "선물" else "support",
                     }
-                    for canonical_key in dictionary_fixture_keys()[:15]
+                    for canonical_key in dictionary_fixture_keys()[:20]
                 ],
             }
         else:
@@ -853,10 +853,15 @@ def dictionary_fixture_keys() -> list[str]:
         "손",
         "집",
         "꿈",
+        "달",
+        "별",
+        "바람",
+        "꽃",
+        "노래",
     ]
 
 
-def write_dictionary_fixture(path: Path, *, count: int = 15) -> None:
+def write_dictionary_fixture(path: Path, *, count: int = 20) -> None:
     rows = [
         {
             "canonical_key": key,
