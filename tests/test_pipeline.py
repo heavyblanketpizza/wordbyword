@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from wordbyword.dictionary_build.llm import CompletionResult
 from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
@@ -311,6 +312,29 @@ class PipelineTest(unittest.TestCase):
             self.assertNotIn("이 문장은 cleanup-only run에서 읽히면 안 된다.", {
                 row["source_sentence"] for row in cleaned_example_sentences
             })
+
+    def test_pipeline_unloads_internally_created_ollama_cleanup_client(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            output_dir.mkdir()
+            (input_dir / "sample.txt").write_text(
+                "한국어 책을 읽고 있다. 점심을 먹은 뒤에 어머니와 함께 놀이터로 나갔다.",
+                encoding="utf-8",
+            )
+            run_pipeline(input_dir=input_dir, output_dir=output_dir)
+            client = UnloadTrackingCleanupClient()
+
+            with patch("wordbyword.dictionary_build.pipeline.ollama_client", return_value=client):
+                run_pipeline(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    clean_example_sentences=True,
+                )
+
+            self.assertEqual(client.unload_count, 1)
 
     def test_pipeline_can_write_cleaned_dictionary_candidates_with_stub_client(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -920,6 +944,14 @@ class AlwaysKeepCleanupClient:
             model="gemma4:31b",
             content="EMPTY",
         )
+
+
+class UnloadTrackingCleanupClient(AlwaysKeepCleanupClient):
+    def __init__(self) -> None:
+        self.unload_count = 0
+
+    def unload_model(self) -> None:
+        self.unload_count += 1
 
 
 class GeneratedExampleClient:

@@ -11,7 +11,14 @@ from pathlib import Path
 
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupBatchProgress
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
-from wordbyword.dictionary_build.llm import LLMConfigurationError, LLMRequestError, LLMResponseError, SupportsCompletion, ollama_client
+from wordbyword.dictionary_build.llm import (
+    LLMConfigurationError,
+    LLMRequestError,
+    LLMResponseError,
+    SupportsCompletion,
+    ollama_client,
+    unload_model_if_supported,
+)
 from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.source_parsing.materials import (
@@ -892,13 +899,16 @@ def rewrite_source_material_cli(
         max_output_tokens=8192,
     )
     try:
-        outputs = rewrite_parsed_source_material(
-            parsed_bundle_dir,
-            output_root=output_root,
-            client=client,
-            model=model,
-            progress=emit_source_rewrite_progress,
-        )
+        try:
+            outputs = rewrite_parsed_source_material(
+                parsed_bundle_dir,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
     except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -929,13 +939,16 @@ def rewrite_source_materials_cli(
         max_output_tokens=8192,
     )
     try:
-        outputs = rewrite_parsed_source_materials(
-            parsed_root,
-            output_root=output_root,
-            client=client,
-            model=model,
-            progress=emit_source_rewrite_progress,
-        )
+        try:
+            outputs = rewrite_parsed_source_materials(
+                parsed_root,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
     except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -976,13 +989,16 @@ def rewrite_whole_source_material_cli(
         max_output_tokens=32768,
     )
     try:
-        outputs = rewrite_whole_parsed_source_material(
-            parsed_bundle_dir,
-            output_root=output_root,
-            client=client,
-            model=model,
-            progress=emit_source_rewrite_progress,
-        )
+        try:
+            outputs = rewrite_whole_parsed_source_material(
+                parsed_bundle_dir,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
     except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -1013,13 +1029,16 @@ def rewrite_whole_source_materials_cli(
         max_output_tokens=32768,
     )
     try:
-        outputs = rewrite_whole_parsed_source_materials(
-            parsed_root,
-            output_root=output_root,
-            client=client,
-            model=model,
-            progress=emit_source_rewrite_progress,
-        )
+        try:
+            outputs = rewrite_whole_parsed_source_materials(
+                parsed_root,
+                output_root=output_root,
+                client=client,
+                model=model,
+                progress=emit_source_rewrite_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
     except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -1049,6 +1068,14 @@ def rewrite_whole_source_materials_cli(
 def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"rewrite source [{source_id}] {detail}\n")
     sys.stdout.flush()
+
+
+def warn_if_model_unload_fails(client: SupportsCompletion) -> None:
+    try:
+        unload_model_if_supported(client)
+    except Exception as error:  # pragma: no cover - defensive cleanup path
+        sys.stderr.write(f"wordbyword: warning: could not unload Ollama model: {error}\n")
+        sys.stderr.flush()
 
 
 def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:
@@ -1164,6 +1191,7 @@ def generate_missing_meanings(
     base_url: str | None = None,
     generated_meaning_client: SupportsCompletion | None = None,
 ) -> int:
+    owns_client = generated_meaning_client is None
     client = generated_meaning_client or ollama_client(
         model=model,
         base_url=base_url,
@@ -1180,11 +1208,15 @@ def generate_missing_meanings(
         )
 
     try:
-        outputs = write_generated_meaning_dictionary_candidates_from_saved(
-            output_dir,
-            generated_meaning_client=client,
-            generated_meaning_progress=generated_meaning_progress,
-        )
+        try:
+            outputs = write_generated_meaning_dictionary_candidates_from_saved(
+                output_dir,
+                generated_meaning_client=client,
+                generated_meaning_progress=generated_meaning_progress,
+            )
+        finally:
+            if owns_client:
+                warn_if_model_unload_fails(client)
     except (ValueError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1

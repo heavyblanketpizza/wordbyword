@@ -403,6 +403,14 @@ class OllamaChatClient(BaseChatClient):
                 f"from /api/show capabilities ({formatted}). Use a vision-capable model."
             )
 
+    def unload_model(self) -> None:
+        self.transport.post_json(
+            url=f"{self.config.base_url}/api/generate",
+            headers=self.headers(),
+            body={"model": self.config.model, "keep_alive": 0, "stream": False},
+            timeout_seconds=self.config.timeout_seconds,
+        )
+
 
 def normalize_provider_name(provider: str) -> ProviderName:
     normalized = provider.strip().lower()
@@ -493,6 +501,12 @@ def google_client(**kwargs: Any) -> BaseChatClient:
 
 def ollama_client(**kwargs: Any) -> BaseChatClient:
     return build_provider_client("ollama", **kwargs)
+
+
+def unload_model_if_supported(client: SupportsCompletion) -> None:
+    unload = getattr(client, "unload_model", None)
+    if callable(unload):
+        unload()
 
 
 def rewrite_sentence(

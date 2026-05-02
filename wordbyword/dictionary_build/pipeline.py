@@ -9,7 +9,7 @@ from kiwipiepy import Kiwi
 
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
 from wordbyword.dictionary_build.example_generation import RetryGeneratedExampleCallback
-from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client
+from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
 from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
 from wordbyword.dictionary_build.readers import discover_documents, document_id_for, read_document
 from wordbyword.dictionary_build.writers import ArtifactCallback, write_cleanup_outputs_from_saved, write_outputs
@@ -85,34 +85,41 @@ def run_pipeline(
             )
         _report(progress, "cleanup", f"loading saved stage inputs from {output_dir}")
         try:
-            write_cleanup_outputs_from_saved(
-                output_dir,
-                sentence_cleanup_client=(sentence_cleanup_client or shared_cleanup_client)
-                if example_cleanup_requested
-                else None,
-                sentence_cleanup_progress=cleanup_progress if example_cleanup_requested else None,
-                dictionary_cleanup_client=(dictionary_cleanup_client or shared_cleanup_client)
-                if dictionary_cleanup_requested
-                else None,
-                dictionary_cleanup_progress=(
-                dictionary_cleanup_progress or cleanup_progress
+            try:
+                write_cleanup_outputs_from_saved(
+                    output_dir,
+                    sentence_cleanup_client=(sentence_cleanup_client or shared_cleanup_client)
+                    if example_cleanup_requested
+                    else None,
+                    sentence_cleanup_progress=cleanup_progress if example_cleanup_requested else None,
+                    dictionary_cleanup_client=(dictionary_cleanup_client or shared_cleanup_client)
+                    if dictionary_cleanup_requested
+                    else None,
+                    dictionary_cleanup_progress=(
+                        dictionary_cleanup_progress or cleanup_progress
+                    )
+                    if dictionary_cleanup_requested
+                    else None,
+                    generated_example_client=(generated_example_client or shared_cleanup_client)
+                    if generated_example_requested
+                    else None,
+                    generated_example_progress=(
+                        generated_example_progress or dictionary_cleanup_progress or cleanup_progress
+                    )
+                    if generated_example_requested
+                    else None,
+                    generated_example_retry_decider=generated_example_retry_decider
+                    if generated_example_requested
+                    else None,
+                    retry_generated_examples_only=retry_generated_example_requested,
+                    artifact_callback=artifact_callback,
                 )
-                if dictionary_cleanup_requested
-                else None,
-                generated_example_client=(generated_example_client or shared_cleanup_client)
-                if generated_example_requested
-                else None,
-                generated_example_progress=(
-                    generated_example_progress or dictionary_cleanup_progress or cleanup_progress
-                )
-                if generated_example_requested
-                else None,
-                generated_example_retry_decider=generated_example_retry_decider
-                if generated_example_requested
-                else None,
-                retry_generated_examples_only=retry_generated_example_requested,
-                artifact_callback=artifact_callback,
-            )
+            finally:
+                if shared_cleanup_client is not None:
+                    try:
+                        unload_model_if_supported(shared_cleanup_client)
+                    except Exception as exc:  # pragma: no cover - defensive cleanup path
+                        _report(progress, "cleanup", f"warning: could not unload Ollama model: {exc}")
         except ValueError as exc:
             raise PipelineUsageError(str(exc)) from exc
         _report(progress, "write", f"writing LLM cleanup bundle to {output_dir}")

@@ -249,6 +249,23 @@ class ProviderClientTest(unittest.TestCase):
         self.assertEqual(transport.url, "http://localhost:11434/api/show")
         self.assertEqual(transport.body["model"], "vision-test")
 
+    def test_ollama_client_unloads_model_with_keep_alive_zero(self) -> None:
+        transport = FakeTransport({"done": True})
+
+        client = build_provider_client(
+            "ollama",
+            model="llama-test",
+            base_url="http://localhost:11434/",
+            transport=transport,
+        )
+        client.unload_model()  # type: ignore[attr-defined]
+
+        self.assertEqual(transport.url, "http://localhost:11434/api/generate")
+        self.assertEqual(
+            transport.body,
+            {"model": "llama-test", "keep_alive": 0, "stream": False},
+        )
+
 
 class TaskHelperTest(unittest.TestCase):
     def test_rewrite_sentence_normalizes_wrapped_output(self) -> None:
