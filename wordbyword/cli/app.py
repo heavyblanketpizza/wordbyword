@@ -1315,7 +1315,7 @@ def print_class_material_cli(
     client = ollama_client(
         model=model,
         base_url=base_url,
-        timeout_seconds=600.0,
+        timeout_seconds=1200.0,
         max_output_tokens=16384,
     )
     try:
@@ -1363,7 +1363,7 @@ def print_class_materials_cli(
     client = ollama_client(
         model=model,
         base_url=base_url,
-        timeout_seconds=600.0,
+        timeout_seconds=1200.0,
         max_output_tokens=16384,
     )
     try:
