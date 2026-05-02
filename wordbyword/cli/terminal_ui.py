@@ -7,7 +7,7 @@ import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, TextIO, cast
 
 if TYPE_CHECKING:
     from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
@@ -780,14 +780,14 @@ def _median(values: Sequence[float]) -> float:
 
 def _safe_float(value: object) -> float:
     try:
-        return float(value)  # type: ignore[arg-type]
+        return float(cast(str | bytes | bytearray | int | float, value))
     except (TypeError, ValueError):
         return 0.0
 
 
 def _safe_int(value: object) -> int:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(cast(str | bytes | bytearray | int | float, value))
     except (TypeError, ValueError):
         return 0
 

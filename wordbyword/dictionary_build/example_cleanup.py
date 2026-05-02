@@ -7,13 +7,12 @@ from typing import Any, Mapping, Sequence
 
 from kiwipiepy import Kiwi
 
-from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys, split_joined_keys
+from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
     LLMResponseError,
     SupportsCompletion,
-    normalized_confidence,
     normalize_text_result,
     strip_markdown_fence,
 )

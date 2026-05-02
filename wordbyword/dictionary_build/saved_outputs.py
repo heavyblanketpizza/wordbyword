@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs

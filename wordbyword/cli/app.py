@@ -24,6 +24,7 @@ from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipelin
 from wordbyword.source_parsing.materials import (
     DEFAULT_PARSED_SOURCE_ROOT,
     DEFAULT_SOURCE_MATERIAL_ROOT,
+    PdfParserName,
     SourceMaterialParseError,
     parse_source_material,
     parse_source_materials,
@@ -70,7 +71,7 @@ PIPELINE_CLEANUP_FLAGS = (
 class SourceParseOptions:
     output_root: Path
     parse_pdf: bool
-    pdf_parser: str
+    pdf_parser: PdfParserName
     render_pages: bool
     render_dpi: int
     image_dpi: int
@@ -638,11 +639,17 @@ def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
     return args.rewrite_dictionary or (args.output / "15_final_dictionary.jsonl")
 
 
+def parse_pdf_parser_name(value: str) -> PdfParserName:
+    if value not in ("heuristic", "paddleocr-vl"):
+        raise PipelineUsageError(f"unsupported PDF parser: {value}")
+    return value
+
+
 def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
     return SourceParseOptions(
         output_root=args.source_output_root,
         parse_pdf=not args.skip_pdf_parse,
-        pdf_parser=args.pdf_parser,
+        pdf_parser=parse_pdf_parser_name(args.pdf_parser),
         render_pages=not args.no_page_renders,
         render_dpi=args.pdf_render_dpi,
         image_dpi=args.pdf_image_dpi,
@@ -855,7 +862,7 @@ def parse_source_material_cli(
     output_root: Path,
     source_id: str | None,
     parse_pdf: bool,
-    pdf_parser: str,
+    pdf_parser: PdfParserName,
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
@@ -867,7 +874,7 @@ def parse_source_material_cli(
             output_root=output_root,
             source_id=source_id,
             parse_pdf=parse_pdf,
-            pdf_parser=pdf_parser,  # type: ignore[arg-type]
+            pdf_parser=pdf_parser,
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,
@@ -902,7 +909,7 @@ def parse_source_materials_cli(
     source_dir: Path,
     output_root: Path,
     parse_pdf: bool,
-    pdf_parser: str,
+    pdf_parser: PdfParserName,
     render_pages: bool,
     render_dpi: int,
     image_dpi: int,
@@ -913,7 +920,7 @@ def parse_source_materials_cli(
             source_dir,
             output_root=output_root,
             parse_pdf=parse_pdf,
-            pdf_parser=pdf_parser,  # type: ignore[arg-type]
+            pdf_parser=pdf_parser,
             render_pages=render_pages,
             render_dpi=render_dpi,
             image_dpi=image_dpi,

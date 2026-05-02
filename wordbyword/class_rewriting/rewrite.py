@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
@@ -24,6 +24,9 @@ from wordbyword.dictionary_build.output_files import append_jsonl, initialize_js
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
+REWRITE_MODE_PAGE = "page"
+REWRITE_MODE_WHOLE_DOCUMENT = "whole_document"
+REWRITE_MODE_VOCABULARY_GUIDED = "vocabulary_guided"
 DEFAULT_REWRITE_OUTPUT_ROOT = Path("rewritten-for-class") / "grade1-ko-ollama"
 DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
     Path("rewritten-for-class") / "grade1-ko-ollama-whole-document"
@@ -447,7 +450,7 @@ def rewrite_whole_source_material(
         target_profile=target_profile,
         attached_assets=attached_assets,
         content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
-        rewrite_mode="whole_document",
+        rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
     )
 
     rewritten_page_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
@@ -624,7 +627,7 @@ def rewrite_vocabulary_guided_source_material(
         target_profile=target_profile,
         attached_assets=attached_assets,
         content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
-        rewrite_mode="vocabulary_guided",
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
         vocabulary_guidance=vocabulary_guidance_metadata(
             dictionary_path=dictionary_path,
             candidate_pool=candidate_pool,
@@ -771,8 +774,10 @@ def parse_nonnegative_int(
 ) -> int:
     if value is None or value == "":
         return 0
+    if isinstance(value, bool):
+        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}")
     try:
-        count = int(value)  # type: ignore[arg-type]
+        count = int(cast(str | bytes | bytearray | int | float, value))
     except (TypeError, ValueError) as exc:
         raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}") from exc
     return max(count, 0)
@@ -1328,7 +1333,7 @@ def rewrite_whole_document_with_full_context(
         return {
             "source_id": context.source_id,
             "page": None,
-            "rewrite_mode": "whole_document",
+            "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
             "user_prompt": prompt.user_prompt,
@@ -1344,7 +1349,7 @@ def rewrite_whole_document_with_full_context(
         return {
             "source_id": context.source_id,
             "page": None,
-            "rewrite_mode": "whole_document",
+            "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
             "model": model,
             "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
             "user_prompt": prompt.user_prompt,
@@ -1369,7 +1374,7 @@ def failed_whole_document_attempt(
     return {
         "source_id": context.source_id,
         "page": None,
-        "rewrite_mode": "whole_document",
+        "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
         "model": model,
         "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
         "user_prompt": prompt.user_prompt,
@@ -1410,44 +1415,61 @@ def select_vocabulary_for_rewrite(
             candidate_pool=candidate_pool,
         )
         return (
-            {
-                "source_id": context.source_id,
-                "rewrite_mode": "vocabulary_guided",
-                "attempt_kind": "vocabulary_selection",
-                "model": model,
-                "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
-                "user_prompt": prompt.user_prompt,
-                "prompt_messages": list(prompt.prompt_messages),
-                "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
-                "candidate_count": len(candidate_pool),
-                "requested_count": expected_selected_vocabulary_count(candidate_pool),
-                "response": result.content,
-                "selected_canonical_keys": [item.candidate.canonical_key for item in selected],
-                "accepted": True,
-                "failure_reason": "",
-            },
+            vocabulary_selection_attempt_row(
+                context=context,
+                prompt=prompt,
+                candidate_pool=candidate_pool,
+                model=model,
+                response=result.content,
+                selected_vocabulary=selected,
+                accepted=True,
+                failure_reason="",
+            ),
             selected,
         )
     except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
         return (
-            {
-                "source_id": context.source_id,
-                "rewrite_mode": "vocabulary_guided",
-                "attempt_kind": "vocabulary_selection",
-                "model": model,
-                "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
-                "user_prompt": prompt.user_prompt,
-                "prompt_messages": list(prompt.prompt_messages),
-                "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
-                "candidate_count": len(candidate_pool),
-                "requested_count": expected_selected_vocabulary_count(candidate_pool),
-                "response": result.content if result is not None else "",
-                "selected_canonical_keys": [],
-                "accepted": False,
-                "failure_reason": str(exc),
-            },
+            vocabulary_selection_attempt_row(
+                context=context,
+                prompt=prompt,
+                candidate_pool=candidate_pool,
+                model=model,
+                response=result.content if result is not None else "",
+                selected_vocabulary=[],
+                accepted=False,
+                failure_reason=str(exc),
+            ),
             [],
         )
+
+
+def vocabulary_selection_attempt_row(
+    *,
+    context: ContextPacket,
+    prompt: RewritePrompt,
+    candidate_pool: Sequence[VocabularyCandidate],
+    model: str,
+    response: str,
+    selected_vocabulary: Sequence[SelectedVocabulary],
+    accepted: bool,
+    failure_reason: str,
+) -> dict[str, object]:
+    return {
+        "source_id": context.source_id,
+        "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
+        "attempt_kind": "vocabulary_selection",
+        "model": model,
+        "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
+        "user_prompt": prompt.user_prompt,
+        "prompt_messages": list(prompt.prompt_messages),
+        "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+        "candidate_count": len(candidate_pool),
+        "requested_count": expected_selected_vocabulary_count(candidate_pool),
+        "response": response,
+        "selected_canonical_keys": [item.candidate.canonical_key for item in selected_vocabulary],
+        "accepted": accepted,
+        "failure_reason": failure_reason,
+    }
 
 
 def failed_vocabulary_selection_attempt(
@@ -1464,22 +1486,16 @@ def failed_vocabulary_selection_attempt(
         image_payloads_by_path,
     )
     return (
-        {
-            "source_id": context.source_id,
-            "rewrite_mode": "vocabulary_guided",
-            "attempt_kind": "vocabulary_selection",
-            "model": model,
-            "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
-            "user_prompt": prompt.user_prompt,
-            "prompt_messages": list(prompt.prompt_messages),
-            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
-            "candidate_count": len(candidate_pool),
-            "requested_count": expected_selected_vocabulary_count(candidate_pool),
-            "response": "",
-            "selected_canonical_keys": [],
-            "accepted": False,
-            "failure_reason": failure_reason,
-        },
+        vocabulary_selection_attempt_row(
+            context=context,
+            prompt=prompt,
+            candidate_pool=candidate_pool,
+            model=model,
+            response="",
+            selected_vocabulary=[],
+            accepted=False,
+            failure_reason=failure_reason,
+        ),
         [],
     )
 
@@ -1524,7 +1540,7 @@ def rewrite_vocabulary_guided_document_with_full_context(
         return {
             "source_id": context.source_id,
             "page": None,
-            "rewrite_mode": "vocabulary_guided",
+            "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
             "attempt_kind": "rewrite",
             "model": model,
             "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
@@ -1542,7 +1558,7 @@ def rewrite_vocabulary_guided_document_with_full_context(
         return {
             "source_id": context.source_id,
             "page": None,
-            "rewrite_mode": "vocabulary_guided",
+            "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
             "attempt_kind": "rewrite",
             "model": model,
             "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
@@ -1567,7 +1583,7 @@ def failed_vocabulary_guided_document_attempt(
     return {
         "source_id": context.source_id,
         "page": None,
-        "rewrite_mode": "vocabulary_guided",
+        "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
         "attempt_kind": "rewrite",
         "model": model,
         "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
@@ -2017,7 +2033,7 @@ def write_rewrite_artifacts(
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
     content_markdown: str | None = None,
-    rewrite_mode: str = "page",
+    rewrite_mode: str = REWRITE_MODE_PAGE,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> None:
     (output_dir / "content.md").write_text(
@@ -2088,7 +2104,7 @@ def build_quality_report(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
-    rewrite_mode: str = "page",
+    rewrite_mode: str = REWRITE_MODE_PAGE,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewritten_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
@@ -2127,7 +2143,7 @@ def build_rewrite_manifest(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
-    rewrite_mode: str = "page",
+    rewrite_mode: str = REWRITE_MODE_PAGE,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewrite = {
@@ -2254,7 +2270,7 @@ def mapping_value(row: Mapping[str, object], key: str) -> Mapping[str, object]:
 
 def int_or_none(value: object) -> int | None:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(cast(str | bytes | bytearray | int | float, value))
     except (TypeError, ValueError):
         return None
 
