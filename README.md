@@ -98,7 +98,7 @@ uv --no-cache run python -m wordbyword --rewrite-whole-source-material class-sou
 
 Whole-document outputs mirror the same artifact bundle under `rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
 
-The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 150 canonical keys and examples to Ollama, asks for 15 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
+The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 250 canonical keys and examples to Ollama, asks for 15 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
 
 ```bash
 uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials class-source-materials/parsed --ollama-model gemma4:31b

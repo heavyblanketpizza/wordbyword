@@ -31,7 +31,7 @@ DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
 DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
     Path("rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided"
 )
-VOCABULARY_GUIDED_CANDIDATE_LIMIT = 150
+VOCABULARY_GUIDED_CANDIDATE_LIMIT = 250
 VOCABULARY_GUIDED_SELECTION_LIMIT = 15
 VOCABULARY_GUIDED_SCORING_POLICY = (
     "selection_score=max(quality_score, roi_score); null roi_score falls back to quality_score"

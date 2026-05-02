@@ -313,7 +313,7 @@ class WholeDocumentRewriteTest(unittest.TestCase):
 
 
 class VocabularyGuidedRewriteTest(unittest.TestCase):
-    def test_dictionary_candidates_rank_by_roi_or_quality_and_cap_at_top_150(self) -> None:
+    def test_dictionary_candidates_rank_by_roi_or_quality_and_cap_at_top_250(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             dictionary_path = Path(workspace) / "15_final_dictionary.jsonl"
             rows = [
@@ -346,14 +346,14 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                         "roi_score": None,
                         "count": index,
                     }
-                    for index in range(160)
+                    for index in range(260)
                 ],
             ]
             write_jsonl(dictionary_path, rows)
 
             candidates = load_vocabulary_guided_candidates(dictionary_path)
 
-            self.assertEqual(len(candidates), 150)
+            self.assertEqual(len(candidates), 250)
             self.assertEqual(candidates[0].canonical_key, "roi-wins")
             self.assertEqual(candidates[1].canonical_key, "quality-only")
             self.assertNotIn("missing-example", {candidate.canonical_key for candidate in candidates})
