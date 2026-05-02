@@ -31,3 +31,4 @@ build-dictionary/references/*
 # Local class materials and generated rewrites; keep all content local.
 class-source-materials/
 rewritten-for-class/
+printable-for-class/
