@@ -1,6 +1,45 @@
 """Command-line entry points."""
 
-from . import app as _app
+from wordbyword.cli.app import (
+    add_reference_meanings,
+    generate_missing_meanings,
+    link_cleaned_examples,
+    load_dictionary_candidates,
+    main,
+    paddleocr_vl_settings_from_args,
+    parse_pdf_parser_name,
+    pipeline_cleanup_requested,
+    prompt_generated_example_retry,
+    resolve_distribution_path,
+    show_distribution,
+    source_parse_options_from_args,
+)
+from wordbyword.cli.options import (
+    DEFAULT_INPUT_DIR,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_REFERENCE_DICTIONARY_PATH,
+    SourceParseOptions,
+    build_parser,
+    validate_args,
+)
 
-__all__ = [name for name in dir(_app) if not name.startswith("_")]
-globals().update({name: getattr(_app, name) for name in __all__})
+__all__ = [
+    "DEFAULT_INPUT_DIR",
+    "DEFAULT_OUTPUT_DIR",
+    "DEFAULT_REFERENCE_DICTIONARY_PATH",
+    "SourceParseOptions",
+    "add_reference_meanings",
+    "build_parser",
+    "generate_missing_meanings",
+    "link_cleaned_examples",
+    "load_dictionary_candidates",
+    "main",
+    "paddleocr_vl_settings_from_args",
+    "parse_pdf_parser_name",
+    "pipeline_cleanup_requested",
+    "prompt_generated_example_retry",
+    "resolve_distribution_path",
+    "show_distribution",
+    "source_parse_options_from_args",
+    "validate_args",
+]

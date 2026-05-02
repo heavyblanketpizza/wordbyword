@@ -16,6 +16,7 @@ import pymupdf4llm
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from wordbyword._json_io import jsonable, write_json
 from wordbyword.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLPageResult,
@@ -490,9 +491,9 @@ def _parse_pdf(
         PageChunk(
             page=index,
             text=_rewrite_markdown_asset_links(str(chunk.get("text", "")), assets_dir=assets_dir),
-            metadata=_jsonable(chunk.get("metadata", {})),
-            toc_items=_jsonable(chunk.get("toc_items", [])),
-            page_boxes=_jsonable(chunk.get("page_boxes", [])),
+            metadata=jsonable(chunk.get("metadata", {})),
+            toc_items=jsonable(chunk.get("toc_items", [])),
+            page_boxes=jsonable(chunk.get("page_boxes", [])),
         )
         for index, chunk in enumerate(markdown_chunks, start=1)
     ]
@@ -807,7 +808,7 @@ def _extract_parser_output_json(*, source_path: Path) -> dict[str, Any]:
         parsed = raw_output
     if not isinstance(parsed, dict):
         raise SourceMaterialParseError("PyMuPDF4LLM JSON output is not a JSON object.")
-    return _jsonable(parsed)
+    return jsonable(parsed)
 
 
 def _compose_markdown(chunks: list[dict[str, Any]]) -> str:
@@ -1166,24 +1167,7 @@ def _build_parsed_manifest(
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.write_text(
-        json.dumps(_jsonable(payload), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, Path):
-        return value.as_posix()
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
+    write_json(path, payload)
 
 
 def _unique_source_id(source_path: Path, source_dir: Path, used_source_ids: set[str]) -> str:

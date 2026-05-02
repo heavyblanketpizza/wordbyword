@@ -300,11 +300,13 @@ entry = build_dictionary_entry(
 ## Verify
 
 ```bash
-uv --no-cache run python -m unittest discover -s tests
+uv run pytest -q
+uv run ruff check .
+uv run python -m unittest discover tests -q
 ```
 
 Run the live Ollama rewrite smoke test only when a local `gemma4:31b` is available:
 
 ```bash
-WORDBYWORD_RUN_OLLAMA_LIVE_TESTS=1 uv --no-cache run python -m unittest tests.test_llm.LiveOllamaIntegrationTest
+WORDBYWORD_RUN_OLLAMA_LIVE_TESTS=1 uv run python -m unittest tests.test_llm.LiveOllamaIntegrationTest
 ```

@@ -183,9 +183,14 @@ def emit_completion_screen(
 ) -> None:
     stream = sys.stdout if stream is None else stream
     interactive = _is_interactive(stream)
-    color = _supports_color(stream)
-    if interactive:
+    if not interactive:
+        stream.write(render_completion_summary_line(result))
         stream.write("\n")
+        stream.flush()
+        return
+
+    color = _supports_color(stream)
+    stream.write("\n")
     stream.write(
         render_completion_screen(
             result,
@@ -202,6 +207,16 @@ def emit_completion_screen(
     if interactive and not os.environ.get("CI"):
         stream.write("\a")
     stream.flush()
+
+
+def render_completion_summary_line(result: "PipelineResult") -> str:
+    return (
+        "wordbyword: pipeline complete; "
+        f"documents={result.documents:,}; "
+        f"sentences={result.sentences:,}; "
+        f"vocabulary={result.vocabulary_terms:,}; "
+        f"output={result.output_dir}"
+    )
 
 
 def render_boot_screen(

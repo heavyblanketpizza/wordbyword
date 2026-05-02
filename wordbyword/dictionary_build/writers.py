@@ -10,7 +10,6 @@ from kiwipiepy import Kiwi
 
 from wordbyword.dictionary_build.candidates import build_candidate_outputs
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
-from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs
 from wordbyword.dictionary_build.example_cleanup import (
     CleanedExampleOutputs,
     CleanupProgressCallback,

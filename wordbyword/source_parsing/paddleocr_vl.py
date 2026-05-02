@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
-import json
 import multiprocessing
 import os
 import queue
@@ -15,6 +14,10 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+from wordbyword._json_io import jsonable
+from wordbyword._json_io import read_json_object_or_empty as read_json_object_or_empty_file
+from wordbyword._json_io import write_json_atomic as write_json_atomic_file
 
 _PIPELINE_CACHE: dict[tuple[tuple[str, Any], ...], Any] = {}
 
@@ -720,7 +723,7 @@ def _page_result(
     input_image_path: Path,
     assets_dir: Path,
 ) -> PaddleOCRVLPageResult:
-    raw_json = _jsonable(getattr(result, "json", {}))
+    raw_json = jsonable(getattr(result, "json", {}))
     markdown_payload = getattr(result, "markdown", {})
     markdown = _markdown_text(markdown_payload)
     markdown, markdown_asset_paths = _save_markdown_images(
@@ -860,21 +863,11 @@ def _worker_main(argv: list[str] | None = None) -> int:
 
 
 def _read_json_file(path: Path) -> dict[str, Any]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise PaddleOCRVLRuntimeError(f"Invalid JSON in {path}: {error.msg}") from error
-    return _dict_or_empty(payload)
+    return read_json_object_or_empty_file(path, error_type=PaddleOCRVLRuntimeError)
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
-    temporary_path.write_text(
-        json.dumps(_jsonable(payload), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary_path.replace(path)
+    write_json_atomic_file(path, payload)
 
 
 def _read_text_tail(path: Path, *, max_chars: int = 4000) -> str:
@@ -886,20 +879,6 @@ def _read_text_tail(path: Path, *, max_chars: int = 4000) -> str:
 
 def _without_none(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
-
-
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, Path):
-        return value.as_posix()
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    if hasattr(value, "tolist"):
-        return _jsonable(value.tolist())
-    return str(value)
 
 
 if __name__ == "__main__":

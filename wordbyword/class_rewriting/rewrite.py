@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from wordbyword._json_io import read_json_list as read_json_list_file
+from wordbyword._json_io import read_json_object as read_json_object_file
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     CompletionResult,
@@ -2248,17 +2250,11 @@ def markdown_heading_count(text: str) -> int:
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
-    parsed = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(parsed, dict):
-        raise SourceRewriteError(f"Expected JSON object in {path}.")
-    return parsed
+    return read_json_object_file(path, error_type=SourceRewriteError)
 
 
 def read_json_list(path: Path) -> list[Any]:
-    parsed = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(parsed, list):
-        raise SourceRewriteError(f"Expected JSON list in {path}.")
-    return parsed
+    return read_json_list_file(path, error_type=SourceRewriteError)
 
 
 def mapping_value(row: Mapping[str, object], key: str) -> Mapping[str, object]:
