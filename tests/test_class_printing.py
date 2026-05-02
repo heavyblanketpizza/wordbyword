@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
 import tempfile
@@ -43,11 +44,28 @@ class PrintableContextTest(unittest.TestCase):
             self.assertIn("어린이가 읽기 쉬운 과학 이야기입니다.", prompt.user_prompt)
             self.assertIn("Do not treat this as a one-page limit", prompt.user_prompt)
             self.assertIn("Preserve the full rewritten reading content", prompt.user_prompt)
-            self.assertIn("valid_asset_ids", prompt.user_prompt)
-            self.assertIn("copy one exact string from valid_asset_ids", prompt.user_prompt)
+            self.assertIn("visual_candidate_asset_ids", prompt.user_prompt)
+            self.assertIn("copy one exact string from visual_candidate_asset_ids", prompt.user_prompt)
             self.assertIn("Do not use asset path values", prompt.user_prompt)
             self.assertIn("Never use an asset path, image filename", prompt.messages[0].content)
             self.assertIn("Return JSON exactly in this shape", prompt.user_prompt)
+            image_messages = [message for message in prompt.messages if message.images]
+            self.assertEqual(len(image_messages), 1)
+            self.assertIn("asset_id: fig1", image_messages[0].content)
+            self.assertEqual(prompt.attached_assets[0].asset_id, "fig1")
+            self.assertNotIn("page-0001", [asset.asset_id for asset in prompt.attached_assets])
+            self.assertTrue(all("images" not in row for row in prompt.prompt_messages))
+            self.assertNotIn(image_messages[0].images[0], json.dumps(prompt.prompt_messages, ensure_ascii=False))
+            with Image.open(io.BytesIO(base64.b64decode(image_messages[0].images[0]))) as preview:
+                self.assertLessEqual(max(preview.size), 768)
+
+    def test_prompt_uses_page_renders_only_as_visual_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            bundle_dir = write_rewritten_fixture(Path(workspace) / "rewritten", include_extracted_asset=False)
+
+            prompt = build_printable_prompt(build_printable_context(bundle_dir))
+
+            self.assertEqual([asset.asset_id for asset in prompt.attached_assets], ["page-0001"])
 
 
 class PrintableMaterialTest(unittest.TestCase):
@@ -68,6 +86,7 @@ class PrintableMaterialTest(unittest.TestCase):
             )
 
             self.assertTrue(outputs.accepted)
+            self.assertEqual(client.preflight_count, 1)
             output_dir = output_root / "lesson"
             for filename in (
                 "print_plan.json",
@@ -95,13 +114,22 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertTrue(quality["requires_human_revision"])
             self.assertEqual(quality["revision_target"], "material.docx")
             self.assertNotIn("pdf_page_count", quality)
+            self.assertEqual(quality["asset_mode"], "vision-candidate-images")
+            self.assertEqual(quality["attached_image_count"], 1)
+            self.assertEqual(quality["visual_candidate_count"], 1)
             manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertNotIn("pdf", manifest["files"])
             self.assertEqual(manifest["files"]["docx"], "material.docx")
             self.assertTrue(manifest["printable"]["requires_human_revision"])
+            self.assertEqual(manifest["printable"]["asset_mode"], "vision-candidate-images")
             attempts = read_jsonl(output_dir / "attempts.jsonl")
             self.assertTrue(attempts[0]["accepted"])
             self.assertEqual(attempts[0]["selected_asset_ids"], ["fig1"])
+            self.assertEqual(attempts[0]["attached_asset_ids"], ["fig1"])
+            self.assertEqual(attempts[0]["visual_candidate_count"], 1)
+            self.assertTrue(all("images" not in row for row in attempts[0]["prompt_messages"]))
+            image_payload = next(message.images[0] for message in client.calls[0][1] if message.images)
+            self.assertNotIn(image_payload, json.dumps(attempts[0], ensure_ascii=False))
 
     def test_invalid_print_plan_is_rejected_and_logged_without_material_files(self) -> None:
         font_path = korean_font_or_skip(self)
@@ -145,6 +173,25 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertEqual(quality["status"], "failed")
             self.assertEqual(quality["output_formats"], [])
             self.assertFalse(quality["requires_human_revision"])
+
+    def test_print_class_material_fails_when_visual_candidates_need_non_vision_client(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_rewritten_fixture(root / "rewritten")
+            output_root = root / "printable"
+
+            outputs = print_class_material(
+                bundle_dir,
+                output_root=output_root,
+                client=NonVisionPrintableClient(),
+                model="fake-ollama",
+                font_path=font_path,
+            )
+
+            self.assertFalse(outputs.accepted)
+            failures = read_jsonl(output_root / "lesson" / "failures.jsonl")
+            self.assertIn("verify image support", failures[0]["failure_reason"])
 
     def test_print_plan_validation_rejects_bad_shapes_and_worksheet_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -194,6 +241,30 @@ class PrintableMaterialTest(unittest.TestCase):
                             context=context,
                         )
                     self.assertIn(expected, str(error.exception))
+
+    def test_print_plan_rejects_existing_asset_that_was_not_visually_attached(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            context = build_printable_context(write_rewritten_fixture(Path(workspace) / "rewritten"))
+            payload = {
+                "source_id": "lesson",
+                "title": "쉬운 과학 이야기",
+                "subtitle": "",
+                "body_font_size_pt": 13,
+                "sections": [{"heading": "이야기", "paragraphs": ["어린이가 읽는 글입니다."]}],
+                "selected_images": [{"asset_id": "page-0001"}],
+            }
+
+            with self.assertRaises(PrintableMaterialError) as error:
+                parse_and_validate_print_plan_response(
+                    CompletionResult(
+                        provider="ollama",
+                        model="fake",
+                        content=json.dumps(payload, ensure_ascii=False),
+                    ),
+                    context=context,
+                )
+
+            self.assertIn("not attached as a visual candidate", str(error.exception))
 
 
 class PrintableCliTest(unittest.TestCase):
@@ -271,6 +342,10 @@ class RecordingPrintableClient:
     def __init__(self, response: object | None = None) -> None:
         self.response = response
         self.calls: list[tuple[dict[str, object], list[ChatMessage]]] = []
+        self.preflight_count = 0
+
+    def assert_supports_images(self) -> None:
+        self.preflight_count += 1
 
     def complete(
         self,
@@ -290,7 +365,7 @@ class RecordingPrintableClient:
                 messages,
             )
         )
-        source_id = source_id_from_prompt(messages[1].content)
+        source_id = source_id_from_prompt(messages[-1].content)
         content = self.response or {
             "source_id": source_id,
             "title": "쉬운 과학 이야기",
@@ -321,11 +396,29 @@ class RecordingPrintableClient:
         )
 
 
-def write_rewritten_fixture(root: Path, *, source_id: str = "lesson") -> Path:
+class NonVisionPrintableClient:
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        raise AssertionError("complete should not be called without printable image preflight")
+
+
+def write_rewritten_fixture(
+    root: Path,
+    *,
+    source_id: str = "lesson",
+    include_extracted_asset: bool = True,
+) -> Path:
     bundle_dir = root / source_id
     assets_dir = bundle_dir / "assets"
     assets_dir.mkdir(parents=True)
-    Image.new("RGB", (160, 100), color=(230, 240, 250)).save(assets_dir / "fig1.png")
+    if include_extracted_asset:
+        Image.new("RGB", (160, 100), color=(230, 240, 250)).save(assets_dir / "fig1.png")
     Image.new("RGB", (120, 160), color=(240, 240, 230)).save(assets_dir / "page-0001.png")
     (bundle_dir / "content.md").write_text(
         "\n".join(
@@ -335,7 +428,7 @@ def write_rewritten_fixture(root: Path, *, source_id: str = "lesson") -> Path:
                 "",
                 "어린이가 읽기 쉬운 과학 이야기입니다.",
                 "",
-                '<div><img src="assets/fig1.png" alt="Figure" /></div>',
+                '<div><img src="assets/fig1.png" alt="Figure" /></div>' if include_extracted_asset else "",
                 "",
                 "그림도 함께 봅니다.",
             ]
@@ -363,7 +456,9 @@ def write_rewritten_fixture(root: Path, *, source_id: str = "lesson") -> Path:
                             "byte_size": (assets_dir / "fig1.png").stat().st_size,
                             "caption": "과학 그림",
                         }
-                    ],
+                    ]
+                    if include_extracted_asset
+                    else [],
                 }
             ],
             ensure_ascii=False,

@@ -116,7 +116,7 @@ uv --no-cache run python -m wordbyword --print-class-material rewritten-for-clas
 uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --ollama-model gemma4:31b
 ```
 
-The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. The model may choose up to two existing image assets from the rewritten bundle; it does not author DOCX directly and it cannot use external images.
+The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. When image assets are available, the prompt attaches resized visual previews for selectable candidates and requires a vision-capable Ollama model; the model may choose up to two visually inspected image assets from the rewritten bundle. It does not author DOCX directly and it cannot use external images.
 
 Printable outputs are written per source:
 

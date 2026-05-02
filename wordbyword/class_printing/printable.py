@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import re
 import shutil
@@ -35,6 +37,10 @@ DEFAULT_BODY_FONT_SIZE_PT = 13
 MIN_BODY_FONT_SIZE_PT = 11
 MAX_BODY_FONT_SIZE_PT = 15
 MAX_SELECTED_IMAGES = 2
+MAX_VISUAL_CANDIDATES = 24
+PRINTABLE_PREVIEW_MAX_DIMENSION = 768
+PRINTABLE_ASSET_MODE_VISION = "vision-candidate-images"
+PRINTABLE_ASSET_MODE_TEXT_ONLY = "text-only-asset-catalog"
 MARKDOWN_FENCE = "```"
 KOREAN_PATTERN = re.compile(r"[가-힣]")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
@@ -61,8 +67,8 @@ Preserve the full rewritten reading content; do not summarize or shorten it to f
 The output may span multiple A4 pages. A4 is the paper size, not a one-page length target.
 Write reading material only: no worksheet, quiz, comprehension questions, answers, or vocabulary activity sections.
 Keep Korean natural, warm, and easy for 1학년 readers.
-Choose at most two images only from the offered asset_catalog by asset_id.
-Use selected_images[].asset_id exactly as written in asset_catalog[].asset_id.
+Choose at most two images only from the offered visual_candidate_asset_ids by asset_id.
+Use selected_images[].asset_id exactly as written in visual_candidate_asset_ids.
 Never use an asset path, image filename, or asset_id with an added file extension.
 Do not invent image filenames or use external images.
 Return only the requested JSON object."""
@@ -159,6 +165,7 @@ class PrintablePrompt:
     messages: tuple[ChatMessage, ...]
     user_prompt: str
     prompt_messages: tuple[dict[str, object], ...]
+    attached_assets: tuple[PrintableAsset, ...]
 
 
 @dataclass(frozen=True)
@@ -208,6 +215,8 @@ def print_class_material(
     result: CompletionResult | None = None
     try:
         _report(progress, context.source_id, "planning printable reading material")
+        if prompt.attached_assets:
+            assert_client_supports_printable_images(client)
         result = client.complete(
             list(prompt.messages),
             temperature=0.2,
@@ -217,12 +226,14 @@ def print_class_material(
         document = parse_and_validate_print_plan_response(
             result,
             context=context,
+            visual_candidate_assets=prompt.attached_assets,
             body_font_size_override=body_font_size,
         )
         resolved_font_path, resolved_font_name = resolve_korean_font(font_path)
         write_printable_artifacts(
             output_dir,
             context=context,
+            prompt=prompt,
             document=document,
             model=model,
             target_profile=target_profile,
@@ -261,6 +272,7 @@ def print_class_material(
         write_failed_printable_artifacts(
             output_dir,
             context=context,
+            prompt=prompt,
             model=model,
             target_profile=target_profile,
             failure_reason=str(exc),
@@ -375,7 +387,8 @@ def build_printable_prompt(
         ],
     }
     asset_catalog = [asset.prompt_row() for asset in context.assets]
-    valid_asset_ids = [asset.asset_id for asset in context.assets]
+    visual_candidate_payloads = printable_visual_candidate_payloads(context)
+    visual_candidate_asset_ids = [asset.asset_id for asset, _payload in visual_candidate_payloads]
     font_instruction = (
         f"Use body_font_size_pt exactly {body_font_size}."
         if body_font_size is not None
@@ -392,14 +405,16 @@ def build_printable_prompt(
             "Do not summarize, shorten, or omit reading content just to make the handout shorter.",
             font_instruction,
             "Use only reading sections. Do not include questions, quizzes, answers, worksheet tasks, or vocabulary exercises.",
-            f"Choose at most {MAX_SELECTED_IMAGES} image(s) from asset_catalog by asset_id. Use selected_images=[] if no asset fits.",
-            "For selected_images[].asset_id, copy one exact string from valid_asset_ids.",
+            f"Choose at most {MAX_SELECTED_IMAGES} image(s) that support the rewritten reading.",
+            "Only choose images that are listed in visual_candidate_asset_ids and attached above for visual inspection.",
+            "Use selected_images=[] if no attached image fits the reading material.",
+            "For selected_images[].asset_id, copy one exact string from visual_candidate_asset_ids.",
             "Do not use asset path values like assets/foo.jpg, filenames like foo.jpg, or add .jpg/.png to an asset_id.",
             "Prefer extracted_image assets over page_render assets when both are available.",
             "Do not copy raw image Markdown or HTML from the rewritten content into section paragraphs.",
             "",
-            "valid_asset_ids:",
-            json.dumps(valid_asset_ids, ensure_ascii=False),
+            "visual_candidate_asset_ids:",
+            json.dumps(visual_candidate_asset_ids, ensure_ascii=False),
             "",
             "asset_catalog:",
             json.dumps(asset_catalog, ensure_ascii=False),
@@ -411,18 +426,35 @@ def build_printable_prompt(
             json.dumps(required_shape, ensure_ascii=False),
         ]
     )
-    messages = (
-        ChatMessage(role="system", content=PRINTABLE_SYSTEM_PROMPT),
-        ChatMessage(role="user", content=user_prompt),
+    system_message = ChatMessage(role="system", content=PRINTABLE_SYSTEM_PROMPT)
+    user_message = ChatMessage(role="user", content=user_prompt)
+    messages: list[ChatMessage] = [system_message]
+    prompt_messages: list[dict[str, object]] = [printable_prompt_message_row(system_message)]
+    attached_assets: list[PrintableAsset] = []
+    for asset, payload in visual_candidate_payloads:
+        message = ChatMessage(
+            role="user",
+            content=printable_visual_candidate_prompt(asset),
+            images=(payload,),
+        )
+        messages.append(message)
+        prompt_messages.append(printable_prompt_message_row(message, attached_assets=(asset,)))
+        attached_assets.append(asset)
+    messages.append(user_message)
+    prompt_messages.append(printable_prompt_message_row(user_message))
+    return PrintablePrompt(
+        messages=tuple(messages),
+        user_prompt=user_prompt,
+        prompt_messages=tuple(prompt_messages),
+        attached_assets=tuple(attached_assets),
     )
-    prompt_messages = tuple({"role": message.role, "content": message.content} for message in messages)
-    return PrintablePrompt(messages=messages, user_prompt=user_prompt, prompt_messages=prompt_messages)
 
 
 def parse_and_validate_print_plan_response(
     result: CompletionResult,
     *,
     context: PrintableContext,
+    visual_candidate_assets: Sequence[PrintableAsset] | None = None,
     body_font_size_override: int | None = None,
 ) -> PrintableDocument:
     if MARKDOWN_FENCE in result.content:
@@ -436,8 +468,26 @@ def parse_and_validate_print_plan_response(
         raise PrintableMaterialError(f"Printable plan omitted requested source_id '{context.source_id}'.")
 
     document = normalize_printable_document(document, body_font_size_override=body_font_size_override)
-    validate_printable_document(document, context=context)
+    validate_printable_document(
+        document,
+        context=context,
+        visual_candidate_assets=visual_candidate_assets,
+    )
     return document
+
+
+def assert_client_supports_printable_images(client: SupportsCompletion) -> None:
+    preflight = getattr(client, "assert_supports_images", None)
+    if not callable(preflight):
+        raise PrintableMaterialError(
+            "Printable image selection requires a completion client that can verify image support."
+        )
+    try:
+        preflight()
+    except LLMConfigurationError:
+        raise
+    except (LLMRequestError, LLMResponseError) as exc:
+        raise PrintableMaterialError(f"Could not verify Ollama image support for printable image selection: {exc}") from exc
 
 
 def normalize_printable_document(
@@ -473,7 +523,12 @@ def normalize_printable_document(
     )
 
 
-def validate_printable_document(document: PrintableDocument, *, context: PrintableContext) -> None:
+def validate_printable_document(
+    document: PrintableDocument,
+    *,
+    context: PrintableContext,
+    visual_candidate_assets: Sequence[PrintableAsset] | None = None,
+) -> None:
     if not document.title:
         raise PrintableMaterialError("Printable plan title is empty.")
     if not document.sections:
@@ -495,12 +550,19 @@ def validate_printable_document(document: PrintableDocument, *, context: Printab
                 raise PrintableMaterialError("Printable plan section text included raw image markup.")
 
     assets_by_id = {asset.asset_id: asset for asset in context.assets}
+    if visual_candidate_assets is None:
+        visual_candidate_assets = tuple(asset for asset, _payload in printable_visual_candidate_payloads(context))
+    visual_candidate_ids = {asset.asset_id for asset in visual_candidate_assets}
     seen_image_ids: set[str] = set()
     for image in document.selected_images:
         if image.asset_id in seen_image_ids:
             raise PrintableMaterialError(f"Printable plan repeated selected image asset_id '{image.asset_id}'.")
         if image.asset_id not in assets_by_id:
             raise PrintableMaterialError(f"Printable plan selected unknown asset_id '{image.asset_id}'.")
+        if image.asset_id not in visual_candidate_ids:
+            raise PrintableMaterialError(
+                f"Printable plan selected asset_id '{image.asset_id}' that was not attached as a visual candidate."
+            )
         asset = assets_by_id[image.asset_id]
         if not (context.rewritten_bundle_dir / asset.path).is_file():
             raise PrintableMaterialError(f"Printable plan selected missing asset file '{asset.path}'.")
@@ -511,6 +573,7 @@ def write_printable_artifacts(
     output_dir: Path,
     *,
     context: PrintableContext,
+    prompt: PrintablePrompt,
     document: PrintableDocument,
     model: str,
     target_profile: str,
@@ -534,6 +597,7 @@ def write_printable_artifacts(
     write_quality_and_manifest(
         output_dir,
         context=context,
+        prompt=prompt,
         document=document,
         model=model,
         target_profile=target_profile,
@@ -548,6 +612,7 @@ def write_failed_printable_artifacts(
     output_dir: Path,
     *,
     context: PrintableContext,
+    prompt: PrintablePrompt,
     model: str,
     target_profile: str,
     failure_reason: str,
@@ -555,6 +620,7 @@ def write_failed_printable_artifacts(
     write_quality_and_manifest(
         output_dir,
         context=context,
+        prompt=prompt,
         document=None,
         model=model,
         target_profile=target_profile,
@@ -677,6 +743,103 @@ def add_docx_image(
     caption = selection.caption or asset.caption
     if caption:
         add_docx_paragraph(doc, caption, font_name=font_name, size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+
+def printable_visual_candidate_payloads(context: PrintableContext) -> tuple[tuple[PrintableAsset, str], ...]:
+    payloads: list[tuple[PrintableAsset, str]] = []
+    for asset in printable_visual_candidates(context):
+        payload = printable_preview_payload(context, asset)
+        if payload:
+            payloads.append((asset, payload))
+    return tuple(payloads)
+
+
+def printable_visual_candidates(context: PrintableContext) -> tuple[PrintableAsset, ...]:
+    usable_assets = [asset for asset in context.assets if is_usable_printable_image_asset(context, asset)]
+    non_page_assets = [asset for asset in usable_assets if not is_page_render_asset(asset)]
+    candidates = non_page_assets if non_page_assets else usable_assets
+    return tuple(sorted(candidates, key=printable_visual_candidate_sort_key)[:MAX_VISUAL_CANDIDATES])
+
+
+def is_usable_printable_image_asset(context: PrintableContext, asset: PrintableAsset) -> bool:
+    path = context.rewritten_bundle_dir / asset.path
+    return (
+        path.is_file()
+        and path.suffix.lower() in IMAGE_EXTENSIONS
+        and asset.width > 0
+        and asset.height > 0
+    )
+
+
+def is_page_render_asset(asset: PrintableAsset) -> bool:
+    if asset.kind.strip().lower() == "page_render":
+        return True
+    return PAGE_NUMBER_PATTERN.fullmatch(Path(asset.path).stem) is not None
+
+
+def printable_visual_candidate_sort_key(asset: PrintableAsset) -> tuple[int, int, str, str]:
+    kind = asset.kind.strip().lower()
+    if kind == "extracted_image":
+        kind_rank = 0
+    elif is_page_render_asset(asset):
+        kind_rank = 2
+    else:
+        kind_rank = 1
+    return (kind_rank, asset.page or 999999, asset.asset_id, asset.path)
+
+
+def printable_preview_payload(context: PrintableContext, asset: PrintableAsset) -> str:
+    image_path = context.rewritten_bundle_dir / asset.path
+    try:
+        with Image.open(image_path) as source:
+            image = source.convert("RGB")
+            image.thumbnail(
+                (PRINTABLE_PREVIEW_MAX_DIMENSION, PRINTABLE_PREVIEW_MAX_DIMENSION),
+                image_resampling_filter(),
+            )
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=85, optimize=True)
+    except OSError:
+        return ""
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def image_resampling_filter() -> int:
+    resampling = getattr(Image, "Resampling", None)
+    if resampling is not None:
+        return int(resampling.LANCZOS)
+    return int(getattr(Image, "LANCZOS", Image.BICUBIC))
+
+
+def printable_visual_candidate_prompt(asset: PrintableAsset) -> str:
+    return "\n".join(
+        [
+            "Printable visual candidate:",
+            f"asset_id: {asset.asset_id}",
+            f"path: {asset.path}",
+            f"kind: {asset.kind}",
+            f"page: {asset.page if asset.page is not None else ''}",
+            f"dimensions: {asset.width}x{asset.height}",
+            f"mime_type: {asset.mime_type}",
+            f"caption: {asset.caption}",
+        ]
+    )
+
+
+def printable_prompt_message_row(
+    message: ChatMessage,
+    *,
+    attached_assets: Sequence[PrintableAsset] = (),
+) -> dict[str, object]:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+    }
+
+
+def printable_asset_mode(attached_assets: Sequence[PrintableAsset]) -> str:
+    return PRINTABLE_ASSET_MODE_VISION if attached_assets else PRINTABLE_ASSET_MODE_TEXT_ONLY
 
 
 def discover_printable_assets(rewritten_bundle_dir: Path, chunks: Sequence[Any]) -> list[PrintableAsset]:
@@ -805,6 +968,9 @@ def printable_attempt_row(
         "failure_reason": failure_reason,
         "selected_asset_ids": [image.asset_id for image in document.selected_images] if document else [],
         "body_font_size_pt": document.body_font_size_pt if document else None,
+        "asset_mode": printable_asset_mode(prompt.attached_assets),
+        "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
+        "visual_candidate_count": len(prompt.attached_assets),
     }
 
 
@@ -812,6 +978,7 @@ def write_quality_and_manifest(
     output_dir: Path,
     *,
     context: PrintableContext,
+    prompt: PrintablePrompt,
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
@@ -822,6 +989,7 @@ def write_quality_and_manifest(
 ) -> None:
     quality = build_quality_report(
         context=context,
+        prompt=prompt,
         document=document,
         model=model,
         target_profile=target_profile,
@@ -832,6 +1000,7 @@ def write_quality_and_manifest(
     )
     manifest = build_printable_manifest(
         context=context,
+        prompt=prompt,
         document=document,
         model=model,
         target_profile=target_profile,
@@ -853,6 +1022,7 @@ def write_quality_and_manifest(
 def build_quality_report(
     *,
     context: PrintableContext,
+    prompt: PrintablePrompt,
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
@@ -877,12 +1047,16 @@ def build_quality_report(
         "requires_human_revision": accepted,
         "revision_target": "material.docx" if accepted else "",
         "asset_catalog_count": len(context.assets),
+        "asset_mode": printable_asset_mode(prompt.attached_assets),
+        "attached_image_count": len(prompt.attached_assets),
+        "visual_candidate_count": len(prompt.attached_assets),
     }
 
 
 def build_printable_manifest(
     *,
     context: PrintableContext,
+    prompt: PrintablePrompt,
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
@@ -928,6 +1102,9 @@ def build_printable_manifest(
             "selected_image_count": len(document.selected_images) if document else 0,
             "font_path": str(font_path) if font_path is not None else "",
             "font_name": font_name,
+            "asset_mode": printable_asset_mode(prompt.attached_assets),
+            "attached_image_count": len(prompt.attached_assets),
+            "visual_candidate_count": len(prompt.attached_assets),
             "requires_human_revision": accepted,
             "revision_target": "material.docx" if accepted else "",
             "rendered_at": datetime.now(timezone.utc).isoformat(),
