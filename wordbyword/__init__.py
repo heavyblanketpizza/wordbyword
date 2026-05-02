@@ -17,6 +17,8 @@ from wordbyword.class_rewriting.rewrite import (
     build_context_packet,
     rewrite_source_material,
     rewrite_source_materials,
+    rewrite_whole_source_material,
+    rewrite_whole_source_materials,
 )
 
 __version__ = "0.1.0"
@@ -36,4 +38,6 @@ __all__ = [
     "build_context_packet",
     "rewrite_source_material",
     "rewrite_source_materials",
+    "rewrite_whole_source_material",
+    "rewrite_whole_source_materials",
 ]

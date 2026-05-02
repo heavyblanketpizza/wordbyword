@@ -14,6 +14,7 @@ from wordbyword.class_rewriting.rewrite import (
     SourceRewriteError,
     build_context_packet,
     rewrite_source_material,
+    rewrite_whole_source_material,
 )
 
 
@@ -124,6 +125,131 @@ class SourceRewriteContextTest(unittest.TestCase):
             self.assertEqual(chunks[1]["status"], "rewritten")
 
 
+class WholeDocumentRewriteTest(unittest.TestCase):
+    def test_whole_document_rewrite_sends_one_request_with_full_context(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(
+                root / "parsed",
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            client = RecordingWholeRewriteClient()
+
+            outputs = rewrite_whole_source_material(
+                bundle_dir,
+                output_root=root / "rewritten-whole",
+                client=client,
+                model="fake-vision",
+            )
+
+            self.assertEqual(outputs.failed_page_count, 0)
+            self.assertEqual(outputs.rewritten_page_count, 2)
+            self.assertEqual(client.preflight_count, 1)
+            self.assertEqual(len(client.calls), 1)
+            user_message = client.calls[0][1][1]
+            self.assertIn("The machine shows energy.", user_message.content)
+            self.assertIn("Second page source explains the ending.", user_message.content)
+            self.assertIn("asset_id=fig1", user_message.content)
+            self.assertIn("<!-- page:1 -->", user_message.content)
+            self.assertIn("<!-- page:2 -->", user_message.content)
+            self.assertEqual(user_message.images[0], base64.b64encode(b"fig1").decode("ascii"))
+            self.assertEqual(user_message.images[1], base64.b64encode(b"page1").decode("ascii"))
+
+            content = (outputs.output_dir / "content.md").read_text(encoding="utf-8")
+            self.assertIn("<!-- page:1 -->", content)
+            self.assertIn("<!-- page:2 -->", content)
+            self.assertIn('<img src="assets/fig1.png"', content)
+            self.assertIn("전체 문서를 한 번에 쉽게 쓴 첫 쪽입니다.", content)
+            self.assertTrue((outputs.output_dir / "context_packet.md").is_file())
+            self.assertTrue((outputs.output_dir / "attempts.jsonl").is_file())
+            self.assertTrue((outputs.output_dir / "failures.jsonl").is_file())
+            self.assertTrue((outputs.output_dir / "assets" / "fig1.png").is_file())
+
+            chunks = json.loads((outputs.output_dir / "chunks.json").read_text(encoding="utf-8"))
+            self.assertEqual([chunk["page"] for chunk in chunks], [1, 2])
+            self.assertEqual([chunk["status"] for chunk in chunks], ["rewritten", "rewritten"])
+            self.assertIn("둘째 쪽입니다.", chunks[1]["rewritten_markdown"])
+
+            manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["rewrite"]["mode"], "whole_document")
+            quality = json.loads((outputs.output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["rewrite_mode"], "whole_document")
+            self.assertEqual(quality["failed_page_count"], 0)
+
+    def test_whole_document_rewrite_records_preflight_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(root / "parsed")
+
+            outputs = rewrite_whole_source_material(
+                bundle_dir,
+                output_root=root / "rewritten-whole",
+                client=UnsupportedVisionClient(),
+                model="text-only",
+            )
+
+            self.assertEqual(outputs.rewritten_page_count, 0)
+            self.assertEqual(outputs.failed_page_count, 1)
+            self.assertEqual(len(outputs.failure_rows), 1)
+            self.assertIn("no vision", outputs.failure_rows[0]["failure_reason"])
+            failures = (outputs.output_dir / "failures.jsonl").read_text(encoding="utf-8")
+            self.assertIn("no vision", failures)
+
+    def test_whole_document_rewrite_rejects_invalid_outputs(self) -> None:
+        scenarios = [
+            (
+                "missing marker",
+                {
+                    "source_id": "lesson",
+                    "rewritten_markdown": (
+                        '<!-- page:1 -->\n첫 쪽입니다.\n\n'
+                        '<div><img src="assets/fig1.png" alt="Figure" /></div>'
+                    ),
+                },
+                "omitted page marker",
+            ),
+            (
+                "missing asset",
+                {
+                    "source_id": "lesson",
+                    "rewritten_markdown": (
+                        "<!-- page:1 -->\n첫 쪽입니다.\n\n"
+                        "<!-- page:2 -->\n둘째 쪽입니다."
+                    ),
+                },
+                "omitted asset reference",
+            ),
+            ("malformed json", "{not json", "Expected a JSON object"),
+        ]
+        for name, response, expected_failure in scenarios:
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    bundle_dir = write_parsed_fixture(
+                        root / "parsed",
+                        pages=[
+                            page_one_text(),
+                            "# Later page\n\nSecond page source explains the ending.",
+                        ],
+                    )
+                    client = RecordingWholeRewriteClient(response=response)
+
+                    outputs = rewrite_whole_source_material(
+                        bundle_dir,
+                        output_root=root / "rewritten-whole",
+                        client=client,
+                        model="fake-vision",
+                    )
+
+                    self.assertEqual(outputs.rewritten_page_count, 0)
+                    self.assertEqual(outputs.failed_page_count, 2)
+                    self.assertEqual(len(client.calls), 1)
+                    self.assertIn(expected_failure, outputs.failure_rows[0]["failure_reason"])
+
+
 class SourceRewriteCliTest(unittest.TestCase):
     def test_cli_rewrites_all_parsed_source_materials(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -151,6 +277,56 @@ class SourceRewriteCliTest(unittest.TestCase):
             self.assertTrue((output_root / "lesson" / "content.md").is_file())
             self.assertTrue((output_root / "lesson" / "context_packet.md").is_file())
             self.assertTrue((output_root / "lesson" / "assets" / "fig1.png").is_file())
+
+    def test_cli_rewrites_all_parsed_source_materials_as_whole_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            parsed_root = root / "parsed"
+            output_root = root / "rewritten-whole"
+            write_parsed_fixture(
+                parsed_root,
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            write_skipped_fixture(parsed_root / "sample")
+            client = RecordingWholeRewriteClient()
+
+            with patch("wordbyword.cli.app.ollama_client", return_value=client):
+                with patch("sys.stdout", io.StringIO()):
+                    exit_code = main(
+                        [
+                            "--rewrite-whole-source-materials",
+                            str(parsed_root),
+                            "--rewrite-output-root",
+                            str(output_root),
+                            "--ollama-model",
+                            "fake-vision",
+                        ]
+                    )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(client.calls), 1)
+            self.assertTrue((output_root / "lesson" / "content.md").is_file())
+            self.assertTrue((output_root / "lesson" / "context_packet.md").is_file())
+            self.assertTrue((output_root / "lesson" / "assets" / "fig1.png").is_file())
+
+    def test_cli_rejects_combined_page_and_whole_rewrite_commands(self) -> None:
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            with self.assertRaises(SystemExit) as error:
+                main(
+                    [
+                        "--rewrite-source-materials",
+                        "class-source-materials/parsed",
+                        "--rewrite-whole-source-materials",
+                        "class-source-materials/parsed",
+                    ]
+                )
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("parse/rewrite source-material commands cannot be combined", stderr.getvalue())
 
 
 class RecordingRewriteClient:
@@ -200,6 +376,57 @@ class RecordingRewriteClient:
                 },
                 ensure_ascii=False,
             ),
+        )
+
+
+class RecordingWholeRewriteClient:
+    def __init__(self, response: object | None = None) -> None:
+        self.preflight_count = 0
+        self.calls: list[tuple[dict[str, object], list[ChatMessage]]] = []
+        self.response = response
+
+    def assert_supports_images(self) -> None:
+        self.preflight_count += 1
+
+    def complete(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self.calls.append(
+            (
+                {
+                    "temperature": temperature,
+                    "max_output_tokens": max_output_tokens,
+                    "json_mode": json_mode,
+                },
+                messages,
+            )
+        )
+        if self.response is None:
+            content = {
+                "source_id": "lesson",
+                "rewritten_markdown": (
+                    "<!-- page:1 -->\n"
+                    "# 쉬운 과학 이야기\n\n"
+                    "전체 문서를 한 번에 쉽게 쓴 첫 쪽입니다.\n\n"
+                    '<div><img src="assets/fig1.png" alt="Figure" /></div>\n\n'
+                    "그림도 함께 봅니다.\n\n"
+                    "---\n\n"
+                    "<!-- page:2 -->\n"
+                    "# 다음 쪽\n\n"
+                    "둘째 쪽입니다. 앞의 내용을 이어서 설명합니다."
+                ),
+            }
+        else:
+            content = self.response
+        return CompletionResult(
+            provider="ollama",
+            model="fake-vision",
+            content=content if isinstance(content, str) else json.dumps(content, ensure_ascii=False),
         )
 
 

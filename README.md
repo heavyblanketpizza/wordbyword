@@ -89,6 +89,15 @@ The rewrite stage builds a full interleaved `context_packet.md` for each parsed 
 - `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
 - `assets/`: copied parsed assets so Markdown image links remain local.
 
+For comparison, the whole-document rewrite workflow sends the full interleaved parsed source to Ollama in one request per source, instead of one request per page:
+
+```bash
+uv --no-cache run python -m wordbyword --rewrite-whole-source-materials class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-whole-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
+```
+
+Whole-document outputs mirror the same artifact bundle under `class-source-materials/rewritten/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
+
 ## Outputs
 
 The pipeline writes these files:

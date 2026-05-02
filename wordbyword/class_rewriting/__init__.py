@@ -2,21 +2,30 @@
 
 from wordbyword.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
+    DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteBatchOutputs,
     SourceRewriteError,
     SourceRewriteOutputs,
+    SourceWholeRewriteBatchOutputs,
+    SourceWholeRewriteOutputs,
     build_context_packet,
     rewrite_source_material,
     rewrite_source_materials,
+    rewrite_whole_source_material,
+    rewrite_whole_source_materials,
 )
 
 __all__ = [
     "DEFAULT_REWRITE_OUTPUT_ROOT",
+    "DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT",
     "SourceRewriteBatchOutputs",
     "SourceRewriteError",
     "SourceRewriteOutputs",
+    "SourceWholeRewriteBatchOutputs",
+    "SourceWholeRewriteOutputs",
     "build_context_packet",
     "rewrite_source_material",
     "rewrite_source_materials",
+    "rewrite_whole_source_material",
+    "rewrite_whole_source_materials",
 ]
-

@@ -24,8 +24,12 @@ from wordbyword.dictionary_build.output_files import append_jsonl, initialize_js
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
 DEFAULT_REWRITE_OUTPUT_ROOT = Path("class-source-materials") / "rewritten" / "grade1-ko-ollama"
+DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
+    Path("class-source-materials") / "rewritten" / "grade1-ko-ollama-whole-document"
+)
 IMAGE_SRC_PATTERN = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+CONTENT_PAGE_MARKER_PATTERN = re.compile(r"<!--\s*page:(\d+)\s*-->")
 PAGE_NUMBER_PATTERN = re.compile(r"page-(\d{4})")
 KOREAN_PATTERN = re.compile(r"[가-힣]")
 MARKDOWN_FENCE = "```"
@@ -121,6 +125,25 @@ class SourceRewriteBatchOutputs:
     parsed_root: Path
     output_root: Path
     source_outputs: list[SourceRewriteOutputs]
+    skipped_sources: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class SourceWholeRewriteOutputs:
+    source_id: str
+    output_dir: Path
+    rewritten_page_count: int
+    failed_page_count: int
+    page_rows: list[dict[str, object]]
+    attempt_rows: list[dict[str, object]]
+    failure_rows: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class SourceWholeRewriteBatchOutputs:
+    parsed_root: Path
+    output_root: Path
+    source_outputs: list[SourceWholeRewriteOutputs]
     skipped_sources: list[dict[str, object]]
 
 
@@ -233,6 +256,136 @@ def rewrite_source_materials(
             )
         )
     return SourceRewriteBatchOutputs(
+        parsed_root=parsed_root,
+        output_root=output_root,
+        source_outputs=source_outputs,
+        skipped_sources=skipped_sources,
+    )
+
+
+def rewrite_whole_source_material(
+    parsed_bundle_dir: Path,
+    *,
+    output_root: Path = DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+    client: SupportsCompletion,
+    model: str,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
+    require_images: bool = True,
+    progress: ProgressCallback | None = None,
+) -> SourceWholeRewriteOutputs:
+    context = build_context_packet(parsed_bundle_dir)
+    if not context.pages:
+        raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
+
+    output_dir = output_root / context.source_id
+    _report(progress, context.source_id, f"preparing whole-document rewrite output at {output_dir}")
+    prepare_output_dir(output_dir)
+    copy_assets(parsed_bundle_dir, output_dir)
+    (output_dir / "context_packet.md").write_text(context.content_markdown, encoding="utf-8")
+
+    attempts_path = output_dir / "attempts.jsonl"
+    failures_path = output_dir / "failures.jsonl"
+    initialize_jsonl_file(attempts_path)
+    initialize_jsonl_file(failures_path)
+
+    attached_assets = attachable_assets(parsed_bundle_dir, context.assets)
+    image_payloads: tuple[str, ...] = ()
+    preflight_error = ""
+    try:
+        if require_images and attached_assets:
+            assert_client_supports_images(client)
+        image_payloads = image_payloads_for_assets(parsed_bundle_dir, attached_assets)
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+        preflight_error = str(exc)
+
+    _report(progress, context.source_id, "rewriting whole document")
+    attempt = (
+        failed_whole_document_attempt(
+            context=context,
+            model=model,
+            attached_assets=attached_assets,
+            failure_reason=preflight_error,
+        )
+        if preflight_error
+        else rewrite_whole_document_with_full_context(
+            client,
+            context=context,
+            attached_assets=attached_assets,
+            image_payloads=image_payloads,
+            model=model,
+        )
+    )
+    attempt_rows = [attempt]
+    failure_rows = [] if bool(attempt["accepted"]) else [attempt]
+    page_rows = (
+        materialize_whole_document_page_rows(
+            context=context,
+            rewritten_markdown=str(attempt["rewritten_markdown"]),
+        )
+        if bool(attempt["accepted"])
+        else materialize_failed_whole_document_page_rows(
+            context=context,
+            failure_reason=str(attempt["failure_reason"]),
+        )
+    )
+    append_jsonl(attempts_path, attempt_rows)
+    write_jsonl(failures_path, failure_rows)
+    write_rewrite_artifacts(
+        output_dir,
+        context=context,
+        page_rows=page_rows,
+        attempt_rows=attempt_rows,
+        failure_rows=failure_rows,
+        model=model,
+        target_profile=target_profile,
+        attached_assets=attached_assets,
+        content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
+        rewrite_mode="whole_document",
+    )
+
+    rewritten_page_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
+    failed_page_count = sum(1 for row in page_rows if row.get("status") == "failed")
+    return SourceWholeRewriteOutputs(
+        source_id=context.source_id,
+        output_dir=output_dir,
+        rewritten_page_count=rewritten_page_count,
+        failed_page_count=failed_page_count,
+        page_rows=page_rows,
+        attempt_rows=attempt_rows,
+        failure_rows=failure_rows,
+    )
+
+
+def rewrite_whole_source_materials(
+    parsed_root: Path,
+    *,
+    output_root: Path = DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+    client: SupportsCompletion,
+    model: str,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
+    require_images: bool = True,
+    progress: ProgressCallback | None = None,
+) -> SourceWholeRewriteBatchOutputs:
+    source_outputs: list[SourceWholeRewriteOutputs] = []
+    skipped_sources: list[dict[str, object]] = []
+    for bundle_dir in discover_parsed_bundles(parsed_root):
+        skip_reason = skip_reason_for_bundle(bundle_dir)
+        if skip_reason:
+            skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
+            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
+            continue
+        source_outputs.append(
+            rewrite_whole_source_material(
+                bundle_dir,
+                output_root=output_root,
+                client=client,
+                model=model,
+                target_profile=target_profile,
+                require_images=require_images,
+                progress=progress,
+            )
+        )
+    return SourceWholeRewriteBatchOutputs(
         parsed_root=parsed_root,
         output_root=output_root,
         source_outputs=source_outputs,
@@ -548,7 +701,7 @@ def rewrite_page_with_full_context(
             "failure_reason": "",
             "metrics": metrics,
         }
-    except (LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
         return {
             "source_id": context.source_id,
             "page": page.page,
@@ -603,6 +756,135 @@ def build_page_rewrite_prompt(
     )
 
 
+def rewrite_whole_document_with_full_context(
+    client: SupportsCompletion,
+    *,
+    context: ContextPacket,
+    attached_assets: Sequence[RewriteAsset],
+    image_payloads: tuple[str, ...],
+    model: str,
+) -> dict[str, object]:
+    user_prompt = build_whole_document_rewrite_prompt(context, attached_assets)
+    metrics: dict[str, object] = source_document_metrics(context)
+    result: CompletionResult | None = None
+    try:
+        result = client.complete(
+            [
+                ChatMessage(role="system", content=GRADE_ONE_REWRITE_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=user_prompt, images=image_payloads),
+            ],
+            temperature=0.2,
+            max_output_tokens=whole_document_max_output_tokens(context),
+            json_mode=True,
+        )
+        rewritten_markdown = parse_and_validate_whole_rewrite_response(
+            result,
+            context=context,
+        )
+        metrics = {
+            **metrics,
+            **rewritten_document_metrics(
+                context=context,
+                rewritten_markdown=rewritten_markdown,
+            ),
+        }
+        return {
+            "source_id": context.source_id,
+            "page": None,
+            "rewrite_mode": "whole_document",
+            "model": model,
+            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+            "user_prompt": user_prompt,
+            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "response": result.content,
+            "rewritten_markdown": rewritten_markdown,
+            "accepted": True,
+            "failure_reason": "",
+            "metrics": metrics,
+        }
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
+        return {
+            "source_id": context.source_id,
+            "page": None,
+            "rewrite_mode": "whole_document",
+            "model": model,
+            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+            "user_prompt": user_prompt,
+            "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+            "response": result.content if result is not None else "",
+            "rewritten_markdown": "",
+            "accepted": False,
+            "failure_reason": str(exc),
+            "metrics": metrics,
+        }
+
+
+def failed_whole_document_attempt(
+    *,
+    context: ContextPacket,
+    model: str,
+    attached_assets: Sequence[RewriteAsset],
+    failure_reason: str,
+) -> dict[str, object]:
+    return {
+        "source_id": context.source_id,
+        "page": None,
+        "rewrite_mode": "whole_document",
+        "model": model,
+        "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+        "user_prompt": build_whole_document_rewrite_prompt(context, attached_assets),
+        "attached_asset_ids": [asset.asset_id for asset in attached_assets],
+        "response": "",
+        "rewritten_markdown": "",
+        "accepted": False,
+        "failure_reason": failure_reason,
+        "metrics": source_document_metrics(context),
+    }
+
+
+def build_whole_document_rewrite_prompt(
+    context: ContextPacket,
+    attached_assets: Sequence[RewriteAsset],
+) -> str:
+    asset_lines = (
+        "\n".join(
+            asset.prompt_row(image_index=index)
+            for index, asset in enumerate(attached_assets, start=1)
+        )
+        if attached_assets
+        else "No images are attached."
+    )
+    required_shape = {
+        "source_id": context.source_id,
+        "rewritten_markdown": "...",
+    }
+    page_markers = ", ".join(f"<!-- page:{page.page} -->" for page in context.pages)
+    return "\n".join(
+        [
+            "Full interleaved document context packet:",
+            context.content_markdown,
+            "",
+            "Attached image order:",
+            asset_lines,
+            "",
+            "Whole-document rewrite request:",
+            f"source_id: {context.source_id}",
+            "Rewrite the entire source material at once for Korean 1학년 readers.",
+            "Use the interleaved content as the source material. Do not rewrite the context packet metadata.",
+            f"Preserve every page marker exactly: {page_markers}",
+            "Preserve every image or asset markdown/html block exactly where it belongs in the rewritten document.",
+            "Return one complete rewritten Markdown document, not page-by-page fragments.",
+            "",
+            "Return JSON exactly in this shape:",
+            json.dumps(required_shape, ensure_ascii=False),
+        ]
+    )
+
+
+def whole_document_max_output_tokens(context: ContextPacket) -> int:
+    return max(8192, min(32768, len(context.content_markdown) * 2))
+
+
 def parse_and_validate_rewrite_response(
     result: CompletionResult,
     *,
@@ -629,6 +911,42 @@ def parse_and_validate_rewrite_response(
     if missing_asset_paths:
         raise SourceRewriteError(
             f"Rewritten page {page.page} omitted asset reference(s): "
+            + ", ".join(missing_asset_paths)
+        )
+    return rewritten_markdown
+
+
+def parse_and_validate_whole_rewrite_response(
+    result: CompletionResult,
+    *,
+    context: ContextPacket,
+) -> str:
+    if MARKDOWN_FENCE in result.content:
+        raise SourceRewriteError("Model response included a markdown fence.")
+    parsed = parse_json_object(result.content)
+    if str(parsed.get("source_id") or "") != context.source_id:
+        raise SourceRewriteError(f"Model response omitted requested source_id '{context.source_id}'.")
+    rewritten_markdown = str(parsed.get("rewritten_markdown") or "").strip()
+    if not rewritten_markdown:
+        raise SourceRewriteError("Whole-document model response had empty rewritten_markdown.")
+    if MARKDOWN_FENCE in rewritten_markdown:
+        raise SourceRewriteError("Whole-document rewritten markdown included a markdown fence.")
+    if not KOREAN_PATTERN.search(rewritten_markdown):
+        raise SourceRewriteError("Whole-document rewritten markdown did not contain Korean text.")
+
+    missing_page_markers = [
+        page.page for page in context.pages if page_marker(page.page) not in rewritten_markdown
+    ]
+    if missing_page_markers:
+        formatted = ", ".join(str(page) for page in missing_page_markers)
+        raise SourceRewriteError(f"Whole-document rewrite omitted page marker(s): {formatted}.")
+
+    missing_asset_paths = [
+        path for path in source_document_asset_paths(context) if path not in rewritten_markdown
+    ]
+    if missing_asset_paths:
+        raise SourceRewriteError(
+            "Whole-document rewrite omitted asset reference(s): "
             + ", ".join(missing_asset_paths)
         )
     return rewritten_markdown
@@ -671,6 +989,43 @@ def rewritten_page_metrics(*, source_text: str, rewritten_markdown: str) -> dict
     }
 
 
+def source_document_metrics(context: ContextPacket) -> dict[str, object]:
+    source_asset_paths = source_document_asset_paths(context)
+    source_text = "\n\n".join(page.source_text for page in context.pages)
+    return {
+        "source_chars": len(source_text),
+        "source_pages": len(context.pages),
+        "source_image_refs": len(source_asset_paths),
+        "source_asset_paths": source_asset_paths,
+        "source_heading_count": markdown_heading_count(source_text),
+    }
+
+
+def rewritten_document_metrics(*, context: ContextPacket, rewritten_markdown: str) -> dict[str, object]:
+    source_asset_paths = source_document_asset_paths(context)
+    output_asset_paths = image_paths_in_text(rewritten_markdown)
+    page_markers = page_markers_in_text(rewritten_markdown)
+    output_heading_count = markdown_heading_count(rewritten_markdown)
+    non_space_chars = [char for char in rewritten_markdown if not char.isspace()]
+    korean_chars = KOREAN_PATTERN.findall(rewritten_markdown)
+    return {
+        "output_chars": len(rewritten_markdown),
+        "output_pages": len(page_markers),
+        "korean_chars": len(korean_chars),
+        "korean_char_ratio": round(len(korean_chars) / len(non_space_chars), 3)
+        if non_space_chars
+        else 0.0,
+        "output_image_refs": len(output_asset_paths),
+        "output_asset_paths": output_asset_paths,
+        "asset_paths_used": output_asset_paths,
+        "image_ref_count_preserved": len(source_asset_paths) == len(output_asset_paths),
+        "output_heading_count": output_heading_count,
+        "page_markers": page_markers,
+        "page_markers_preserved": all(page.page in page_markers for page in context.pages),
+        "asset_refs_preserved": all(path in rewritten_markdown for path in source_asset_paths),
+    }
+
+
 def materialize_page_rows(
     pages: Sequence[RewritePage],
     rewritten_by_page: Mapping[int, str],
@@ -700,6 +1055,53 @@ def materialize_page_rows(
     return rows
 
 
+def materialize_whole_document_page_rows(
+    *,
+    context: ContextPacket,
+    rewritten_markdown: str,
+) -> list[dict[str, object]]:
+    rewritten_by_page = split_rewritten_markdown_by_page(rewritten_markdown)
+    rows: list[dict[str, object]] = []
+    for page in context.pages:
+        rewritten_page_markdown = rewritten_by_page.get(page.page, "")
+        rows.append(
+            {
+                "page": page.page,
+                "status": "rewritten" if rewritten_page_markdown else "failed",
+                "source_text": page.source_text,
+                "rewritten_markdown": rewritten_page_markdown,
+                "assets": [asset.json_row() for asset in page.assets],
+                "metrics": rewritten_page_metrics(
+                    source_text=page.source_text,
+                    rewritten_markdown=rewritten_page_markdown,
+                )
+                if rewritten_page_markdown
+                else source_page_metrics(page.source_text),
+                "failure_reason": "" if rewritten_page_markdown else "missing rewritten page segment",
+            }
+        )
+    return rows
+
+
+def materialize_failed_whole_document_page_rows(
+    *,
+    context: ContextPacket,
+    failure_reason: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "page": page.page,
+            "status": "failed",
+            "source_text": page.source_text,
+            "rewritten_markdown": "",
+            "assets": [asset.json_row() for asset in page.assets],
+            "metrics": source_page_metrics(page.source_text),
+            "failure_reason": failure_reason,
+        }
+        for page in context.pages
+    ]
+
+
 def write_rewrite_artifacts(
     output_dir: Path,
     *,
@@ -710,9 +1112,13 @@ def write_rewrite_artifacts(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
+    content_markdown: str | None = None,
+    rewrite_mode: str = "page",
 ) -> None:
     (output_dir / "content.md").write_text(
-        compose_rewritten_markdown(page_rows),
+        (content_markdown.strip() + "\n")
+        if content_markdown is not None
+        else compose_rewritten_markdown(page_rows),
         encoding="utf-8",
     )
     (output_dir / "chunks.json").write_text(
@@ -728,6 +1134,7 @@ def write_rewrite_artifacts(
                 model=model,
                 target_profile=target_profile,
                 attached_assets=attached_assets,
+                rewrite_mode=rewrite_mode,
             ),
             ensure_ascii=False,
             indent=2,
@@ -742,6 +1149,7 @@ def write_rewrite_artifacts(
                 model=model,
                 target_profile=target_profile,
                 attached_assets=attached_assets,
+                rewrite_mode=rewrite_mode,
             ),
             ensure_ascii=False,
             indent=2,
@@ -773,16 +1181,20 @@ def build_quality_report(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
+    rewrite_mode: str = "page",
 ) -> dict[str, object]:
     rewritten_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
+    failed_count = sum(1 for row in page_rows if row.get("status") == "failed")
     return {
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
         "source_id": context.source_id,
         "target_profile": target_profile,
+        "rewrite_mode": rewrite_mode,
         "model": model,
         "page_count": len(page_rows),
         "rewritten_page_count": rewritten_count,
-        "failed_page_count": len(failure_rows),
+        "failed_page_count": failed_count,
+        "failed_attempt_count": len(failure_rows),
         "asset_count": len(context.assets),
         "attached_image_count": len(attached_assets),
         "pages": [
@@ -803,6 +1215,7 @@ def build_rewrite_manifest(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
+    rewrite_mode: str = "page",
 ) -> dict[str, object]:
     return {
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
@@ -817,6 +1230,7 @@ def build_rewrite_manifest(
         },
         "rewrite": {
             "target_profile": target_profile,
+            "mode": rewrite_mode,
             "model": model,
             "asset_mode": "ollama-images-required",
             "attached_image_count": len(attached_assets),
@@ -851,6 +1265,46 @@ def copy_assets(parsed_bundle_dir: Path, output_dir: Path) -> None:
 
 def image_paths_in_text(text: str) -> list[str]:
     return IMAGE_SRC_PATTERN.findall(text)
+
+
+def source_document_asset_paths(context: ContextPacket) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for page in context.pages:
+        for path in image_paths_in_text(page.source_text):
+            if path in seen:
+                continue
+            paths.append(path)
+            seen.add(path)
+    return paths
+
+
+def page_marker(page: int) -> str:
+    return f"<!-- page:{page} -->"
+
+
+def page_markers_in_text(text: str) -> list[int]:
+    return [int(match.group(1)) for match in CONTENT_PAGE_MARKER_PATTERN.finditer(text)]
+
+
+def split_rewritten_markdown_by_page(rewritten_markdown: str) -> dict[int, str]:
+    matches = list(CONTENT_PAGE_MARKER_PATTERN.finditer(rewritten_markdown))
+    pages: dict[int, str] = {}
+    for index, match in enumerate(matches):
+        page = int(match.group(1))
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(rewritten_markdown)
+        pages[page] = strip_page_separator_edges(rewritten_markdown[start:end])
+    return pages
+
+
+def strip_page_separator_edges(text: str) -> str:
+    lines = text.strip().splitlines()
+    while lines and lines[0].strip() == "---":
+        lines.pop(0)
+    while lines and lines[-1].strip() == "---":
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 def markdown_heading_count(text: str) -> int:
