@@ -11,6 +11,8 @@ from unittest.mock import patch
 from wordbyword.cli import main
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMConfigurationError
 from wordbyword.class_rewriting.rewrite import (
+    DEFAULT_REWRITE_OUTPUT_ROOT,
+    DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
     build_context_packet,
     rewrite_source_material,
@@ -19,6 +21,13 @@ from wordbyword.class_rewriting.rewrite import (
 
 
 class SourceRewriteContextTest(unittest.TestCase):
+    def test_default_rewrite_outputs_use_rewritten_for_class_root(self) -> None:
+        self.assertEqual(DEFAULT_REWRITE_OUTPUT_ROOT, Path("rewritten-for-class") / "grade1-ko-ollama")
+        self.assertEqual(
+            DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+            Path("rewritten-for-class") / "grade1-ko-ollama-whole-document",
+        )
+
     def test_context_packet_interleaves_asset_marker_before_image_block(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             parsed_root = Path(workspace) / "parsed"
@@ -36,20 +45,9 @@ class SourceRewriteContextTest(unittest.TestCase):
             self.assertLess(image_index, caption_index)
             self.assertIn('caption="Energy picture."', packet.content_markdown)
 
-    def test_rewrite_sends_attached_images_and_asset_ids(self) -> None:
+    def test_rewrite_interleaves_content_linked_images_in_prompt(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            parsed_root = root / "parsed"
-            output_root = root / "rewritten"
-            bundle_dir = write_parsed_fixture(parsed_root)
-            client = RecordingRewriteClient()
-
-            outputs = rewrite_source_material(
-                bundle_dir,
-                output_root=output_root,
-                client=client,
-                model="fake-vision",
-            )
+            outputs, client = rewrite_fixture_with_recording_client(Path(workspace))
 
             self.assertEqual(outputs.failed_page_count, 0)
             self.assertEqual(client.preflight_count, 1)
@@ -77,6 +75,10 @@ class SourceRewriteContextTest(unittest.TestCase):
             self.assertNotIn("# Source Context Packet", joined_prompt)
             self.assertNotIn("## Attached Assets", joined_prompt)
             self.assertNotIn("[[asset", joined_prompt)
+
+    def test_rewrite_attempt_records_content_linked_asset_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            outputs, _client = rewrite_fixture_with_recording_client(Path(workspace))
 
             attempts = read_jsonl(outputs.output_dir / "attempts.jsonl")
             self.assertEqual(attempts[0]["attached_asset_ids"], ["fig1"])
@@ -497,6 +499,18 @@ def read_jsonl(path: Path) -> list[dict[str, object]]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def rewrite_fixture_with_recording_client(root: Path):
+    bundle_dir = write_parsed_fixture(root / "parsed")
+    client = RecordingRewriteClient()
+    outputs = rewrite_source_material(
+        bundle_dir,
+        output_root=root / "rewritten",
+        client=client,
+        model="fake-vision",
+    )
+    return outputs, client
 
 
 def write_parsed_fixture(

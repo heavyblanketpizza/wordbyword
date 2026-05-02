@@ -78,7 +78,7 @@ uv --no-cache run python -m wordbyword --rewrite-source-materials class-source-m
 uv --no-cache run python -m wordbyword --rewrite-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `class-source-materials/rewritten/grade1-ko-ollama/<source-id>/`:
+The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `rewritten-for-class/grade1-ko-ollama/<source-id>/`:
 
 - `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
 - `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
@@ -96,7 +96,7 @@ uv --no-cache run python -m wordbyword --rewrite-whole-source-materials class-so
 uv --no-cache run python -m wordbyword --rewrite-whole-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-Whole-document outputs mirror the same artifact bundle under `class-source-materials/rewritten/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
+Whole-document outputs mirror the same artifact bundle under `rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
 
 ## Outputs
 

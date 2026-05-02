@@ -23,9 +23,9 @@ from wordbyword.dictionary_build.output_files import append_jsonl, initialize_js
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
-DEFAULT_REWRITE_OUTPUT_ROOT = Path("class-source-materials") / "rewritten" / "grade1-ko-ollama"
+DEFAULT_REWRITE_OUTPUT_ROOT = Path("rewritten-for-class") / "grade1-ko-ollama"
 DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
-    Path("class-source-materials") / "rewritten" / "grade1-ko-ollama-whole-document"
+    Path("rewritten-for-class") / "grade1-ko-ollama-whole-document"
 )
 IMAGE_SRC_PATTERN = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
