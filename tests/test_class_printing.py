@@ -7,13 +7,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import fitz
 from docx import Document
 from PIL import Image
 
 from wordbyword.class_printing.printable import (
-    A4_HEIGHT_PT,
-    A4_WIDTH_PT,
     DEFAULT_PRINT_OUTPUT_ROOT,
     PrintableMaterialError,
     build_printable_context,
@@ -44,11 +41,17 @@ class PrintableContextTest(unittest.TestCase):
             self.assertIn('"asset_id": "fig1"', prompt.user_prompt)
             self.assertIn("rewritten_content_markdown", prompt.user_prompt)
             self.assertIn("어린이가 읽기 쉬운 과학 이야기입니다.", prompt.user_prompt)
+            self.assertIn("Do not treat this as a one-page limit", prompt.user_prompt)
+            self.assertIn("Preserve the full rewritten reading content", prompt.user_prompt)
+            self.assertIn("valid_asset_ids", prompt.user_prompt)
+            self.assertIn("copy one exact string from valid_asset_ids", prompt.user_prompt)
+            self.assertIn("Do not use asset path values", prompt.user_prompt)
+            self.assertIn("Never use an asset path, image filename", prompt.messages[0].content)
             self.assertIn("Return JSON exactly in this shape", prompt.user_prompt)
 
 
 class PrintableMaterialTest(unittest.TestCase):
-    def test_print_class_material_writes_pdf_docx_and_audit_artifacts(self) -> None:
+    def test_print_class_material_writes_docx_and_audit_artifacts(self) -> None:
         font_path = korean_font_or_skip(self)
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -69,7 +72,6 @@ class PrintableMaterialTest(unittest.TestCase):
             for filename in (
                 "print_plan.json",
                 "content.md",
-                "material.pdf",
                 "material.docx",
                 "attempts.jsonl",
                 "failures.jsonl",
@@ -77,12 +79,8 @@ class PrintableMaterialTest(unittest.TestCase):
                 "manifest.json",
             ):
                 self.assertTrue((output_dir / filename).is_file(), filename)
+            self.assertFalse((output_dir / "material.pdf").exists())
             self.assertTrue((output_dir / "assets" / "fig1.png").is_file())
-
-            with fitz.open(output_dir / "material.pdf") as pdf:
-                self.assertGreaterEqual(pdf.page_count, 1)
-                self.assertAlmostEqual(pdf[0].rect.width, A4_WIDTH_PT, delta=0.5)
-                self.assertAlmostEqual(pdf[0].rect.height, A4_HEIGHT_PT, delta=0.5)
 
             docx = Document(str(output_dir / "material.docx"))
             paragraphs = "\n".join(paragraph.text for paragraph in docx.paragraphs)
@@ -93,7 +91,14 @@ class PrintableMaterialTest(unittest.TestCase):
             quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["status"], "written")
             self.assertEqual(quality["selected_image_count"], 1)
-            self.assertEqual(quality["output_formats"], ["pdf", "docx"])
+            self.assertEqual(quality["output_formats"], ["docx"])
+            self.assertTrue(quality["requires_human_revision"])
+            self.assertEqual(quality["revision_target"], "material.docx")
+            self.assertNotIn("pdf_page_count", quality)
+            manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("pdf", manifest["files"])
+            self.assertEqual(manifest["files"]["docx"], "material.docx")
+            self.assertTrue(manifest["printable"]["requires_human_revision"])
             attempts = read_jsonl(output_dir / "attempts.jsonl")
             self.assertTrue(attempts[0]["accepted"])
             self.assertEqual(attempts[0]["selected_asset_ids"], ["fig1"])
@@ -138,6 +143,8 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertIn("unknown asset_id", failures[0]["failure_reason"])
             quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["status"], "failed")
+            self.assertEqual(quality["output_formats"], [])
+            self.assertFalse(quality["requires_human_revision"])
 
     def test_print_plan_validation_rejects_bad_shapes_and_worksheet_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -219,8 +226,10 @@ class PrintableCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertTrue((output_root / "lesson" / "material.pdf").is_file())
+            self.assertTrue((output_root / "lesson" / "material.docx").is_file())
+            self.assertFalse((output_root / "lesson" / "material.pdf").exists())
             self.assertIn("printable class material written", stdout.getvalue())
+            self.assertNotIn("pdf:", stdout.getvalue())
 
     def test_cli_prints_all_class_materials_without_running_dictionary_pipeline(self) -> None:
         font_path = korean_font_or_skip(self)

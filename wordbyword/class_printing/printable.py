@@ -46,11 +46,6 @@ FORBIDDEN_ACTIVITY_HEADING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-MM_TO_PT = 72.0 / 25.4
-A4_WIDTH_PT = 210.0 * MM_TO_PT
-A4_HEIGHT_PT = 297.0 * MM_TO_PT
-PAGE_MARGIN_PT = 15.0 * MM_TO_PT
-
 FONT_CANDIDATES = (
     Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),
     Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
@@ -62,9 +57,13 @@ FONT_CANDIDATES = (
 
 PRINTABLE_SYSTEM_PROMPT = """You design printable Korean reading material for young students.
 Use the rewritten class material as the only source.
+Preserve the full rewritten reading content; do not summarize or shorten it to fit on one page.
+The output may span multiple A4 pages. A4 is the paper size, not a one-page length target.
 Write reading material only: no worksheet, quiz, comprehension questions, answers, or vocabulary activity sections.
 Keep Korean natural, warm, and easy for 1학년 readers.
 Choose at most two images only from the offered asset_catalog by asset_id.
+Use selected_images[].asset_id exactly as written in asset_catalog[].asset_id.
+Never use an asset path, image filename, or asset_id with an added file extension.
 Do not invent image filenames or use external images.
 Return only the requested JSON object."""
 
@@ -376,6 +375,7 @@ def build_printable_prompt(
         ],
     }
     asset_catalog = [asset.prompt_row() for asset in context.assets]
+    valid_asset_ids = [asset.asset_id for asset in context.assets]
     font_instruction = (
         f"Use body_font_size_pt exactly {body_font_size}."
         if body_font_size is not None
@@ -387,11 +387,19 @@ def build_printable_prompt(
             f"source_id: {context.source_id}",
             f"source_filename: {context.source_filename}",
             "Output is for A4 classroom handouts for young Korean students.",
+            "A4 is the paper size. Do not treat this as a one-page limit.",
+            "Preserve the full rewritten reading content across as many A4 pages as needed.",
+            "Do not summarize, shorten, or omit reading content just to make the handout shorter.",
             font_instruction,
             "Use only reading sections. Do not include questions, quizzes, answers, worksheet tasks, or vocabulary exercises.",
             f"Choose at most {MAX_SELECTED_IMAGES} image(s) from asset_catalog by asset_id. Use selected_images=[] if no asset fits.",
+            "For selected_images[].asset_id, copy one exact string from valid_asset_ids.",
+            "Do not use asset path values like assets/foo.jpg, filenames like foo.jpg, or add .jpg/.png to an asset_id.",
             "Prefer extracted_image assets over page_render assets when both are available.",
             "Do not copy raw image Markdown or HTML from the rewritten content into section paragraphs.",
+            "",
+            "valid_asset_ids:",
+            json.dumps(valid_asset_ids, ensure_ascii=False),
             "",
             "asset_catalog:",
             json.dumps(asset_catalog, ensure_ascii=False),
@@ -517,19 +525,12 @@ def write_printable_artifacts(
         render_printable_markdown(document, context=context),
         encoding="utf-8",
     )
-    render_pdf(
-        output_dir / "material.pdf",
-        document=document,
-        context=context,
-        font_path=font_path,
-    )
     render_docx(
         output_dir / "material.docx",
         document=document,
         context=context,
         font_name=font_name,
     )
-    pdf_page_count = pdf_page_count_for(output_dir / "material.pdf")
     write_quality_and_manifest(
         output_dir,
         context=context,
@@ -540,7 +541,6 @@ def write_printable_artifacts(
         failure_reason="",
         font_path=font_path,
         font_name=font_name,
-        pdf_page_count=pdf_page_count,
     )
 
 
@@ -562,7 +562,6 @@ def write_failed_printable_artifacts(
         failure_reason=failure_reason,
         font_path=None,
         font_name="",
-        pdf_page_count=0,
     )
 
 
@@ -583,135 +582,6 @@ def render_printable_markdown(document: PrintableDocument, *, context: Printable
         for paragraph in section.paragraphs:
             lines.extend(["", paragraph])
     return "\n".join(lines).strip() + "\n"
-
-
-def render_pdf(
-    path: Path,
-    *,
-    document: PrintableDocument,
-    context: PrintableContext,
-    font_path: Path,
-) -> None:
-    assets_by_id = {asset.asset_id: asset for asset in context.assets}
-    pdf = fitz.open()
-    layout = PdfLayout(pdf, font_path=font_path, body_font_size=document.body_font_size_pt)
-    layout.add_title(document.title)
-    if document.subtitle:
-        layout.add_subtitle(document.subtitle)
-    for image in document.selected_images:
-        if normalized_placement(image.placement) == "after_title":
-            layout.add_image(assets_by_id[image.asset_id], image, context=context)
-    for index, section in enumerate(document.sections):
-        layout.add_heading(section.heading)
-        for paragraph in section.paragraphs:
-            layout.add_paragraph(paragraph)
-        if index == 0:
-            for image in document.selected_images:
-                if normalized_placement(image.placement) == "after_first_section":
-                    layout.add_image(assets_by_id[image.asset_id], image, context=context)
-    for image in document.selected_images:
-        if normalized_placement(image.placement) == "end":
-            layout.add_image(assets_by_id[image.asset_id], image, context=context)
-    pdf.save(path)
-    pdf.close()
-
-
-class PdfLayout:
-    def __init__(self, document: fitz.Document, *, font_path: Path, body_font_size: int) -> None:
-        self.document = document
-        self.font_path = font_path
-        self.body_font_size = body_font_size
-        self.font = fitz.Font(fontfile=str(font_path))
-        self.page: fitz.Page | None = None
-        self.y = PAGE_MARGIN_PT
-        self.new_page()
-
-    @property
-    def content_width(self) -> float:
-        return A4_WIDTH_PT - (PAGE_MARGIN_PT * 2)
-
-    @property
-    def bottom(self) -> float:
-        return A4_HEIGHT_PT - PAGE_MARGIN_PT
-
-    def new_page(self) -> None:
-        self.page = self.document.new_page(width=A4_WIDTH_PT, height=A4_HEIGHT_PT)
-        self.y = PAGE_MARGIN_PT
-
-    def ensure_space(self, height: float) -> None:
-        if self.y + height > self.bottom:
-            self.new_page()
-
-    def add_title(self, text: str) -> None:
-        self.add_text_block(text, fontsize=22, line_height=29, spacing_after=8, align=fitz.TEXT_ALIGN_CENTER)
-
-    def add_subtitle(self, text: str) -> None:
-        self.add_text_block(text, fontsize=14, line_height=20, spacing_after=16, align=fitz.TEXT_ALIGN_CENTER)
-
-    def add_heading(self, text: str) -> None:
-        self.ensure_space(34)
-        self.y += 6
-        self.add_text_block(text, fontsize=16, line_height=22, spacing_after=6, align=fitz.TEXT_ALIGN_LEFT)
-
-    def add_paragraph(self, text: str) -> None:
-        self.add_text_block(
-            text,
-            fontsize=self.body_font_size,
-            line_height=self.body_font_size * 1.55,
-            spacing_after=self.body_font_size * 0.85,
-            align=fitz.TEXT_ALIGN_LEFT,
-        )
-
-    def add_text_block(self, text: str, *, fontsize: float, line_height: float, spacing_after: float, align: int) -> None:
-        for hard_line in text.splitlines() or [text]:
-            lines = wrap_text(hard_line.strip(), font=self.font, fontsize=fontsize, max_width=self.content_width)
-            if not lines:
-                self.y += line_height
-                continue
-            for line in lines:
-                self.ensure_space(line_height)
-                assert self.page is not None
-                rect = fitz.Rect(PAGE_MARGIN_PT, self.y, A4_WIDTH_PT - PAGE_MARGIN_PT, self.y + line_height * 1.2)
-                self.page.insert_textbox(
-                    rect,
-                    line,
-                    fontfile=str(self.font_path),
-                    fontsize=fontsize,
-                    align=align,
-                    color=(0, 0, 0),
-                )
-                self.y += line_height
-        self.y += spacing_after
-
-    def add_image(
-        self,
-        asset: PrintableAsset,
-        selection: PrintableImageSelection,
-        *,
-        context: PrintableContext,
-    ) -> None:
-        image_path = context.rewritten_bundle_dir / asset.path
-        with Image.open(image_path) as image:
-            width, height = image.size
-        if width <= 0 or height <= 0:
-            return
-        max_width = min(self.content_width, 300.0)
-        max_height = 175.0
-        scale = min(max_width / width, max_height / height)
-        rendered_width = width * scale
-        rendered_height = height * scale
-        caption = selection.caption or asset.caption
-        caption_height = 18 if caption else 0
-        self.ensure_space(rendered_height + caption_height + 16)
-        assert self.page is not None
-        x0 = PAGE_MARGIN_PT + ((self.content_width - rendered_width) / 2)
-        image_rect = fitz.Rect(x0, self.y, x0 + rendered_width, self.y + rendered_height)
-        self.page.insert_image(image_rect, filename=str(image_path), keep_proportion=True)
-        self.y += rendered_height + 4
-        if caption:
-            self.add_text_block(caption, fontsize=9, line_height=12, spacing_after=10, align=fitz.TEXT_ALIGN_CENTER)
-        else:
-            self.y += 12
 
 
 def render_docx(
@@ -807,50 +677,6 @@ def add_docx_image(
     caption = selection.caption or asset.caption
     if caption:
         add_docx_paragraph(doc, caption, font_name=font_name, size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
-
-
-def wrap_text(text: str, *, font: fitz.Font, fontsize: float, max_width: float) -> list[str]:
-    cleaned = " ".join(text.split())
-    if not cleaned:
-        return []
-    lines: list[str] = []
-    current = ""
-    for token in cleaned.split(" "):
-        candidate = token if not current else f"{current} {token}"
-        if font.text_length(candidate, fontsize=fontsize) <= max_width:
-            current = candidate
-            continue
-        if current:
-            lines.append(current)
-            current = ""
-        if font.text_length(token, fontsize=fontsize) <= max_width:
-            current = token
-            continue
-        for chunk in split_long_token(token, font=font, fontsize=fontsize, max_width=max_width):
-            if font.text_length(chunk, fontsize=fontsize) <= max_width and not current:
-                current = chunk
-            else:
-                if current:
-                    lines.append(current)
-                current = chunk
-    if current:
-        lines.append(current)
-    return lines
-
-
-def split_long_token(token: str, *, font: fitz.Font, fontsize: float, max_width: float) -> list[str]:
-    chunks: list[str] = []
-    current = ""
-    for char in token:
-        candidate = current + char
-        if not current or font.text_length(candidate, fontsize=fontsize) <= max_width:
-            current = candidate
-            continue
-        chunks.append(current)
-        current = char
-    if current:
-        chunks.append(current)
-    return chunks
 
 
 def discover_printable_assets(rewritten_bundle_dir: Path, chunks: Sequence[Any]) -> list[PrintableAsset]:
@@ -993,7 +819,6 @@ def write_quality_and_manifest(
     failure_reason: str,
     font_path: Path | None,
     font_name: str,
-    pdf_page_count: int,
 ) -> None:
     quality = build_quality_report(
         context=context,
@@ -1004,7 +829,6 @@ def write_quality_and_manifest(
         failure_reason=failure_reason,
         font_path=font_path,
         font_name=font_name,
-        pdf_page_count=pdf_page_count,
     )
     manifest = build_printable_manifest(
         context=context,
@@ -1036,7 +860,6 @@ def build_quality_report(
     failure_reason: str,
     font_path: Path | None,
     font_name: str,
-    pdf_page_count: int,
 ) -> dict[str, object]:
     return {
         "schema_version": PRINTABLE_SCHEMA_VERSION,
@@ -1050,8 +873,9 @@ def build_quality_report(
         "body_font_size_pt": document.body_font_size_pt if document else None,
         "font_path": str(font_path) if font_path is not None else "",
         "font_name": font_name,
-        "output_formats": ["pdf", "docx"] if accepted else [],
-        "pdf_page_count": pdf_page_count,
+        "output_formats": ["docx"] if accepted else [],
+        "requires_human_revision": accepted,
+        "revision_target": "material.docx" if accepted else "",
         "asset_catalog_count": len(context.assets),
     }
 
@@ -1078,7 +902,6 @@ def build_printable_manifest(
             {
                 "print_plan_json": "print_plan.json",
                 "content_markdown": "content.md",
-                "pdf": "material.pdf",
                 "docx": "material.docx",
             }
         )
@@ -1105,6 +928,8 @@ def build_printable_manifest(
             "selected_image_count": len(document.selected_images) if document else 0,
             "font_path": str(font_path) if font_path is not None else "",
             "font_name": font_name,
+            "requires_human_revision": accepted,
+            "revision_target": "material.docx" if accepted else "",
             "rendered_at": datetime.now(timezone.utc).isoformat(),
         },
         "files": files,
@@ -1138,12 +963,7 @@ def validate_body_font_size_override(body_font_size: int | None) -> None:
 
 
 def print_plan_max_output_tokens(context: PrintableContext) -> int:
-    return max(4096, min(16384, len(context.content_markdown) + 4096))
-
-
-def pdf_page_count_for(path: Path) -> int:
-    with fitz.open(path) as document:
-        return document.page_count
+    return max(8192, min(32768, len(context.content_markdown) * 2 + 4096))
 
 
 def discover_rewritten_bundles(rewritten_root: Path) -> list[Path]:

@@ -449,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="REWRITTEN_BUNDLE_DIR",
         help=(
-            "Create A4 PDF and DOCX printable reading material from one rewritten source-material bundle."
+            "Create an editable A4 DOCX printable reading material from one rewritten source-material bundle."
         ),
     )
     parser.add_argument(
@@ -458,7 +458,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="REWRITTEN_ROOT",
         help=(
-            "Create A4 PDF and DOCX printable reading materials for every rewritten bundle under a root."
+            "Create editable A4 DOCX printable reading materials for every rewritten bundle under a root."
         ),
     )
     parser.add_argument(
@@ -474,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--print-font-path",
         type=Path,
         default=None,
-        help="Optional Korean-capable font file for printable PDF/DOCX rendering.",
+        help="Optional Korean-capable font file for printable DOCX rendering.",
     )
     parser.add_argument(
         "--print-body-font-size",
@@ -1343,7 +1343,6 @@ def print_class_material_cli(
     )
     if outputs.accepted:
         sys.stdout.write(
-            f"  pdf: {outputs.output_dir / 'material.pdf'}\n"
             f"  docx: {outputs.output_dir / 'material.docx'}\n"
         )
     else:
