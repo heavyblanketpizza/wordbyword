@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import io
+import json
+import re
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import fitz
+from docx import Document
+
+from wordbyword.class_sessions.archive import (
+    DEFAULT_ARCHIVE_LEDGER_FILENAME,
+    ArchiveRenameMetadata,
+    ClassSessionArchiveError,
+    archive_filename,
+    build_archived_material,
+    discover_archive_materials,
+    normalize_grade_level,
+    rename_class_session_archive,
+    safe_slug,
+)
+from wordbyword.cli import build_parser, main
+from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
+
+
+class ClassSessionArchiveRenameTest(unittest.TestCase):
+    def test_discovers_docx_and_pdf_materials_only(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "빛은 작은 알갱이처럼 움직이기도 해요.")
+            write_pdf(archive / "material.pdf", "Matter can change into many shapes.")
+            (archive / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+            materials = discover_archive_materials(archive)
+
+            self.assertEqual([material.name for material in materials], ["material.docx", "material.pdf"])
+            self.assertTrue(materials[0].text_excerpt)
+            self.assertTrue(materials[1].text_excerpt)
+
+    def test_dry_run_plans_docx_and_pdf_renames_without_touching_files(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "빛과 원자에 대해 1학년 어린이가 읽는 글입니다.")
+            write_pdf(archive / "material 2.pdf", "Light is energy that helps us see objects.")
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "1학년",
+                    "topic_slug": "physics",
+                    "short_title_slug": "light-and-atoms",
+                    "korean_title": "빛과 원자",
+                    "confidence": 0.91,
+                }
+            )
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertTrue(result.dry_run)
+            self.assertEqual(result.planned_count, 2)
+            self.assertEqual(result.renamed_count, 0)
+            self.assertTrue((archive / "material.docx").exists())
+            self.assertTrue((archive / "material 2.pdf").exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).exists())
+            self.assertEqual(len(client.calls), 2)
+            for plan in result.plans:
+                self.assertRegex(plan.target_name, r"^\d{4}-\d{2}-\d{2}_grade1-physics-light-and-atoms\.")
+                self.assertEqual(plan.metadata.grade_level, "grade1")
+
+    def test_apply_renames_files_and_writes_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "초등학교 2학년이 읽는 화학 이야기입니다.")
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "grade2",
+                    "topic_slug": "chemistry",
+                    "short_title_slug": "plastic-recycling",
+                    "korean_title": "플라스틱 재활용",
+                    "confidence": 0.88,
+                }
+            )
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=True,
+            )
+
+            self.assertFalse((archive / "material.docx").exists())
+            renamed_files = sorted(path.name for path in archive.glob("*.docx"))
+            self.assertEqual(len(renamed_files), 1)
+            self.assertRegex(renamed_files[0], r"^\d{4}-\d{2}-\d{2}_grade2-chemistry-plastic-recycling\.docx$")
+            self.assertEqual(result.renamed_count, 1)
+
+            ledger = json.loads((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).read_text(encoding="utf-8"))
+            self.assertEqual(ledger["schema_version"], "wordbyword.class_session_archive.v1")
+            entries = ledger["entries"]
+            self.assertEqual(len(entries), 1)
+            entry = next(iter(entries.values()))
+            self.assertEqual(entry["original_name"], "material.docx")
+            self.assertEqual(entry["current_name"], renamed_files[0])
+            self.assertEqual(entry["classification"]["grade_level"], "grade2")
+            self.assertEqual(entry["rename_history"][0]["from"], "material.docx")
+
+    def test_existing_archive_name_is_skipped_without_llm_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            existing = archive / "2026-05-10_grade1-physics-light.docx"
+            write_docx(existing, "이미 이름이 정리된 자료입니다.")
+            client = RecordingArchiveClient({})
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertEqual(result.skipped_count, 1)
+            self.assertEqual(len(client.calls), 0)
+            self.assertTrue(existing.exists())
+
+    def test_empty_pdf_gets_cautious_unknown_name_without_llm_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            document = fitz.open()
+            document.new_page()
+            document.save(archive / "material.pdf")
+            document.close()
+            client = RecordingArchiveClient({})
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertEqual(len(client.calls), 0)
+            self.assertRegex(result.plans[0].target_name, r"_grade-unknown-topic-unknown-material\.pdf$")
+
+    def test_refuses_ledger_outside_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "테스트 자료입니다.")
+
+            with self.assertRaises(ClassSessionArchiveError):
+                rename_class_session_archive(
+                    archive,
+                    client=RecordingArchiveClient({}),
+                    model="fake-ollama",
+                    ledger_path=Path(workspace) / "outside.json",
+                )
+
+
+class ClassSessionArchiveHelpersTest(unittest.TestCase):
+    def test_grade_and_slug_normalization(self) -> None:
+        self.assertEqual(normalize_grade_level("1학년"), "grade1")
+        self.assertEqual(normalize_grade_level("Grade 3"), "grade3")
+        self.assertEqual(normalize_grade_level("중학생"), "grade-unknown")
+        self.assertEqual(safe_slug("Light & Atoms!", fallback="material"), "light-atoms")
+        self.assertEqual(safe_slug("빛과 원자", fallback="material"), "material")
+
+    def test_archive_filename_compacts_duplicate_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "material.docx"
+            write_docx(path, "빛에 대한 글입니다.")
+            material = build_archived_material(path, ledger_entries={})
+            metadata = ArchiveRenameMetadata(
+                grade_level="grade1",
+                topic_slug="physics",
+                short_title_slug="physics",
+                confidence=0.5,
+            )
+
+            name = archive_filename(material, metadata)
+
+            self.assertTrue(re.search(r"_grade1-physics\.docx$", name))
+
+
+class ClassSessionArchiveCliTest(unittest.TestCase):
+    def test_parser_has_archive_rename_command(self) -> None:
+        args = build_parser().parse_args(["--rename-class-session-archive"])
+
+        self.assertEqual(args.rename_class_session_archive, Path("class-session-archive"))
+        self.assertFalse(args.apply_archive_renames)
+
+    def test_main_with_archive_rename_skips_pipeline(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            patch("wordbyword.cli.app.ollama_client", return_value=RecordingArchiveClient({})),
+            patch("wordbyword.cli.app.rename_class_session_archive") as mock_rename,
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            mock_rename.return_value = FakeRenameResult()
+
+            exit_code = main(["--rename-class-session-archive", "class-session-archive"])
+
+        self.assertEqual(exit_code, 0)
+        mock_pipeline.assert_not_called()
+        self.assertIn("class-session archive rename complete", stdout.getvalue())
+
+
+class RecordingArchiveClient:
+    def __init__(self, response: dict[str, object]) -> None:
+        self.response = response
+        self.calls: list[tuple[tuple[ChatMessage, ...], dict[str, object]]] = []
+
+    def complete(
+        self,
+        messages: tuple[ChatMessage, ...] | list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self.calls.append((tuple(messages), {"temperature": temperature, "json_mode": json_mode}))
+        return CompletionResult(
+            provider="ollama",
+            model="fake-ollama",
+            content=json.dumps(self.response, ensure_ascii=False),
+        )
+
+
+class FakeRenameResult:
+    archive_root = Path("class-session-archive")
+    ledger_path = Path("class-session-archive") / DEFAULT_ARCHIVE_LEDGER_FILENAME
+    dry_run = True
+    plans = ()
+    planned_count = 0
+    renamed_count = 0
+    skipped_count = 0
+
+
+def write_docx(path: Path, text: str) -> None:
+    document = Document()
+    document.add_paragraph(text)
+    document.save(path)
+
+
+def write_pdf(path: Path, text: str) -> None:
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), text)
+    document.save(path)
+    document.close()

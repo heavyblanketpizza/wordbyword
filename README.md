@@ -137,6 +137,24 @@ uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-cla
 uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-output-root printable-for-class/grade1-ko-a4-ollama
 ```
 
+## Class Session Archive
+
+Past class printouts can be dropped into `class-session-archive/` as `.docx` or `.pdf` files. Teachers can use rough names such as `material.docx`, `material 2.docx`, or `printout.pdf`; the archive rename command extracts text, asks Ollama only for classification metadata, validates the result, and performs any filesystem rename in code.
+
+Dry-run the rename plan first:
+
+```bash
+uv --no-cache run python -m wordbyword --rename-class-session-archive --ollama-model gemma4:31b
+```
+
+Apply the plan:
+
+```bash
+uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-archive-renames --ollama-model gemma4:31b
+```
+
+The command only considers direct `.docx` and `.pdf` files inside the archive folder. It never edits document contents, never deletes files, never moves files outside the archive, and never overwrites an existing file. Applied runs write `.wordbyword-archive-ledger.json` so the original filename and first-seen timestamp are preserved after renames.
+
 ## Outputs
 
 The pipeline writes these files:

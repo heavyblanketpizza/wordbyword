@@ -43,6 +43,10 @@ from wordbyword.class_printing.printable import (
     print_class_material,
     print_class_materials,
 )
+from wordbyword.class_sessions.archive import (
+    ClassSessionArchiveError,
+    rename_class_session_archive,
+)
 from wordbyword.cli.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
@@ -213,6 +217,13 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
             body_font_size=args.print_body_font_size,
+        )
+    if args.rename_class_session_archive is not None:
+        return rename_class_session_archive_cli(
+            archive_root=args.rename_class_session_archive,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            apply=args.apply_archive_renames,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -940,6 +951,59 @@ def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
 
 def emit_printable_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"print class [{source_id}] {detail}\n")
+    sys.stdout.flush()
+
+
+def rename_class_session_archive_cli(
+    *,
+    archive_root: Path,
+    model: str,
+    base_url: str | None,
+    apply: bool,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=300.0,
+        max_output_tokens=1024,
+    )
+    try:
+        try:
+            result = rename_class_session_archive(
+                archive_root,
+                client=client,
+                model=model,
+                apply=apply,
+                progress=emit_archive_rename_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (ClassSessionArchiveError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "class-session archive rename complete\n"
+        f"  archive_root: {result.archive_root}\n"
+        f"  mode: {'apply' if apply else 'dry-run'}\n"
+        f"  files: {len(result.plans)}\n"
+        f"  planned: {result.planned_count}\n"
+        f"  renamed: {result.renamed_count}\n"
+        f"  skipped: {result.skipped_count}\n"
+        f"  ledger: {result.ledger_path}\n"
+    )
+    for plan in result.plans:
+        confidence = f"{plan.metadata.confidence:.2f}"
+        sys.stdout.write(
+            f"  - {plan.original_name} -> {plan.target_name} "
+            f"({plan.status}, confidence: {confidence})\n"
+        )
+    sys.stdout.flush()
+    return 0
+
+
+def emit_archive_rename_progress(detail: str) -> None:
+    sys.stdout.write(f"archive rename {detail}\n")
     sys.stdout.flush()
 
 

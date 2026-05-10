@@ -10,6 +10,7 @@ from wordbyword.class_rewriting.rewrite import (
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
+from wordbyword.class_sessions.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
 from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
@@ -434,6 +435,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional printable body font size override from 11 to 15 points.",
     )
+    parser.add_argument(
+        "--rename-class-session-archive",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Classify and safely rename direct .docx/.pdf files in a class-session archive. "
+            "Defaults to class-session-archive when no DIR is supplied. Dry-run unless "
+            "--apply-archive-renames is also supplied."
+        ),
+    )
+    parser.add_argument(
+        "--apply-archive-renames",
+        action="store_true",
+        help="Apply --rename-class-session-archive rename plans. Without this flag, the command is a dry-run.",
+    )
     return parser
 
 
@@ -449,11 +468,18 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.rewrite_vocabulary_guided_source_materials is not None,
         args.print_class_material is not None,
         args.print_class_materials is not None,
+        args.rename_class_session_archive is not None,
     ]
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
             2,
-            "wordbyword: error: parse/rewrite/print source-material commands cannot be combined.\n",
+            "wordbyword: error: parse/rewrite/print source-material commands cannot be combined "
+            "with each other or archive commands.\n",
+        )
+    if args.apply_archive_renames and args.rename_class_session_archive is None:
+        parser.exit(
+            2,
+            "wordbyword: error: --apply-archive-renames requires --rename-class-session-archive.\n",
         )
     if args.parse_source_materials is not None and args.source_id:
         parser.exit(
