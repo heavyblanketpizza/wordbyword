@@ -24,7 +24,8 @@ from wordbyword.dictionary_build.llm import (
 )
 
 ARCHIVE_SCHEMA_VERSION = "wordbyword.class_session_archive.v1"
-DEFAULT_CLASS_SESSION_ARCHIVE_ROOT = Path("class-session-archive")
+DEFAULT_VOCABULARY_INTELLIGENCE_ROOT = Path("wbw-vocabulary-intelligence")
+DEFAULT_CLASS_SESSION_ARCHIVE_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "class-session-archive"
 DEFAULT_ARCHIVE_LEDGER_FILENAME = ".wordbyword-archive-ledger.json"
 SUPPORTED_ARCHIVE_EXTENSIONS = {".docx", ".pdf"}
 MAX_ARCHIVE_PROMPT_TEXT_CHARS = 12000
@@ -32,6 +33,7 @@ MAX_FILENAME_SLUG_CHARS = 48
 ARCHIVE_NAME_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}_grade(?:[1-6]|-unknown)-[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
+NATURAL_SORT_TOKEN_PATTERN = re.compile(r"(\d+)")
 
 ARCHIVE_RENAME_SYSTEM_PROMPT = """You label archived Korean class printouts for safe filenames.
 Use only the supplied document text and file metadata.
@@ -169,24 +171,6 @@ def rename_class_session_archive(
         if progress is not None:
             progress(f"classifying {material.name}")
 
-        existing_entry = entries.get(material.material_id)
-        existing_target = str(existing_entry.get("current_name", "")) if isinstance(existing_entry, Mapping) else ""
-        if is_managed_archive_name(material.path.stem) and existing_target in {"", material.name}:
-            plans.append(
-                ArchiveRenamePlan(
-                    material_id=material.material_id,
-                    source_path=material.path,
-                    target_path=material.path,
-                    original_name=material.name,
-                    target_name=material.name,
-                    first_seen_at=material.first_seen_at,
-                    metadata=ArchiveRenameMetadata(),
-                    status="skipped",
-                    reason="already follows the archive filename convention",
-                )
-            )
-            continue
-
         metadata = classify_archive_material(material, client=client)
         target_path = unique_target_path(
             root,
@@ -253,17 +237,44 @@ def discover_archive_materials(
     *,
     ledger_entries: Mapping[str, object] | None = None,
 ) -> tuple[ArchivedMaterial, ...]:
-    materials: list[ArchivedMaterial] = []
-    for path in sorted(archive_root.iterdir(), key=lambda item: item.name.lower()):
-        if not path.is_file():
+    return tuple(
+        build_archived_material(path, ledger_entries=ledger_entries or {})
+        for path in discover_archive_material_paths(archive_root)
+    )
+
+
+def discover_archive_material_paths(archive_root: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for path in archive_root.iterdir():
+        if not is_supported_archive_material_path(path):
             continue
-        extension = path.suffix.lower()
-        if extension not in SUPPORTED_ARCHIVE_EXTENSIONS:
+        if is_managed_archive_name(path.stem):
             continue
-        if path.name.startswith("~$"):
+        paths.append(path)
+    return tuple(sorted(paths, key=natural_path_sort_key))
+
+
+def is_supported_archive_material_path(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if path.name.startswith("~$"):
+        return False
+    return path.suffix.lower() in SUPPORTED_ARCHIVE_EXTENSIONS
+
+
+def natural_path_sort_key(path: Path) -> tuple[tuple[int, int | str], ...]:
+    tokens: list[tuple[int, int | str]] = []
+    for token in NATURAL_SORT_TOKEN_PATTERN.split(path.stem.lower()):
+        if not token:
             continue
-        materials.append(build_archived_material(path, ledger_entries=ledger_entries or {}))
-    return tuple(materials)
+        if token.isdigit():
+            tokens.append((1, int(token)))
+            continue
+        text = re.sub(r"[\s_.-]+", " ", token).strip()
+        if text:
+            tokens.append((0, text))
+    tokens.append((0, path.suffix.lower()))
+    return tuple(tokens)
 
 
 def build_archived_material(

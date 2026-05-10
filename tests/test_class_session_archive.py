@@ -13,11 +13,13 @@ from docx import Document
 
 from wordbyword.class_sessions.archive import (
     DEFAULT_ARCHIVE_LEDGER_FILENAME,
+    DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     ArchiveRenameMetadata,
     ClassSessionArchiveError,
     archive_filename,
     build_archived_material,
     discover_archive_materials,
+    discover_archive_material_paths,
     normalize_grade_level,
     rename_class_session_archive,
     safe_slug,
@@ -113,7 +115,7 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
             self.assertEqual(entry["classification"]["grade_level"], "grade2")
             self.assertEqual(entry["rename_history"][0]["from"], "material.docx")
 
-    def test_existing_archive_name_is_skipped_without_llm_call(self) -> None:
+    def test_existing_archive_name_is_silent_without_llm_call(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             archive = Path(workspace) / "class-session-archive"
             archive.mkdir()
@@ -128,9 +130,43 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
                 apply=False,
             )
 
-            self.assertEqual(result.skipped_count, 1)
+            self.assertEqual(result.plans, ())
+            self.assertEqual(result.skipped_count, 0)
             self.assertEqual(len(client.calls), 0)
             self.assertTrue(existing.exists())
+
+    def test_mixed_archive_filters_named_files_and_naturally_sorts_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            named = archive / "2026-05-10_grade1-physics-light.docx"
+            write_docx(named, "이미 이름이 정리된 자료입니다.")
+            write_docx(archive / "material 10.docx", "열 번째 자료입니다.")
+            write_docx(archive / "material 2.docx", "두 번째 자료입니다.")
+            write_docx(archive / "material.docx", "첫 번째 자료입니다.")
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "grade1",
+                    "topic_slug": "reading",
+                    "short_title_slug": "practice",
+                    "korean_title": "읽기 자료",
+                    "confidence": 0.75,
+                }
+            )
+
+            paths = discover_archive_material_paths(archive)
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertEqual([path.name for path in paths], ["material.docx", "material 2.docx", "material 10.docx"])
+            self.assertEqual([plan.original_name for plan in result.plans], ["material.docx", "material 2.docx", "material 10.docx"])
+            self.assertEqual(archive_call_filenames(client), ["material.docx", "material 2.docx", "material 10.docx"])
+            self.assertNotIn(named.name, [plan.original_name for plan in result.plans])
+            self.assertTrue(named.exists())
 
     def test_empty_pdf_gets_cautious_unknown_name_without_llm_call(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -196,7 +232,11 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
     def test_parser_has_archive_rename_command(self) -> None:
         args = build_parser().parse_args(["--rename-class-session-archive"])
 
-        self.assertEqual(args.rename_class_session_archive, Path("class-session-archive"))
+        self.assertEqual(
+            args.rename_class_session_archive,
+            Path("wbw-vocabulary-intelligence") / "class-session-archive",
+        )
+        self.assertEqual(args.rename_class_session_archive, DEFAULT_CLASS_SESSION_ARCHIVE_ROOT)
         self.assertFalse(args.apply_archive_renames)
 
     def test_main_with_archive_rename_skips_pipeline(self) -> None:
@@ -239,8 +279,8 @@ class RecordingArchiveClient:
 
 
 class FakeRenameResult:
-    archive_root = Path("class-session-archive")
-    ledger_path = Path("class-session-archive") / DEFAULT_ARCHIVE_LEDGER_FILENAME
+    archive_root = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
+    ledger_path = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT / DEFAULT_ARCHIVE_LEDGER_FILENAME
     dry_run = True
     plans = ()
     planned_count = 0
@@ -260,3 +300,11 @@ def write_pdf(path: Path, text: str) -> None:
     page.insert_text((72, 72), text)
     document.save(path)
     document.close()
+
+
+def archive_call_filenames(client: RecordingArchiveClient) -> list[str]:
+    filenames: list[str] = []
+    for messages, _kwargs in client.calls:
+        payload = json.loads(messages[1].content)
+        filenames.append(str(payload["original_filename"]))
+    return filenames

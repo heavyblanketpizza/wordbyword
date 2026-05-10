@@ -444,7 +444,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Classify and safely rename direct .docx/.pdf files in a class-session archive. "
-            "Defaults to class-session-archive when no DIR is supplied. Dry-run unless "
+            "Defaults to wbw-vocabulary-intelligence/class-session-archive when no DIR is supplied. Dry-run unless "
             "--apply-archive-renames is also supplied."
         ),
     )
