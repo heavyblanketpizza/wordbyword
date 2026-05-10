@@ -1,6 +1,6 @@
 """Grade-aware class source-material rewrite modules."""
 
-from wordbyword.class_rewriting.rewrite import (
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,

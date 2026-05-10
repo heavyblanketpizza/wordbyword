@@ -11,7 +11,7 @@ from unittest.mock import patch
 from docx import Document
 from PIL import Image
 
-from wordbyword.class_printing.printable import (
+from wordbyword.classroom_printout_studio.class_printing.printable import (
     DEFAULT_PRINT_OUTPUT_ROOT,
     PrintableMaterialError,
     build_printable_context,
@@ -27,7 +27,7 @@ class PrintableContextTest(unittest.TestCase):
     def test_default_print_outputs_use_separate_printable_root(self) -> None:
         self.assertEqual(
             DEFAULT_PRINT_OUTPUT_ROOT,
-            Path("printable-for-class") / "grade1-ko-a4-ollama",
+            Path("classroom-printout-studio/printable-for-class") / "grade1-ko-a4-ollama",
         )
 
     def test_prompt_uses_rewritten_content_and_asset_catalog(self) -> None:

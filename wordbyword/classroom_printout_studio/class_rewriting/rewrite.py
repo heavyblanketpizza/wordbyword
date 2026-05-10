@@ -29,12 +29,12 @@ DEFAULT_TARGET_PROFILE = "grade1-ko"
 REWRITE_MODE_PAGE = "page"
 REWRITE_MODE_WHOLE_DOCUMENT = "whole_document"
 REWRITE_MODE_VOCABULARY_GUIDED = "vocabulary_guided"
-DEFAULT_REWRITE_OUTPUT_ROOT = Path("rewritten-for-class") / "grade1-ko-ollama"
+DEFAULT_REWRITE_OUTPUT_ROOT = Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama"
 DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
-    Path("rewritten-for-class") / "grade1-ko-ollama-whole-document"
+    Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-whole-document"
 )
 DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
-    Path("rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided"
+    Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided"
 )
 VOCABULARY_GUIDED_CANDIDATE_LIMIT = 250
 VOCABULARY_GUIDED_SELECTION_LIMIT = 20

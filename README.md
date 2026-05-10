@@ -14,7 +14,8 @@ The project is currently a vocabulary-and-example preparation pipeline plus a cl
 
 ## Folder Layout
 
-- Python implementation modules are grouped by workflow under `wordbyword/dictionary_build/`, `wordbyword/source_parsing/`, `wordbyword/class_rewriting/`, and `wordbyword/cli/`.
+- Python implementation modules are grouped by workflow under `wordbyword/dictionary_build/`, `wordbyword/classroom_printout_studio/`, `wordbyword/class_archive/`, and `wordbyword/cli/`.
+- Classroom printout studio materials live under `classroom-printout-studio/`, grouped into source materials, rewritten materials, and printable handouts.
 - Put original books and documents in `build-dictionary/original/`.
 - Run the pipeline with `uv --no-cache run python -m wordbyword`.
 - Generated files are written to `build-dictionary/`.
@@ -32,10 +33,10 @@ Supported source formats:
 Use this first to create one isolated parse workspace per mature class material:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials
 ```
 
-The command writes one source-specific folder under `class-source-materials/parsed/<source-id>/`:
+The command writes one source-specific folder under `classroom-printout-studio/class-source-materials/parsed/<source-id>/`:
 
 - `manifest.json`: source metadata, checksum, parser status, and bundle file map.
 - `content.md`: the primary human-readable and LLM-ready Markdown output for PDFs.
@@ -50,8 +51,8 @@ The heuristic PDF parser is Markdown-first. It uses PyMuPDF4LLM for reading orde
 PaddleOCR-VL-1.5 can be used as an optional PDF parser lane:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-device cpu
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-sidecar-env .venv-paddleocr --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-sidecar-env .venv-paddleocr --paddleocr-vl-device cpu
 ```
 
 This mode renders each PDF page to `assets/page-0001.png`, sends the page images to PaddleOCR-VL-1.5, and writes the same bundle contract: `content.md`, `chunks.json`, `document_model.json`, `parser_output.json`, and `quality_report.json`. PaddleOCR-VL is intentionally not a base dependency. Paddle documents Python 3.9-3.13 as the verified manual-install range for this path, while this project currently runs on Python 3.14, so use a separate PaddleOCR virtual environment, Docker image, or PaddleOCR-VL service when running the model locally.
@@ -63,22 +64,22 @@ PaddleOCR-VL inference runs in an isolated child process when no sidecar env is 
 Useful source-material options:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-material class-source-materials/popular-physicsprize2025.pdf
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --no-page-renders
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --skip-pdf-parse
-uv --no-cache run python -m wordbyword --parse-source-materials class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
+uv --no-cache run python -m wordbyword --parse-source-material classroom-printout-studio/class-source-materials/popular-physicsprize2025.pdf
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --no-page-renders
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --skip-pdf-parse
+uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
 ```
 
 ## Source Material Rewriting
 
-After source materials are parsed, run the Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
+After source materials are parsed, run the Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
 
 ```bash
-uv --no-cache run python -m wordbyword --rewrite-source-materials class-source-materials/parsed --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `rewritten-for-class/grade1-ko-ollama/<source-id>/`:
+The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama/<source-id>/`:
 
 - `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
 - `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
@@ -92,28 +93,28 @@ The rewrite stage reads each parsed source's `content.md`, sends its text and li
 For comparison, the whole-document rewrite workflow sends the full parsed `content.md` to Ollama in one interleaved text/image request per source, instead of one request per page:
 
 ```bash
-uv --no-cache run python -m wordbyword --rewrite-whole-source-materials class-source-materials/parsed --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-whole-source-material class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-whole-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-whole-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-Whole-document outputs mirror the same artifact bundle under `rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
+Whole-document outputs mirror the same artifact bundle under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
 
 The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 250 canonical keys and examples to Ollama, asks for 20 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
 
 ```bash
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials class-source-materials/parsed --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material class-source-materials/parsed/popular-physicsprize2025 --rewrite-dictionary build-dictionary/15_final_dictionary.jsonl --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --rewrite-dictionary build-dictionary/15_final_dictionary.jsonl --ollama-model gemma4:31b
 ```
 
-Vocabulary-guided outputs are written under `rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
+Vocabulary-guided outputs are written under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
 
 ## Printable Class Materials
 
-After a source has been rewritten, run the printable stage to create editable A4 classroom handouts as DOCX files for human revision. This is a separate downstream workflow: it reads rewritten bundles and writes outputs under `printable-for-class/grade1-ko-a4-ollama/`. A4 is the paper size, not a one-page length target; generated DOCX files may span multiple A4 pages.
+After a source has been rewritten, run the printable stage to create editable A4 classroom handouts as DOCX files for human revision. This is a separate downstream workflow: it reads rewritten bundles and writes outputs under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`. A4 is the paper size, not a one-page length target; generated DOCX files may span multiple A4 pages.
 
 ```bash
-uv --no-cache run python -m wordbyword --print-class-material rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --ollama-model gemma4:31b
 ```
 
 The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. When image assets are available, the prompt attaches resized visual previews for selectable candidates and requires a vision-capable Ollama model; the model may choose up to two visually inspected image assets from the rewritten bundle. It does not author DOCX directly and it cannot use external images.
@@ -132,9 +133,9 @@ Printable outputs are written per source:
 Useful printable options:
 
 ```bash
-uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-body-font-size 13
-uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
-uv --no-cache run python -m wordbyword --print-class-materials rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-output-root printable-for-class/grade1-ko-a4-ollama
+uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-body-font-size 13
+uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
+uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-output-root classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama
 ```
 
 ## Class Session Archive

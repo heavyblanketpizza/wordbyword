@@ -1,6 +1,6 @@
 """Class source-material parsing modules."""
 
-from wordbyword.source_parsing.materials import (
+from wordbyword.classroom_printout_studio.source_parsing.materials import (
     DEFAULT_PARSED_SOURCE_ROOT,
     DEFAULT_SOURCE_MATERIAL_ROOT,
     SourceMaterialBatchResult,

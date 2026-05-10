@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from wordbyword.cli import main
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMConfigurationError, LLMResponseError
-from wordbyword.class_rewriting.rewrite import (
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
@@ -27,14 +27,14 @@ from wordbyword.class_rewriting.rewrite import (
 
 class SourceRewriteContextTest(unittest.TestCase):
     def test_default_rewrite_outputs_use_rewritten_for_class_root(self) -> None:
-        self.assertEqual(DEFAULT_REWRITE_OUTPUT_ROOT, Path("rewritten-for-class") / "grade1-ko-ollama")
+        self.assertEqual(DEFAULT_REWRITE_OUTPUT_ROOT, Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama")
         self.assertEqual(
             DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
-            Path("rewritten-for-class") / "grade1-ko-ollama-whole-document",
+            Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-whole-document",
         )
         self.assertEqual(
             DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
-            Path("rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided",
+            Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided",
         )
 
     def test_context_packet_interleaves_asset_marker_before_image_block(self) -> None:
@@ -622,9 +622,9 @@ class SourceRewriteCliTest(unittest.TestCase):
                 main(
                     [
                         "--rewrite-source-materials",
-                        "class-source-materials/parsed",
+                        "classroom-printout-studio/class-source-materials/parsed",
                         "--rewrite-vocabulary-guided-source-materials",
-                        "class-source-materials/parsed",
+                        "classroom-printout-studio/class-source-materials/parsed",
                     ]
                 )
 

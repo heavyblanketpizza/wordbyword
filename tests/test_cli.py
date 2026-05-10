@@ -87,7 +87,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch("sys.stdout", io.StringIO()),
             patch("wordbyword.cli.app.parse_source_materials", side_effect=KeyboardInterrupt),
         ):
-            exit_code = main(["--parse-source-materials", "class-source-materials"])
+            exit_code = main(["--parse-source-materials", "classroom-printout-studio/class-source-materials"])
 
         self.assertEqual(exit_code, 130)
         self.assertIn("interrupted", stderr.getvalue())

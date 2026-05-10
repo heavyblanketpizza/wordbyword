@@ -17,7 +17,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from wordbyword._json_io import jsonable, write_json
-from wordbyword.source_parsing.paddleocr_vl import (
+from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLPageResult,
     PaddleOCRVLProgress,
@@ -31,7 +31,7 @@ PDF_PARSE_SCHEMA_VERSION = "wordbyword.heuristic_pdf_parse.v1"
 PADDLEOCR_VL_PARSE_SCHEMA_VERSION = "wordbyword.paddleocr_vl_pdf_parse.v1"
 PdfParserName = Literal["heuristic", "paddleocr-vl"]
 SourceMaterialProgressPhase = Literal["start", "render", "load", "ocr", "write", "complete"]
-DEFAULT_SOURCE_MATERIAL_ROOT = Path("class-source-materials")
+DEFAULT_SOURCE_MATERIAL_ROOT = Path("classroom-printout-studio/class-source-materials")
 DEFAULT_PARSED_SOURCE_ROOT = DEFAULT_SOURCE_MATERIAL_ROOT / "parsed"
 SUPPORTED_SOURCE_EXTENSIONS = {
     ".pdf",

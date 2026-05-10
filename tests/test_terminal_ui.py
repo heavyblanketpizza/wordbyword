@@ -5,7 +5,7 @@ from pathlib import Path
 
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.pipeline import PipelineResult
-from wordbyword.source_parsing.materials import SourceMaterialProgress
+from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 from wordbyword.cli.terminal_ui import (
     render_artifact_drop,
     render_boot_screen,

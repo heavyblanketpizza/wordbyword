@@ -18,15 +18,15 @@ from wordbyword.dictionary_build.llm import (
     ollama_client,
     unload_model_if_supported,
 )
-from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
+from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
-from wordbyword.source_parsing.materials import (
+from wordbyword.classroom_printout_studio.source_parsing.materials import (
     PdfParserName,
     SourceMaterialParseError,
     parse_source_material,
     parse_source_materials,
 )
-from wordbyword.class_rewriting.rewrite import (
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
@@ -38,7 +38,7 @@ from wordbyword.class_rewriting.rewrite import (
     rewrite_whole_source_material as rewrite_whole_parsed_source_material,
     rewrite_whole_source_materials as rewrite_whole_parsed_source_materials,
 )
-from wordbyword.class_printing.printable import (
+from wordbyword.classroom_printout_studio.class_printing.printable import (
     PrintableMaterialError,
     print_class_material,
     print_class_materials,

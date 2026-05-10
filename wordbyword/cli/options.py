@@ -4,8 +4,8 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-from wordbyword.class_printing.printable import DEFAULT_PRINT_OUTPUT_ROOT
-from wordbyword.class_rewriting.rewrite import (
+from wordbyword.classroom_printout_studio.class_printing.printable import DEFAULT_PRINT_OUTPUT_ROOT
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
@@ -19,8 +19,8 @@ from wordbyword.class_archive.live_lexicon import (
 )
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
-from wordbyword.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
-from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
+from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
+from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 DEFAULT_OUTPUT_DIR = Path("build-dictionary")
 DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_DIR / "original"
@@ -180,7 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Parse every supported file in a class source-material directory into separate "
-            "source-specific workspaces. Defaults to class-source-materials when no DIR is supplied."
+            "source-specific workspaces. Defaults to classroom-printout-studio/class-source-materials when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PARSED_SOURCE_ROOT,
         help=(
             "Root folder for source-material parse bundles. "
-            "Defaults to class-source-materials/parsed."
+            "Defaults to classroom-printout-studio/class-source-materials/parsed."
         ),
     )
     parser.add_argument(
@@ -323,7 +323,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_BUNDLE_DIR",
         help=(
             "Rewrite one parsed source-material bundle for Korean 1학년 readers. "
-            "The path should be a class-source-materials/parsed/<source-id> folder."
+            "The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
         ),
     )
     parser.add_argument(
@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_ROOT",
         help=(
             "Rewrite every parsed source-material bundle under a parsed root for Korean 1학년 readers. "
-            "Defaults to class-source-materials/parsed when no root is supplied."
+            "Defaults to classroom-printout-studio/class-source-materials/parsed when no root is supplied."
         ),
     )
     parser.add_argument(
@@ -345,7 +345,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_BUNDLE_DIR",
         help=(
             "Rewrite one parsed source-material bundle in one whole-document Ollama request. "
-            "The path should be a class-source-materials/parsed/<source-id> folder."
+            "The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
         ),
     )
     parser.add_argument(
@@ -357,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_ROOT",
         help=(
             "Rewrite every parsed source-material bundle under a parsed root in one "
-            "whole-document Ollama request per source. Defaults to class-source-materials/parsed "
+            "whole-document Ollama request per source. Defaults to classroom-printout-studio/class-source-materials/parsed "
             "when no root is supplied."
         ),
     )
@@ -368,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_BUNDLE_DIR",
         help=(
             "Rewrite one parsed source-material bundle in one vocabulary-guided whole-document "
-            "Ollama workflow. The path should be a class-source-materials/parsed/<source-id> folder."
+            "Ollama workflow. The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
         ),
     )
     parser.add_argument(
@@ -380,7 +380,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_ROOT",
         help=(
             "Rewrite every parsed source-material bundle under a parsed root with vocabulary guidance. "
-            "Defaults to class-source-materials/parsed when no root is supplied."
+            "Defaults to classroom-printout-studio/class-source-materials/parsed when no root is supplied."
         ),
     )
     parser.add_argument(

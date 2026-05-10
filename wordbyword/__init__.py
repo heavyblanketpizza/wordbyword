@@ -13,7 +13,7 @@ from wordbyword.dictionary_build.llm import (
     openai_client,
     rewrite_sentence,
 )
-from wordbyword.class_rewriting.rewrite import (
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     build_context_packet,
     rewrite_source_material,
     rewrite_source_materials,

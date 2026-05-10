@@ -28,7 +28,10 @@ build-dictionary/references/*
 /original/
 /references/
 
-# Local class materials and generated rewrites; keep all content local.
+# Local classroom printout studio materials and generated outputs; keep all content local.
+classroom-printout-studio/
+
+# Legacy local class-material folders; ignore them if recreated by older commands.
 class-source-materials/
 rewritten-for-class/
 printable-for-class/

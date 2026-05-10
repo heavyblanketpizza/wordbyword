@@ -33,7 +33,7 @@ from wordbyword.dictionary_build.llm import (
 from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, write_jsonl
 
 PRINTABLE_SCHEMA_VERSION = "wordbyword.printable_material.v1"
-DEFAULT_PRINT_OUTPUT_ROOT = Path("printable-for-class") / "grade1-ko-a4-ollama"
+DEFAULT_PRINT_OUTPUT_ROOT = Path("classroom-printout-studio/printable-for-class") / "grade1-ko-a4-ollama"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
 DEFAULT_BODY_FONT_SIZE_PT = 13
 MIN_BODY_FONT_SIZE_PT = 11

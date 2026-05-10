@@ -1,6 +1,6 @@
 """Printable class-material generation modules."""
 
-from wordbyword.class_printing.printable import (
+from wordbyword.classroom_printout_studio.class_printing.printable import (
     DEFAULT_PRINT_OUTPUT_ROOT,
     PRINTABLE_SCHEMA_VERSION,
     PrintableMaterialBatchOutputs,

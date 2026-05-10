@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from wordbyword.source_parsing.paddleocr_vl import (
+from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLSettings,
     run_paddleocr_vl,
@@ -15,7 +15,7 @@ class PaddleOCRVLWorkerSupervisionTest(unittest.TestCase):
     def test_keyboard_interrupt_terminates_worker_process(self) -> None:
         context = FakeMultiprocessingContext()
 
-        with patch("wordbyword.source_parsing.paddleocr_vl.multiprocessing.get_context", return_value=context):
+        with patch("wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl.multiprocessing.get_context", return_value=context):
             with self.assertRaises(PaddleOCRVLInterruptedError):
                 run_paddleocr_vl(
                     page_image_paths=[Path("page-0001.png")],

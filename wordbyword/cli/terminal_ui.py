@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, TextIO, cast
 if TYPE_CHECKING:
     from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
     from wordbyword.dictionary_build.pipeline import PipelineResult
-    from wordbyword.source_parsing.materials import SourceMaterialProgress
+    from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 
 TOKYO_NIGHT = {
     "bg": "1a1b26",
