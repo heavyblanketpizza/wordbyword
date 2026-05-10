@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import json
 import re
@@ -23,6 +24,11 @@ from wordbyword.class_archive.archive import (
     normalize_grade_level,
     rename_class_session_archive,
     safe_slug,
+)
+from wordbyword.class_archive.usage_signals import (
+    DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
+    build_usage_signals,
+    discover_usage_signal_documents,
 )
 from wordbyword.cli import build_parser, main
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
@@ -228,6 +234,61 @@ class ClassSessionArchiveHelpersTest(unittest.TestCase):
             self.assertTrue(re.search(r"_grade1-physics\.docx$", name))
 
 
+class ClassUsageSignalBuildTest(unittest.TestCase):
+    def test_usage_signal_build_reads_only_named_docx_and_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            output = root / "usage-signal-build"
+            archive.mkdir()
+            named_docx = archive / "2026-05-10_grade1-reading-apples.docx"
+            named_pdf = archive / "2026-05-11_grade1-science-light.pdf"
+            rough_docx = archive / "material.docx"
+            ignored_txt = archive / "2026-05-12_grade1-reading-notes.txt"
+            write_docx(named_docx, "사과를 먹고 학교에 갑니다. 친구와 책을 읽습니다.")
+            write_pdf(named_pdf, "Light helps us see classroom objects.")
+            write_docx(rough_docx, "이 자료는 이름이 아직 정리되지 않았습니다.")
+            ignored_txt.write_text("이 텍스트 파일은 사용하지 않습니다.", encoding="utf-8")
+
+            result = build_usage_signals(
+                archive_root=archive,
+                output_root=output,
+            )
+
+            self.assertEqual(result.documents, 2)
+            self.assertEqual(result.extracted_pages, 2)
+            for filename in (
+                "00_summary.json",
+                "01_extracted_pages.csv",
+                "02_sentences.csv",
+                "03_tokens.csv",
+                "04_surface_words.csv",
+                "05_vocabulary_raw.csv",
+                "06_candidate_terms.csv",
+                "07_rejected_terms.csv",
+                "08_dictionary_candidates.jsonl",
+                "09_example_sentences.csv",
+            ):
+                self.assertTrue((output / filename).is_file(), filename)
+
+            documents = discover_usage_signal_documents(archive)
+            self.assertEqual([path.name for path in documents], [named_docx.name, named_pdf.name])
+            summary = json.loads((output / "00_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["document_count"], 2)
+            self.assertEqual(summary["documents"], [named_docx.name, named_pdf.name])
+
+            with (output / "01_extracted_pages.csv").open(encoding="utf-8-sig") as handle:
+                extracted_pages = list(csv.DictReader(handle))
+            self.assertEqual([row["document"] for row in extracted_pages], [named_docx.name, named_pdf.name])
+            self.assertIn("사과를 먹고 학교에 갑니다", extracted_pages[0]["text"])
+            self.assertNotIn("아직 정리되지", json.dumps(extracted_pages, ensure_ascii=False))
+
+            with (output / "06_candidate_terms.csv").open(encoding="utf-8-sig") as handle:
+                candidate_terms = list(csv.DictReader(handle))
+            self.assertGreater(len(candidate_terms), 0)
+            self.assertIn("먹다", {row["canonical_key"] for row in candidate_terms})
+
+
 class ClassSessionArchiveCliTest(unittest.TestCase):
     def test_parser_has_archive_rename_command(self) -> None:
         args = build_parser().parse_args(["--rename-class-session-archive"])
@@ -255,6 +316,31 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
         self.assertIn("class-session archive rename complete", stdout.getvalue())
+
+    def test_parser_has_usage_signal_defaults(self) -> None:
+        args = build_parser().parse_args(["--build-usage-signals"])
+
+        self.assertTrue(args.build_usage_signals)
+        self.assertEqual(
+            args.usage_signal_input_root,
+            Path("wbw-vocabulary-intelligence") / "class-session-archive",
+        )
+        self.assertEqual(args.usage_signal_output_root, DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT)
+
+    def test_main_with_usage_signal_build_skips_pipeline(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            patch("wordbyword.cli.app.build_usage_signals") as mock_build,
+        ):
+            mock_build.return_value = FakeUsageSignalBuildResult()
+
+            exit_code = main(["--build-usage-signals"])
+
+        self.assertEqual(exit_code, 0)
+        mock_pipeline.assert_not_called()
+        self.assertIn("usage signals built", stdout.getvalue())
 
 
 class RecordingArchiveClient:
@@ -286,6 +372,17 @@ class FakeRenameResult:
     planned_count = 0
     renamed_count = 0
     skipped_count = 0
+
+
+class FakeUsageSignalBuildResult:
+    archive_root = Path("wbw-vocabulary-intelligence") / "class-session-archive"
+    output_root = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
+    documents = 2
+    extracted_pages = 2
+    sentences = 3
+    token_occurrences = 12
+    vocabulary_terms = 7
+    surface_words = 8
 
 
 def write_docx(path: Path, text: str) -> None:

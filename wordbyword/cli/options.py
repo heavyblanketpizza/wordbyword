@@ -11,6 +11,7 @@ from wordbyword.class_rewriting.rewrite import (
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
 from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
+from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
 from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
@@ -453,6 +454,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Apply --rename-class-session-archive rename plans. Without this flag, the command is a dry-run.",
     )
+    parser.add_argument(
+        "--build-usage-signals",
+        action="store_true",
+        help=(
+            "Build deterministic 00-09 vocabulary usage signal artifacts from named class printouts. "
+            "Reads wbw-vocabulary-intelligence/class-session-archive and writes "
+            "wbw-vocabulary-intelligence/usage-signal-build by default."
+        ),
+    )
+    parser.add_argument(
+        "--usage-signal-input-root",
+        type=Path,
+        default=DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
+        help=(
+            "Folder of named class printouts for --build-usage-signals. "
+            "Defaults to wbw-vocabulary-intelligence/class-session-archive."
+        ),
+    )
+    parser.add_argument(
+        "--usage-signal-output-root",
+        type=Path,
+        default=DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
+        help=(
+            "Output folder for --build-usage-signals artifacts. "
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build."
+        ),
+    )
     return parser
 
 
@@ -469,6 +497,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.print_class_material is not None,
         args.print_class_materials is not None,
         args.rename_class_session_archive is not None,
+        args.build_usage_signals,
     ]
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(

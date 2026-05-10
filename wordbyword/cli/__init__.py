@@ -2,6 +2,7 @@
 
 from wordbyword.cli.app import (
     add_reference_meanings,
+    build_usage_signals_cli,
     generate_missing_meanings,
     link_cleaned_examples,
     load_dictionary_candidates,
@@ -30,6 +31,7 @@ __all__ = [
     "DEFAULT_REFERENCE_DICTIONARY_PATH",
     "SourceParseOptions",
     "add_reference_meanings",
+    "build_usage_signals_cli",
     "build_parser",
     "generate_missing_meanings",
     "link_cleaned_examples",

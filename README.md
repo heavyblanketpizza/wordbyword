@@ -155,6 +155,16 @@ uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-ar
 
 The default archive folder is `wbw-vocabulary-intelligence/class-session-archive/`. The command only considers direct `.docx` and `.pdf` files inside the archive folder. It never edits document contents, never deletes files, never moves files outside the archive, and never overwrites an existing file. Applied runs write `.wordbyword-archive-ledger.json` so the original filename and first-seen timestamp are preserved after renames.
 
+## Class Usage Signals
+
+After class printouts are named in the archive format, build a deterministic usage-signal bundle from the used materials:
+
+```bash
+uv --no-cache run python -m wordbyword --build-usage-signals
+```
+
+The command reads direct `.docx` and `.pdf` files under `wbw-vocabulary-intelligence/class-session-archive/` whose filenames already match the archive convention, then writes the same heuristic `00` to `09` artifact set under `wbw-vocabulary-intelligence/usage-signal-build/`. Rough filenames are ignored so teachers can rename first and keep analytics tied to stable class-material ids. This step does not call Ollama, update the live grade lexicon, or calculate ROI.
+
 ## Outputs
 
 The pipeline writes these files:

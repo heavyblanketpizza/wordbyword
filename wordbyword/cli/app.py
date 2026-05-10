@@ -47,6 +47,10 @@ from wordbyword.class_archive.archive import (
     ClassSessionArchiveError,
     rename_class_session_archive,
 )
+from wordbyword.class_archive.usage_signals import (
+    UsageSignalBuildError,
+    build_usage_signals,
+)
 from wordbyword.cli.terminal_ui import (
     emit_artifact_drop,
     emit_boot_screen,
@@ -224,6 +228,13 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             apply=args.apply_archive_renames,
+        )
+    if args.build_usage_signals:
+        return build_usage_signals_cli(
+            archive_root=args.usage_signal_input_root,
+            output_root=args.usage_signal_output_root,
+            include_punctuation=args.include_punctuation,
+            include_numbers=args.include_numbers,
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -951,6 +962,45 @@ def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
 
 def emit_printable_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"print class [{source_id}] {detail}\n")
+    sys.stdout.flush()
+
+
+def build_usage_signals_cli(
+    *,
+    archive_root: Path,
+    output_root: Path,
+    include_punctuation: bool,
+    include_numbers: bool,
+) -> int:
+    try:
+        result = build_usage_signals(
+            archive_root=archive_root,
+            output_root=output_root,
+            include_punctuation=include_punctuation,
+            include_numbers=include_numbers,
+            progress=emit_usage_signal_progress,
+        )
+    except UsageSignalBuildError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "usage signals built\n"
+        f"  archive_root: {result.archive_root}\n"
+        f"  output_root: {result.output_root}\n"
+        f"  documents: {result.documents}\n"
+        f"  text_units: {result.extracted_pages}\n"
+        f"  sentences: {result.sentences}\n"
+        f"  token_occurrences: {result.token_occurrences}\n"
+        f"  vocabulary_terms: {result.vocabulary_terms}\n"
+        f"  surface_words: {result.surface_words}\n"
+    )
+    sys.stdout.flush()
+    return 0
+
+
+def emit_usage_signal_progress(phase: str, detail: str) -> None:
+    sys.stdout.write(f"usage signals [{phase}] {detail}\n")
     sys.stdout.flush()
 
 
