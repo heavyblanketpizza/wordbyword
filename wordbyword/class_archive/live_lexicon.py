@@ -175,6 +175,7 @@ def canonical_live_row(row: Mapping[str, Any]) -> dict[str, Any]:
         raise LiveLexiconUpdateError(f"count for {key} must be present in the canonical dictionary.")
     if "canonical_document_count" not in updated:
         raise LiveLexiconUpdateError(f"document_count for {key} must be present in the canonical dictionary.")
+    updated["curation_status"] = "canonical"
     updated["class_count"] = 0
     updated["class_printout_count"] = 0
     updated["roi_score"] = parse_score(updated.get("quality_score"), field="quality_score", canonical_key=key)

@@ -317,6 +317,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "document_count": 3,
                         "quality_score": 0.9,
                         "roi_score": 0.5,
+                        "curation_status": "confirmed",
                         "variants": ["먹다", "먹고"],
                         "example_replaced_with_cleaned_sentence": True,
                         "example_generated_with_ollama": False,
@@ -329,6 +330,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "document_count": 3,
                         "quality_score": 0.8,
                         "roi_score": 0.4,
+                        "curation_status": "candidate",
                         "variants": ["물"],
                         "meaning": "투명한 액체.",
                     },
@@ -378,12 +380,14 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertEqual(updated_rows[0]["canonical_count"], 48)
             self.assertEqual(updated_rows[0]["canonical_document_count"], 3)
             self.assertEqual(updated_rows[0]["quality_score"], 0.9)
+            self.assertEqual(updated_rows[0]["curation_status"], "canonical")
             self.assertEqual(updated_rows[0]["class_count"], 7)
             self.assertEqual(updated_rows[0]["class_printout_count"], 2)
             self.assertEqual(updated_rows[0]["variants"], ["먹다", "먹고", "먹어요"])
             self.assertEqual(updated_rows[0]["roi_score"], 0.8)
             self.assertEqual(updated_rows[1]["canonical_count"], 47)
             self.assertEqual(updated_rows[1]["canonical_document_count"], 3)
+            self.assertEqual(updated_rows[1]["curation_status"], "canonical")
             self.assertEqual(updated_rows[1]["class_count"], 0)
             self.assertEqual(updated_rows[1]["class_printout_count"], 0)
             self.assertEqual(updated_rows[1]["roi_score"], 0.8)
