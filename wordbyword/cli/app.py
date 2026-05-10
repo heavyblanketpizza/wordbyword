@@ -43,7 +43,7 @@ from wordbyword.class_printing.printable import (
     print_class_material,
     print_class_materials,
 )
-from wordbyword.class_sessions.archive import (
+from wordbyword.class_archive.archive import (
     ClassSessionArchiveError,
     rename_class_session_archive,
 )

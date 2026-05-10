@@ -11,7 +11,7 @@ from unittest.mock import patch
 import fitz
 from docx import Document
 
-from wordbyword.class_sessions.archive import (
+from wordbyword.class_archive.archive import (
     DEFAULT_ARCHIVE_LEDGER_FILENAME,
     DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     ArchiveRenameMetadata,

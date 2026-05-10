@@ -10,7 +10,7 @@ from wordbyword.class_rewriting.rewrite import (
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
-from wordbyword.class_sessions.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
+from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
 from wordbyword.source_parsing.paddleocr_vl import PaddleOCRVLSettings
