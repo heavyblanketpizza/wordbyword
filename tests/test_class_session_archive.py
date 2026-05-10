@@ -25,6 +25,13 @@ from wordbyword.class_archive.archive import (
     rename_class_session_archive,
     safe_slug,
 )
+from wordbyword.class_archive.live_lexicon import (
+    DEFAULT_CANONICAL_DICTIONARY_PATH,
+    DEFAULT_LIVE_LEXICON_PATH,
+    DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
+    DEFAULT_USAGE_CANDIDATES_PATH,
+    update_live_lexicon,
+)
 from wordbyword.class_archive.usage_signals import (
     DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
     build_usage_signals,
@@ -289,6 +296,154 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
             self.assertIn("먹다", {row["canonical_key"] for row in candidate_terms})
 
 
+class LiveLexiconUpdateTest(unittest.TestCase):
+    def test_update_live_lexicon_regenerates_canonical_output_and_overlays_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
+            old_live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
+            usage_summary_path = root / "usage-signal-build" / "00_summary.json"
+            unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
+            old_live_lexicon_path.parent.mkdir(parents=True)
+            old_live_lexicon_path.write_text("legacy live lexicon\n", encoding="utf-8")
+            write_jsonl(
+                canonical_dictionary_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 48,
+                        "document_count": 3,
+                        "quality_score": 0.9,
+                        "roi_score": 0.5,
+                        "variants": ["먹다", "먹고"],
+                        "example_replaced_with_cleaned_sentence": True,
+                        "example_generated_with_ollama": False,
+                        "meaning": "음식을 입을 통하여 배 속에 들여보내다.",
+                        "meaning_generated_with_ollama": False,
+                    },
+                    {
+                        "canonical_key": "물",
+                        "count": 47,
+                        "document_count": 3,
+                        "quality_score": 0.8,
+                        "roi_score": 0.4,
+                        "variants": ["물"],
+                        "meaning": "투명한 액체.",
+                    },
+                ],
+            )
+            write_jsonl(
+                usage_candidates_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 7,
+                        "document_count": 2,
+                        "quality_score": 0.6,
+                        "variants": ["먹고", "먹어요", "먹다"],
+                        "example": "사과를 먹고 학교에 갑니다.",
+                    },
+                    {
+                        "canonical_key": "새단어",
+                        "count": 3,
+                        "document_count": 1,
+                        "quality_score": 0.612,
+                        "example": "새단어를 배웠어요.",
+                    },
+                ],
+            )
+            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+
+            result = update_live_lexicon(
+                canonical_dictionary_path=canonical_dictionary_path,
+                usage_candidates_path=usage_candidates_path,
+                usage_summary_path=usage_summary_path,
+                live_lexicon_path=live_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+
+            self.assertEqual(result.canonical_rows, 2)
+            self.assertEqual(result.total_class_printouts, 4)
+            self.assertEqual(result.matched_count, 1)
+            self.assertEqual(result.unmatched_count, 1)
+            updated_rows = read_jsonl(live_lexicon_path)
+            self.assertEqual([row["canonical_key"] for row in updated_rows], ["먹다", "물"])
+            self.assertNotIn("count", updated_rows[0])
+            self.assertNotIn("document_count", updated_rows[0])
+            self.assertNotIn("example_replaced_with_cleaned_sentence", updated_rows[0])
+            self.assertNotIn("example_generated_with_ollama", updated_rows[0])
+            self.assertNotIn("meaning_generated_with_ollama", updated_rows[0])
+            self.assertEqual(updated_rows[0]["canonical_count"], 48)
+            self.assertEqual(updated_rows[0]["canonical_document_count"], 3)
+            self.assertEqual(updated_rows[0]["quality_score"], 0.9)
+            self.assertEqual(updated_rows[0]["class_count"], 7)
+            self.assertEqual(updated_rows[0]["class_printout_count"], 2)
+            self.assertEqual(updated_rows[0]["variants"], ["먹다", "먹고", "먹어요"])
+            self.assertEqual(updated_rows[0]["roi_score"], 0.8)
+            self.assertEqual(updated_rows[1]["canonical_count"], 47)
+            self.assertEqual(updated_rows[1]["canonical_document_count"], 3)
+            self.assertEqual(updated_rows[1]["class_count"], 0)
+            self.assertEqual(updated_rows[1]["class_printout_count"], 0)
+            self.assertEqual(updated_rows[1]["roi_score"], 0.8)
+            self.assertEqual(old_live_lexicon_path.read_text(encoding="utf-8"), "legacy live lexicon\n")
+            unmatched_rows = read_jsonl(unmatched_output_path)
+            self.assertEqual([row["canonical_key"] for row in unmatched_rows], ["새단어"])
+
+    def test_update_live_lexicon_regeneration_is_idempotent_for_same_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
+            usage_summary_path = root / "usage-signal-build" / "00_summary.json"
+            unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
+            write_jsonl(
+                canonical_dictionary_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 48,
+                        "document_count": 3,
+                        "quality_score": 0.927,
+                        "roi_score": 0.5,
+                    },
+                ],
+            )
+            usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            usage_summary_path.write_text(json.dumps({"document_count": 2}), encoding="utf-8")
+            write_jsonl(
+                usage_candidates_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 7,
+                        "document_count": 2,
+                        "quality_score": 0.876,
+                    },
+                ],
+            )
+
+            update_live_lexicon(
+                canonical_dictionary_path=canonical_dictionary_path,
+                usage_candidates_path=usage_candidates_path,
+                live_lexicon_path=live_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+            first_live = live_lexicon_path.read_text(encoding="utf-8")
+            first_unmatched = unmatched_output_path.read_text(encoding="utf-8")
+            update_live_lexicon(
+                canonical_dictionary_path=canonical_dictionary_path,
+                usage_candidates_path=usage_candidates_path,
+                live_lexicon_path=live_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+
+            self.assertEqual(live_lexicon_path.read_text(encoding="utf-8"), first_live)
+            self.assertEqual(unmatched_output_path.read_text(encoding="utf-8"), first_unmatched)
+
+
 class ClassSessionArchiveCliTest(unittest.TestCase):
     def test_parser_has_archive_rename_command(self) -> None:
         args = build_parser().parse_args(["--rename-class-session-archive"])
@@ -327,6 +482,36 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         )
         self.assertEqual(args.usage_signal_output_root, DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT)
 
+    def test_parser_has_live_lexicon_update_defaults(self) -> None:
+        args = build_parser().parse_args(["--update-live-lexicon"])
+
+        self.assertTrue(args.update_live_lexicon)
+        self.assertEqual(args.canonical_dictionary, DEFAULT_CANONICAL_DICTIONARY_PATH)
+        self.assertEqual(args.usage_candidates, DEFAULT_USAGE_CANDIDATES_PATH)
+        self.assertIsNone(args.usage_summary)
+        self.assertEqual(args.live_lexicon, DEFAULT_LIVE_LEXICON_PATH)
+        self.assertEqual(args.unmatched_usage_output, DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH)
+
+    def test_parser_has_live_lexicon_update_overrides(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--update-live-lexicon",
+                "--canonical-dictionary",
+                "custom/15.jsonl",
+                "--usage-candidates",
+                "custom/08.jsonl",
+                "--usage-summary",
+                "custom/00.json",
+                "--live-lexicon",
+                "custom/live.jsonl",
+            ]
+        )
+
+        self.assertEqual(args.canonical_dictionary, Path("custom/15.jsonl"))
+        self.assertEqual(args.usage_candidates, Path("custom/08.jsonl"))
+        self.assertEqual(args.usage_summary, Path("custom/00.json"))
+        self.assertEqual(args.live_lexicon, Path("custom/live.jsonl"))
+
     def test_main_with_usage_signal_build_skips_pipeline(self) -> None:
         stdout = io.StringIO()
         with (
@@ -341,6 +526,21 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
         self.assertIn("usage signals built", stdout.getvalue())
+
+    def test_main_with_live_lexicon_update_skips_pipeline(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            patch("wordbyword.cli.app.update_live_lexicon") as mock_update,
+        ):
+            mock_update.return_value = FakeLiveLexiconUpdateResult()
+
+            exit_code = main(["--update-live-lexicon"])
+
+        self.assertEqual(exit_code, 0)
+        mock_pipeline.assert_not_called()
+        self.assertIn("live lexicon updated", stdout.getvalue())
 
 
 class RecordingArchiveClient:
@@ -385,6 +585,20 @@ class FakeUsageSignalBuildResult:
     surface_words = 8
 
 
+class FakeLiveLexiconUpdateResult:
+    canonical_dictionary_path = DEFAULT_CANONICAL_DICTIONARY_PATH
+    usage_candidates_path = DEFAULT_USAGE_CANDIDATES_PATH
+    usage_summary_path = DEFAULT_USAGE_CANDIDATES_PATH.parent / "00_summary.json"
+    live_lexicon_path = DEFAULT_LIVE_LEXICON_PATH
+    unmatched_usage_output_path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH
+    canonical_rows = 2
+    live_lexicon_rows = 2
+    usage_candidate_rows = 3
+    total_class_printouts = 2
+    matched_count = 1
+    unmatched_count = 2
+
+
 def write_docx(path: Path, text: str) -> None:
     document = Document()
     document.add_paragraph(text)
@@ -405,3 +619,15 @@ def archive_call_filenames(client: RecordingArchiveClient) -> list[str]:
         payload = json.loads(messages[1].content)
         filenames.append(str(payload["original_filename"]))
     return filenames
+
+
+def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+def read_jsonl(path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]

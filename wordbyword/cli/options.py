@@ -11,6 +11,12 @@ from wordbyword.class_rewriting.rewrite import (
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
 from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
+from wordbyword.class_archive.live_lexicon import (
+    DEFAULT_CANONICAL_DICTIONARY_PATH,
+    DEFAULT_LIVE_LEXICON_PATH,
+    DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
+    DEFAULT_USAGE_CANDIDATES_PATH,
+)
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
@@ -481,6 +487,60 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to wbw-vocabulary-intelligence/usage-signal-build."
         ),
     )
+    parser.add_argument(
+        "--update-live-lexicon",
+        action="store_true",
+        help=(
+            "Regenerate the canonical live grade lexicon from build-dictionary/15_final_dictionary.jsonl "
+            "and overlay class usage counts and ROI from "
+            "wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--canonical-dictionary",
+        type=Path,
+        default=DEFAULT_CANONICAL_DICTIONARY_PATH,
+        help=(
+            "Canonical stage-15 dictionary JSONL for --update-live-lexicon. "
+            "Defaults to build-dictionary/15_final_dictionary.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--usage-candidates",
+        type=Path,
+        default=DEFAULT_USAGE_CANDIDATES_PATH,
+        help=(
+            "Usage candidate JSONL for --update-live-lexicon. "
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--usage-summary",
+        type=Path,
+        default=None,
+        help=(
+            "Usage signal 00_summary.json for --update-live-lexicon. "
+            "Defaults to 00_summary.json next to --usage-candidates."
+        ),
+    )
+    parser.add_argument(
+        "--live-lexicon",
+        type=Path,
+        default=DEFAULT_LIVE_LEXICON_PATH,
+        help=(
+            "Canonical live lexicon JSONL to regenerate with class usage signals. "
+            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--unmatched-usage-output",
+        type=Path,
+        default=DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
+        help=(
+            "Output JSONL for usage candidates not found in the live lexicon. "
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl."
+        ),
+    )
     return parser
 
 
@@ -498,6 +558,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.print_class_materials is not None,
         args.rename_class_session_archive is not None,
         args.build_usage_signals,
+        args.update_live_lexicon,
     ]
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(

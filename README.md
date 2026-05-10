@@ -165,6 +165,14 @@ uv --no-cache run python -m wordbyword --build-usage-signals
 
 The command reads direct `.docx` and `.pdf` files under `wbw-vocabulary-intelligence/class-session-archive/` whose filenames already match the archive convention, then writes the same heuristic `00` to `09` artifact set under `wbw-vocabulary-intelligence/usage-signal-build/`. Rough filenames are ignored so teachers can rename first and keep analytics tied to stable class-material ids. This step does not call Ollama, update the live grade lexicon, or calculate ROI.
 
+Update the live grade lexicon from the usage signal candidates:
+
+```bash
+uv --no-cache run python -m wordbyword --update-live-lexicon
+```
+
+This stage regenerates `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` from `build-dictionary/15_final_dictionary.jsonl`, renaming textbook signals to `canonical_count` and `canonical_document_count`, removing Ollama provenance flags, then overlaying class usage from `wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl`. Matching rows receive `class_count`, `class_printout_count`, merged usage variants, and a blended `roi_score`; unmatched usage candidates are written to `wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl` for later review. The update is idempotent and does not touch the legacy `grade1-live-lexicon.jsonl` by default.
+
 ## Outputs
 
 The pipeline writes these files:

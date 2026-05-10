@@ -15,6 +15,7 @@ from wordbyword.cli.app import (
     resolve_distribution_path,
     show_distribution,
     source_parse_options_from_args,
+    update_live_lexicon_cli,
 )
 from wordbyword.cli.options import (
     DEFAULT_INPUT_DIR,
@@ -45,5 +46,6 @@ __all__ = [
     "resolve_distribution_path",
     "show_distribution",
     "source_parse_options_from_args",
+    "update_live_lexicon_cli",
     "validate_args",
 ]
