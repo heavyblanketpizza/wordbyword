@@ -2,15 +2,15 @@
 
 Internal progress note for building a 학년별 dynamic Korean vocabulary dictionary that can guide LLM rewrites of mature reading materials, especially newspapers and scientific or research articles, into grade-appropriate Korean reading.
 
-The project is currently a vocabulary-and-example preparation pipeline. It does not yet perform the final grade-aware rewrite of source articles. The useful work so far is the upstream dictionary substrate: source text extraction, Korean morphology, canonical vocabulary grouping, candidate scoring, learner-dictionary cleanup, cleaned example selection, and missing example generation.
+The project is currently a vocabulary-and-example preparation pipeline plus a class-material workflow. The upstream dictionary substrate covers source text extraction, Korean morphology, canonical vocabulary grouping, candidate scoring, learner-dictionary cleanup, cleaned example selection, missing example generation, and meaning completion. Downstream class tools parse source materials, rewrite them for grade-friendly Korean reading, render editable DOCX handouts, and archive used class printouts for later analytics.
 
 ## Current Shape
 
 - Input: Korean PDFs, `.txt`, and `.md` files under `build-dictionary/original/`.
 - Base run: deterministic extraction and scoring from source documents into numbered CSV/JSONL artifacts.
 - Optional LLM runs: saved-output cleanup stages that use Ollama to curate example sentences, filter dictionary candidates, link cleaned examples, generate missing examples, and retry failed generated examples.
-- Near-term product objective: turn the cleaned dictionary candidates into a 학년별 vocabulary profile that an LLM can use while rewriting mature source material for younger readers.
-- Not implemented yet: grade-level bands, learner difficulty calibration, rewrite orchestration for full articles, and evaluation of whether rewritten text stays faithful to the original.
+- Near-term product objective: turn used class-session printouts into analytics that update a separate, live classroom copy of the vocabulary dictionary.
+- Not implemented yet: grade-level bands, learner difficulty calibration, class-session analytics, and evaluation of whether rewritten text stays faithful to the original.
 
 ## Folder Layout
 
