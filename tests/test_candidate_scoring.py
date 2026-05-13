@@ -7,11 +7,14 @@ from wordbyword.dictionary_build.candidates import (
     POS_WEIGHTS,
     CandidateAggregate,
     dispersion_score,
+    frequency_rate_per_10k,
+    frequency_score_v2,
     frequency_usefulness_score,
     parse_roi_score,
     roi_score,
     roi_score_sort_key,
     term_quality_score,
+    term_quality_score_v2,
 )
 
 
@@ -22,6 +25,14 @@ class CandidateScoringTest(unittest.TestCase):
         self.assertEqual(frequency_usefulness_score(40, 10_000), 0.0)
         self.assertEqual(frequency_usefulness_score(100, 10_000), -0.5)
         self.assertEqual(frequency_usefulness_score(200, 10_000), -0.5)
+
+    def test_frequency_score_v2_is_symmetric_log_gaussian_hill(self) -> None:
+        self.assertEqual(frequency_rate_per_10k(10, 10_000), 10.0)
+        self.assertEqual(round(frequency_score_v2(10.0), 3), 0.5)
+        self.assertEqual(round(frequency_score_v2(5.6718372568), 3), 0.382)
+        self.assertEqual(round(frequency_score_v2(17.1359339777), 3), 0.382)
+        self.assertLess(frequency_score_v2(0.0), 0.0)
+        self.assertLess(frequency_score_v2(1000.0), 0.0)
 
     def test_quality_uses_surface_frequency_for_overuse_penalty(self) -> None:
         normal = CandidateAggregate(
@@ -49,6 +60,28 @@ class CandidateScoringTest(unittest.TestCase):
             term_quality_score(normal, total_document_count=3, total_token_occurrences=10_000),
             term_quality_score(overused_surface, total_document_count=3, total_token_occurrences=10_000),
         )
+
+    def test_quality_score_v2_is_added_without_changing_legacy_quality_score(self) -> None:
+        aggregate = CandidateAggregate(
+            canonical_key="보다",
+            display="보다",
+            kind="term",
+            count=10,
+            documents={"book-a", "book-b", "book-c"},
+            variants=Counter({"보다": 10, "봅니다": 2}),
+            pos_groups=Counter({"verb": 10}),
+        )
+
+        self.assertEqual(
+            term_quality_score(aggregate, total_document_count=3, total_token_occurrences=10_000),
+            0.849,
+        )
+        quality_v2 = term_quality_score_v2(aggregate, total_document_count=3, total_token_occurrences=10_000)
+        self.assertEqual(quality_v2["frequency_rate_per_10k"], 10.0)
+        self.assertEqual(quality_v2["frequency_score_v2"], 0.5)
+        self.assertEqual(quality_v2["dispersion_score_v2"], 0.5)
+        self.assertEqual(quality_v2["pos_score_v2"], 0.22)
+        self.assertEqual(quality_v2["quality_score_v2"], 0.349)
 
     def test_dispersion_uses_all_parsed_documents(self) -> None:
         self.assertAlmostEqual(dispersion_score(1, 3), 1 / 3)

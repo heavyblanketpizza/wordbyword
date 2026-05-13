@@ -603,16 +603,22 @@ def render_dictionary_distribution(
     bins: int = 24,
     height: int = 10,
 ) -> str:
-    """Render two cyberpunk Tokyo Night histograms for the dictionary candidates.
+    """Render cyberpunk Tokyo Night histograms for dictionary candidates.
 
     First chart: x-axis quality_score (0.000 .. 1.000), y-axis count of vocab in each bin.
-    Second chart: x-axis occurrence count (log-spaced), y-axis count of vocab in each bin.
+    Optional second chart: x-axis quality_score_v2 (-0.500 .. 0.500), y-axis count of vocab in each bin.
+    Final chart: x-axis occurrence count (log-spaced), y-axis count of vocab in each bin.
     """
 
     safe_bins = max(8, min(bins, max(8, width - 12)))
     safe_height = max(4, height)
 
     quality_scores = [_safe_float(entry.get("quality_score")) for entry in entries]
+    quality_scores_v2 = [
+        _safe_float(entry.get("quality_score_v2"))
+        for entry in entries
+        if "quality_score_v2" in entry
+    ]
     counts = [_safe_int(entry.get("count")) for entry in entries]
 
     header = _paint(
@@ -638,6 +644,19 @@ def render_dictionary_distribution(
         bar_color=TOKYO_NIGHT["cyan"],
         accent_color=TOKYO_NIGHT["pink"],
     )
+    panels = [header, rule, quality_panel]
+    if quality_scores_v2:
+        quality_v2_panel = _render_histogram_panel(
+            title="quality_score_v2 distribution",
+            subtitle=_quality_v2_subtitle(quality_scores_v2, bins=safe_bins),
+            bin_counts=_centered_quality_score_bin_counts(quality_scores_v2, bins=safe_bins),
+            x_axis_labels=("-0.50", "0.00", "0.50"),
+            height=safe_height,
+            color=color,
+            bar_color=TOKYO_NIGHT["blue"],
+            accent_color=TOKYO_NIGHT["purple"],
+        )
+        panels.extend(["", quality_v2_panel])
     count_panel = _render_histogram_panel(
         title="occurrence count distribution",
         subtitle=_count_subtitle(counts, bins=safe_bins),
@@ -648,8 +667,9 @@ def render_dictionary_distribution(
         bar_color=TOKYO_NIGHT["green"],
         accent_color=TOKYO_NIGHT["purple"],
     )
+    panels.extend(["", count_panel, rule])
 
-    return "\n".join([header, rule, quality_panel, "", count_panel, rule])
+    return "\n".join(panels)
 
 
 def _render_histogram_panel(
@@ -724,6 +744,16 @@ def _quality_score_bin_counts(scores: Sequence[float], *, bins: int) -> list[int
     return bin_counts
 
 
+def _centered_quality_score_bin_counts(scores: Sequence[float], *, bins: int) -> list[int]:
+    bin_counts = [0] * bins
+    for score in scores:
+        clamped = min(max(score, -0.5), 0.5)
+        ratio = clamped + 0.5
+        index = min(int(ratio * bins), bins - 1)
+        bin_counts[index] += 1
+    return bin_counts
+
+
 def _log_count_bin_counts(counts: Sequence[int], *, bins: int) -> list[int]:
     bin_counts = [0] * bins
     if not counts:
@@ -749,6 +779,15 @@ def _quality_subtitle(scores: Sequence[float], *, bins: int) -> str:
         return f"0 relics // bins={bins} // span 0.000 → 1.000"
     return (
         f"{len(scores):,} relics // bins={bins} // "
+        f"min {min(scores):.3f}  median {_median(scores):.3f}  max {max(scores):.3f}"
+    )
+
+
+def _quality_v2_subtitle(scores: Sequence[float], *, bins: int) -> str:
+    if not scores:
+        return f"0 relics // bins={bins} // span -0.500 → 0.500"
+    return (
+        f"{len(scores):,} relics // bins={bins} // centered "
         f"min {min(scores):.3f}  median {_median(scores):.3f}  max {max(scores):.3f}"
     )
 

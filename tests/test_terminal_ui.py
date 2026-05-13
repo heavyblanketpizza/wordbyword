@@ -217,6 +217,22 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("0 relics", rendered)
         self.assertIn("no signal // empty cache", rendered)
 
+    def test_render_dictionary_distribution_includes_v2_histogram_when_present(self) -> None:
+        entries = [
+            {"quality_score": 0.2, "quality_score_v2": -0.4, "count": 2},
+            {"quality_score": 0.6, "quality_score_v2": 0.0, "count": 20},
+            {"quality_score": 0.9, "quality_score_v2": 0.45, "count": 200},
+        ]
+
+        rendered = render_dictionary_distribution(entries, color=False, width=80, bins=12, height=6)
+
+        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("quality_score_v2 distribution", rendered)
+        self.assertIn("centered", rendered)
+        self.assertIn("-0.50", rendered)
+        self.assertIn("0.50", rendered)
+        self.assertIn("occurrence count distribution", rendered)
+
     def test_render_dictionary_distribution_color_mode_emits_ansi(self) -> None:
         entries = [{"quality_score": 0.5, "count": 10}]
 

@@ -15,6 +15,7 @@ LOW_VALUE_BOUND_NOUNS = {"것", "거", "수", "등", "데", "바", "뿐", "채",
 PARTICLE_OR_ENDING_PREFIXES = ("J", "E")
 FREQUENCY_RATE_SCALE = 10_000
 IDEAL_FREQUENCY_RATE = 10.0
+QUALITY_SCORE_V2_FREQUENCY_SIGMA = 1.0
 OVERUSED_FREQUENCY_RATE = 40.0
 EXTREME_FREQUENCY_RATE = 100.0
 EXTREME_FREQUENCY_PENALTY = -0.5
@@ -300,6 +301,11 @@ def term_row(
         total_document_count=total_document_count,
         total_token_occurrences=total_token_occurrences,
     )
+    quality_v2 = term_quality_score_v2(
+        aggregate,
+        total_document_count=total_document_count,
+        total_token_occurrences=total_token_occurrences,
+    )
     roi = roi_score()
     return {
         "canonical_key": aggregate.canonical_key,
@@ -312,6 +318,7 @@ def term_row(
         "variant_count": len(aggregate.variants),
         "variants": join_counter_keys(aggregate.variants),
         "quality_score": quality,
+        **quality_v2,
         "roi_score": roi,
         "example": clean_example_text(aggregate.example),
     }
@@ -326,6 +333,12 @@ def dictionary_entry(row: dict[str, object]) -> dict[str, object]:
         "count": row["count"],
         "document_count": row["document_count"],
         "quality_score": row["quality_score"],
+        "quality_score_v2": row["quality_score_v2"],
+        "frequency_score_v2": row["frequency_score_v2"],
+        "dispersion_score_v2": row["dispersion_score_v2"],
+        "pos_score_v2": row["pos_score_v2"],
+        "variant_score_v2": row["variant_score_v2"],
+        "frequency_rate_per_10k": row["frequency_rate_per_10k"],
         "roi_score": row["roi_score"],
         "example": row["example"],
         "curation_status": "candidate",
@@ -347,6 +360,56 @@ def term_quality_score(
     pos_weight = POS_WEIGHTS.get(pos, DEFAULT_POS_WEIGHT)
     score = (0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos_weight) + (0.14 * variant_signal)
     return round(clamp(score, 0.0, 1.0), 3)
+
+
+def term_quality_score_v2(
+    aggregate: CandidateAggregate,
+    *,
+    total_document_count: int = 0,
+    total_token_occurrences: int = 0,
+) -> dict[str, float]:
+    count = aggregate.count or aggregate.surface_count
+    frequency_count = max(count, aggregate.surface_count)
+    frequency_rate = frequency_rate_per_10k(frequency_count, total_token_occurrences)
+    frequency = frequency_score_v2(frequency_rate)
+    dispersion = dispersion_score_v2(aggregate.document_count, total_document_count)
+    variant = variant_score_v2(len(aggregate.variants))
+    pos_group_name = aggregate.pos_groups.most_common(1)[0][0] if aggregate.pos_groups else "unknown"
+    pos = pos_score_v2(POS_WEIGHTS.get(pos_group_name, DEFAULT_POS_WEIGHT))
+    score = (0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos) + (0.14 * variant)
+    return {
+        "quality_score_v2": round(clamp(score, -0.5, 0.5), 3),
+        "frequency_score_v2": round(frequency, 3),
+        "dispersion_score_v2": round(dispersion, 3),
+        "pos_score_v2": round(pos, 3),
+        "variant_score_v2": round(variant, 3),
+        "frequency_rate_per_10k": round(frequency_rate, 3),
+    }
+
+
+def frequency_rate_per_10k(count: int, total_token_occurrences: int) -> float:
+    if count <= 0 or total_token_occurrences <= 0:
+        return 0.0
+    return count / total_token_occurrences * FREQUENCY_RATE_SCALE
+
+
+def frequency_score_v2(rate_per_10k: float) -> float:
+    x = math.log1p(max(rate_per_10k, 0.0))
+    mu = math.log1p(IDEAL_FREQUENCY_RATE)
+    gaussian = math.exp(-((x - mu) ** 2) / (2 * QUALITY_SCORE_V2_FREQUENCY_SIGMA**2))
+    return gaussian - 0.5
+
+
+def dispersion_score_v2(document_count: int, total_document_count: int) -> float:
+    return dispersion_score(document_count, total_document_count) - 0.5
+
+
+def pos_score_v2(pos_weight: float) -> float:
+    return pos_weight - 0.5
+
+
+def variant_score_v2(variant_count: int) -> float:
+    return bounded_log_score(variant_count, 20) - 0.5
 
 
 def frequency_usefulness_score(count: int, total_token_occurrences: int) -> float:

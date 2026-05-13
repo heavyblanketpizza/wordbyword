@@ -204,6 +204,12 @@ def candidate_term_fields() -> list[str]:
         "variant_count",
         "variants",
         "quality_score",
+        "quality_score_v2",
+        "frequency_score_v2",
+        "dispersion_score_v2",
+        "pos_score_v2",
+        "variant_score_v2",
+        "frequency_rate_per_10k",
         "roi_score",
         "example",
     ]

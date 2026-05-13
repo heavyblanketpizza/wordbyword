@@ -184,7 +184,7 @@ The pipeline writes these files:
 - `03_tokens.csv`: every tokenizer occurrence with document, page, sentence, form, POS tag, and offsets.
 - `04_surface_words.csv`: surface-level words as they appear in the source text.
 - `05_vocabulary_raw.csv`: raw unique vocabulary terms from Korean-aware morphology.
-- `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, quality scores, and ROI scores. ROI is blank until calculated.
+- `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, legacy `quality_score`, experimental centered `quality_score_v2`, component v2 scores, and ROI scores. ROI is blank until calculated.
 - `07_rejected_terms.csv`: vocabulary terms removed by deterministic cleanup, with rejection reasons.
 - `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for learner-dictionary curation.
 - `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.

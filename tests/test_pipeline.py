@@ -144,6 +144,9 @@ class PipelineTest(unittest.TestCase):
             self.assertIn("공부하고", term_by_key["공부하다"]["variants"])
             self.assertIn("귤", term_by_key)
             self.assertTrue(all(row["roi_score"] == "" for row in candidate_terms))
+            self.assertTrue(all("quality_score_v2" in row for row in candidate_terms))
+            self.assertTrue(all(-0.5 <= float(row["quality_score_v2"]) <= 0.5 for row in candidate_terms))
+            self.assertTrue(all("frequency_rate_per_10k" in row for row in candidate_terms))
 
             with (output_dir / "07_rejected_terms.csv").open(encoding="utf-8-sig") as handle:
                 rejected = list(csv.DictReader(handle))
@@ -161,6 +164,8 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(all("first_source" not in row for row in dictionary_rows))
             self.assertTrue(all("first_page" not in row for row in dictionary_rows))
             self.assertTrue(all(row["roi_score"] is None for row in dictionary_rows))
+            self.assertTrue(all("quality_score_v2" in row for row in dictionary_rows))
+            self.assertTrue(all("frequency_score_v2" in row for row in dictionary_rows))
 
             with (output_dir / "09_example_sentences.csv").open(encoding="utf-8-sig") as handle:
                 example_sentences = list(csv.DictReader(handle))
@@ -396,6 +401,8 @@ class PipelineTest(unittest.TestCase):
                 [row["canonical_key"] for row in dictionary_rows],
             )
             self.assertTrue(all(row["roi_score"] is None for row in cleaned_dictionary_rows))
+            self.assertTrue(all("quality_score_v2" in row for row in cleaned_dictionary_rows))
+            self.assertTrue(all("frequency_rate_per_10k" in row for row in cleaned_dictionary_rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
             self.assertIn("11_cleaned_dictionary_candidates.jsonl", summary["outputs"])
@@ -450,6 +457,8 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue(any(bool(row["example_replaced_with_cleaned_sentence"]) for row in linked_rows))
             self.assertTrue(all(row.get("curation_status") == "rewrite_ready" for row in linked_rows))
             self.assertTrue(all(row["roi_score"] is None for row in linked_rows))
+            self.assertTrue(all("quality_score_v2" in row for row in linked_rows))
+            self.assertTrue(all("frequency_score_v2" in row for row in linked_rows))
             self.assertTrue(
                 all(
                     bool(str(row["example"]).strip())
@@ -537,6 +546,12 @@ class PipelineTest(unittest.TestCase):
                                 "count": 10,
                                 "document_count": 1,
                                 "quality_score": 0.9,
+                                "quality_score_v2": 0.35,
+                                "frequency_score_v2": 0.5,
+                                "dispersion_score_v2": 0.5,
+                                "pos_score_v2": 0.4,
+                                "variant_score_v2": -0.273,
+                                "frequency_rate_per_10k": 10.0,
                                 "roi_score": None,
                                 "example": "원래 학교 예문이다.",
                                 "curation_status": "rewrite_ready",
@@ -593,6 +608,8 @@ class PipelineTest(unittest.TestCase):
             self.assertEqual(len(generated_rows), 2)
             self.assertEqual(len(generated_attempt_rows), 1)
             self.assertTrue(all(row["roi_score"] is None for row in generated_rows))
+            self.assertEqual(generated_rows[0]["quality_score_v2"], 0.35)
+            self.assertEqual(generated_rows[0]["frequency_rate_per_10k"], 10.0)
             self.assertEqual(generated_rows[0]["example"], "학생들이 학교 운동장에서 축구를 한다.")
             self.assertTrue(generated_rows[0]["example_generated_with_ollama"])
             self.assertFalse(generated_rows[0]["example_replaced_with_cleaned_sentence"])
