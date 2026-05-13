@@ -8,6 +8,7 @@ from pathlib import Path
 
 from kiwipiepy import Kiwi
 
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_event_name, artifact_path
 from wordbyword.dictionary_build.candidates import build_candidate_outputs
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_cleanup import (
@@ -159,26 +160,38 @@ def write_outputs(
         kiwi=kiwi,
     )
 
-    write_rows(output_dir / "01_extracted_pages.csv", page_rows(pages), fieldnames=page_fields())
-    write_rows(output_dir / "02_sentences.csv", sentences, fieldnames=sentence_fields())
-    write_rows(output_dir / "03_tokens.csv", tokens, fieldnames=list(tokens[0].keys()) if tokens else token_fields())
-    write_surface_words(output_dir / "04_surface_words.csv", surface_words)
-    write_vocabulary(output_dir / "05_vocabulary_raw.csv", vocabulary)
-    write_rows(output_dir / "06_candidate_terms.csv", candidate_outputs.terms, fieldnames=candidate_term_fields())
+    write_rows(artifact_path(output_dir, ArtifactId.EXTRACTED_PAGES), page_rows(pages), fieldnames=page_fields())
+    write_rows(artifact_path(output_dir, ArtifactId.SENTENCES), sentences, fieldnames=sentence_fields())
     write_rows(
-        output_dir / "07_rejected_terms.csv",
+        artifact_path(output_dir, ArtifactId.TOKENS),
+        tokens,
+        fieldnames=list(tokens[0].keys()) if tokens else token_fields(),
+    )
+    write_surface_words(artifact_path(output_dir, ArtifactId.SURFACE_WORDS), surface_words)
+    write_vocabulary(artifact_path(output_dir, ArtifactId.VOCABULARY_RAW), vocabulary)
+    write_rows(
+        artifact_path(output_dir, ArtifactId.CANDIDATE_TERMS),
+        candidate_outputs.terms,
+        fieldnames=candidate_term_fields(),
+    )
+    write_rows(
+        artifact_path(output_dir, ArtifactId.REJECTED_TERMS),
         candidate_outputs.rejected,
         fieldnames=rejected_candidate_fields(),
     )
-    write_jsonl(output_dir / "08_dictionary_candidates.jsonl", candidate_outputs.dictionary_entries)
+    write_jsonl(artifact_path(output_dir, ArtifactId.DICTIONARY_CANDIDATES), candidate_outputs.dictionary_entries)
     example_sentences = example_sentence_rows(sentences, tokens, candidate_outputs.terms)
-    write_rows(output_dir / "09_example_sentences.csv", example_sentences, fieldnames=example_sentence_fields())
+    write_rows(
+        artifact_path(output_dir, ArtifactId.EXAMPLE_SENTENCES),
+        example_sentences,
+        fieldnames=example_sentence_fields(),
+    )
     if artifact_callback is not None:
-        artifact_callback("09_example_sentences", example_sentences)
+        artifact_callback(artifact_event_name(ArtifactId.EXAMPLE_SENTENCES), example_sentences)
 
     cleaned_example_outputs: CleanedExampleOutputs | None = None
     if sentence_cleanup_client is not None:
-        cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
+        cleaned_example_sentence_path = artifact_path(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
         cleaned_example_sentence_fieldnames = cleaned_example_sentence_fields()
         initialize_rows_file(cleaned_example_sentence_path, fieldnames=cleaned_example_sentence_fieldnames)
         cleaned_example_outputs = build_cleaned_example_sentence_outputs(
@@ -201,7 +214,7 @@ def write_outputs(
 
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None
     if dictionary_cleanup_client is not None:
-        cleaned_dictionary_candidate_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
+        cleaned_dictionary_candidate_path = artifact_path(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
         initialize_jsonl_file(cleaned_dictionary_candidate_path)
         support_sentence_rows = (
             cleaned_example_outputs.rows
@@ -222,12 +235,12 @@ def write_outputs(
         write_jsonl(cleaned_dictionary_candidate_path, cleaned_dictionary_outputs.rows)
         if artifact_callback is not None:
             artifact_callback(
-                "11_cleaned_dictionary_candidates",
+                artifact_event_name(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
                 cleaned_dictionary_outputs.rows,
             )
 
     write_summary(
-        output_dir / "00_summary.json",
+        artifact_path(output_dir, ArtifactId.SUMMARY),
         pages=pages,
         sentences=sentences,
         tokens=tokens,
@@ -242,7 +255,7 @@ def write_outputs(
         cleaned_dictionary_outputs=cleaned_dictionary_outputs,
     )
     write_output_readme(
-        output_dir / "README.md",
+        artifact_path(output_dir, ArtifactId.README),
         include_cleaned_example_sentences=cleaned_example_outputs is not None,
         include_cleaned_dictionary_candidates=cleaned_dictionary_outputs is not None,
     )

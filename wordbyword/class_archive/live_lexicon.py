@@ -7,12 +7,13 @@ from typing import Any, Mapping
 
 from wordbyword.class_archive.archive import DEFAULT_VOCABULARY_INTELLIGENCE_ROOT
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.output_files import read_jsonl, write_jsonl
 
-DEFAULT_CANONICAL_DICTIONARY_PATH = Path("build-dictionary") / "15_final_dictionary.jsonl"
+DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(Path("build-dictionary"), ArtifactId.FINAL_DICTIONARY)
 DEFAULT_LIVE_GRADE_LEXICON_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "live-grade-lexicon"
 DEFAULT_LIVE_LEXICON_PATH = DEFAULT_LIVE_GRADE_LEXICON_ROOT / "grade1-live-lexicon-canonical.jsonl"
-DEFAULT_USAGE_CANDIDATES_PATH = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT / "08_dictionary_candidates.jsonl"
+DEFAULT_USAGE_CANDIDATES_PATH = artifact_path(DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT, ArtifactId.DICTIONARY_CANDIDATES)
 DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT / "10_unmatched_usage_candidates.jsonl"
 REMOVED_CANONICAL_FIELDS = {
     "example_generated_with_ollama",
@@ -51,7 +52,7 @@ def update_live_lexicon(
     live_lexicon_path: Path = DEFAULT_LIVE_LEXICON_PATH,
     unmatched_usage_output_path: Path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
 ) -> LiveLexiconUpdateResult:
-    resolved_usage_summary_path = usage_summary_path or usage_candidates_path.parent / "00_summary.json"
+    resolved_usage_summary_path = usage_summary_path or artifact_path(usage_candidates_path.parent, ArtifactId.SUMMARY)
     canonical_rows = read_jsonl_objects(canonical_dictionary_path, label="canonical dictionary")
     usage_candidates = read_jsonl_objects(usage_candidates_path, label="usage candidates")
     usage_summary = read_json_object(resolved_usage_summary_path, label="usage summary")
@@ -131,8 +132,8 @@ def read_jsonl_objects(path: Path, *, label: str) -> list[dict[str, Any]]:
         raise LiveLexiconUpdateError(f"Cannot read {label}: {path}")
     try:
         rows = read_jsonl(path)
-    except json.JSONDecodeError as error:
-        raise LiveLexiconUpdateError(f"Invalid JSON in {label}: {path}: {error.msg}") from error
+    except ValueError as error:
+        raise LiveLexiconUpdateError(f"Invalid JSON in {label}: {path}: {error}") from error
     objects: list[dict[str, Any]] = []
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, Mapping):

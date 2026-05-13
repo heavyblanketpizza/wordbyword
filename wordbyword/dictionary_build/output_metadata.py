@@ -5,6 +5,14 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from wordbyword.dictionary_build.artifacts import (
+    ArtifactId,
+    artifact_exists,
+    artifact_filename,
+    artifact_path,
+    output_filenames,
+    pipeline_stage_rows,
+)
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs
 from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs
 from wordbyword.dictionary_build.example_cleanup import CleanedExampleOutputs
@@ -12,7 +20,6 @@ from wordbyword.dictionary_build.example_generation import GeneratedExampleOutpu
 from wordbyword.dictionary_build.meaning_assignment import MeaningAssignmentOutputs
 from wordbyword.dictionary_build.meaning_generation import GeneratedMeaningOutputs
 from wordbyword.dictionary_build.models import CountEntry, PageText
-from wordbyword.dictionary_build.output_catalog import all_output_files, pipeline_stages
 
 RENAMED_SUMMARY_KEYS = (
     "reviewed_missing_dictionary_examples",
@@ -59,11 +66,11 @@ def write_summary(
         "rejected_terms": rejected_candidate_count,
         "example_sentences": example_sentence_count,
         "tokens_by_document": dict(document_totals),
-        "outputs": all_output_files(
+        "outputs": output_filenames(
             include_cleaned_example_sentences=include_cleaned_example_sentences,
             include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         ),
-        "pipeline_stages": pipeline_stages(
+        "pipeline_stages": pipeline_stage_rows(
             include_cleaned_example_sentences=include_cleaned_example_sentences,
             include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         ),
@@ -100,7 +107,7 @@ def write_output_readme(
         "| Stage | File | Purpose |",
         "| --- | --- | --- |",
     ]
-    for stage in pipeline_stages(
+    for stage in pipeline_stage_rows(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
@@ -113,7 +120,7 @@ def write_output_readme(
     lines.extend(
         [
             "",
-            "When artifact quality looks wrong, start at `01_extracted_pages.csv` and move forward.",
+            f"When artifact quality looks wrong, start at `{artifact_filename(ArtifactId.EXTRACTED_PAGES)}` and move forward.",
             "The first file where the text looks wrong usually points to the stage that needs work.",
             "",
         ]
@@ -131,25 +138,23 @@ def refresh_saved_output_metadata(
     meaning_assignment_outputs: MeaningAssignmentOutputs | None = None,
     generated_meaning_outputs: GeneratedMeaningOutputs | None = None,
 ) -> None:
-    include_cleaned_example_sentences = (output_dir / "10_cleaned_example_sentences.csv").is_file()
-    include_cleaned_dictionary_candidates = (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
-    include_linked_dictionary_candidates = (output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl").is_file()
-    include_generated_dictionary_candidates = (output_dir / "13_vocabulary_with_generated_examples.jsonl").is_file()
-    include_generated_example_attempts = (output_dir / "13_generated_example_attempts.jsonl").is_file()
-    include_generated_example_failures = (output_dir / "13_generated_example_failures.jsonl").is_file()
-    include_meaning_dictionary_candidates = (output_dir / "14_vocabulary_with_meanings.jsonl").is_file()
-    include_generated_meaning_dictionary_candidates = (
-        output_dir / "15_final_dictionary.jsonl"
-    ).is_file()
+    include_cleaned_example_sentences = artifact_exists(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
+    include_cleaned_dictionary_candidates = artifact_exists(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
+    include_linked_dictionary_candidates = artifact_exists(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)
+    include_generated_dictionary_candidates = artifact_exists(output_dir, ArtifactId.GENERATED_EXAMPLE_DICTIONARY)
+    include_generated_example_attempts = artifact_exists(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
+    include_generated_example_failures = artifact_exists(output_dir, ArtifactId.GENERATED_EXAMPLE_FAILURES)
+    include_meaning_dictionary_candidates = artifact_exists(output_dir, ArtifactId.MEANING_DICTIONARY_CANDIDATES)
+    include_generated_meaning_dictionary_candidates = artifact_exists(output_dir, ArtifactId.FINAL_DICTIONARY)
 
-    summary_path = output_dir / "00_summary.json"
+    summary_path = artifact_path(output_dir, ArtifactId.SUMMARY)
     summary: dict[str, Any] = {}
     if summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
     for key in RENAMED_SUMMARY_KEYS:
         summary.pop(key, None)
 
-    summary["outputs"] = all_output_files(
+    summary["outputs"] = output_filenames(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
@@ -159,7 +164,7 @@ def refresh_saved_output_metadata(
         include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
         include_generated_meaning_dictionary_candidates=include_generated_meaning_dictionary_candidates,
     )
-    summary["pipeline_stages"] = pipeline_stages(
+    summary["pipeline_stages"] = pipeline_stage_rows(
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,
@@ -256,7 +261,7 @@ def refresh_saved_output_metadata(
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     write_output_readme(
-        output_dir / "README.md",
+        artifact_path(output_dir, ArtifactId.README),
         include_cleaned_example_sentences=include_cleaned_example_sentences,
         include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         include_linked_dictionary_candidates=include_linked_dictionary_candidates,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-import json
 
 from kiwipiepy import Kiwi
 
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
 from wordbyword.dictionary_build.example_generation import RetryGeneratedExampleCallback
 from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
@@ -173,7 +174,7 @@ def _report(progress: ProgressCallback | None, phase: str, detail: str) -> None:
 
 
 def load_pipeline_result_from_output(output_dir: Path) -> PipelineResult:
-    summary_path = output_dir / "00_summary.json"
+    summary_path = artifact_path(output_dir, ArtifactId.SUMMARY)
     summary: dict[str, object] = {}
     if summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))

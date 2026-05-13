@@ -70,6 +70,7 @@ from wordbyword.cli.options import (
     build_parser,
     validate_args,
 )
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_event_name, artifact_filename, artifact_path
 from wordbyword.dictionary_build.writers import refresh_saved_output_metadata, write_linked_dictionary_candidates_from_saved
 from wordbyword.dictionary_build.saved_outputs import (
     write_generated_meaning_dictionary_candidates_from_saved,
@@ -270,7 +271,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
 
 
 def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
-    return args.rewrite_dictionary or (args.output / "15_final_dictionary.jsonl")
+    return args.rewrite_dictionary or artifact_path(args.output, ArtifactId.FINAL_DICTIONARY)
 
 
 def parse_pdf_parser_name(value: str) -> PdfParserName:
@@ -332,21 +333,21 @@ def pipeline_artifact_callback(
     model: str,
 ) -> Callable[[str, Sequence[Mapping[str, object]]], None]:
     def report(stage: str, entries: Sequence[Mapping[str, object]]) -> None:
-        if stage == "09_example_sentences":
+        if stage == artifact_event_name(ArtifactId.EXAMPLE_SENTENCES):
             emit_artifact_drop(
                 stage,
-                file_label="09_example_sentences.csv",
+                file_label=artifact_filename(ArtifactId.EXAMPLE_SENTENCES),
                 summary=(
                     ("relics", f"{len(entries):,} sentences"),
                     ("status", "signal locked"),
                 ),
             )
             return
-        if stage == "11_cleaned_dictionary_candidates":
+        if stage == artifact_event_name(ArtifactId.CLEANED_DICTIONARY_CANDIDATES):
             emit_artifact_drop(
                 stage,
                 entries=entries,
-                file_label="11_cleaned_dictionary_candidates.jsonl",
+                file_label=artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("model", model),
@@ -354,11 +355,11 @@ def pipeline_artifact_callback(
                 ),
             )
             return
-        if stage == "12_dictionary_candidates_with_cleaned_examples":
+        if stage == artifact_event_name(ArtifactId.LINKED_DICTIONARY_CANDIDATES):
             replaced_count = count_truthy(entries, "example_replaced_with_cleaned_sentence")
             emit_artifact_drop(
                 stage,
-                file_label="12_dictionary_candidates_with_cleaned_examples.jsonl",
+                file_label=artifact_filename(ArtifactId.LINKED_DICTIONARY_CANDIDATES),
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("replaced", f"{replaced_count:,} examples"),
@@ -366,11 +367,11 @@ def pipeline_artifact_callback(
                 ),
             )
             return
-        if stage == "13_vocabulary_with_generated_examples":
+        if stage == artifact_event_name(ArtifactId.GENERATED_EXAMPLE_DICTIONARY):
             generated_count = count_truthy(entries, "example_generated_with_ollama")
             emit_artifact_drop(
                 stage,
-                file_label="13_vocabulary_with_generated_examples.jsonl",
+                file_label=artifact_filename(ArtifactId.GENERATED_EXAMPLE_DICTIONARY),
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} examples"),
@@ -379,11 +380,11 @@ def pipeline_artifact_callback(
                 ),
             )
             return
-        if stage == "14_vocabulary_with_meanings":
+        if stage == artifact_event_name(ArtifactId.MEANING_DICTIONARY_CANDIDATES):
             matched_count = count_nonempty(entries, "meaning")
             emit_artifact_drop(
                 stage,
-                file_label="14_vocabulary_with_meanings.jsonl",
+                file_label=artifact_filename(ArtifactId.MEANING_DICTIONARY_CANDIDATES),
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("matched", f"{matched_count:,} meanings"),
@@ -391,11 +392,11 @@ def pipeline_artifact_callback(
                 ),
             )
             return
-        if stage == "15_final_dictionary":
+        if stage == artifact_event_name(ArtifactId.FINAL_DICTIONARY):
             generated_count = count_truthy(entries, "meaning_generated_with_ollama")
             emit_artifact_drop(
                 stage,
-                file_label="15_final_dictionary.jsonl",
+                file_label=artifact_filename(ArtifactId.FINAL_DICTIONARY),
                 summary=(
                     ("relics", f"{len(entries):,} headwords"),
                     ("generated", f"{generated_count:,} meanings"),
@@ -418,7 +419,7 @@ def count_nonempty(entries: Sequence[Mapping[str, object]], key: str) -> int:
 def resolve_distribution_path(supplied: str, output_dir: Path) -> Path:
     if supplied:
         return Path(supplied)
-    return output_dir / "11_cleaned_dictionary_candidates.jsonl"
+    return artifact_path(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
 
 
 def load_dictionary_candidates(jsonl_path: Path) -> list[dict[str, object]]:
@@ -467,7 +468,7 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
         sys.stderr.write(
             f"wordbyword: cannot read distribution source: {jsonl_path}\n"
             "  hint: run with --clean-dictionary-candidates first, "
-            "or pass a path: --show-distribution path/to/11_cleaned_dictionary_candidates.jsonl\n"
+            f"or pass a path: --show-distribution path/to/{artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES)}\n"
         )
         return 1
 
@@ -478,7 +479,7 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
         return 1
 
     emit_rendered_artifact_drop(
-        "11_cleaned_dictionary_candidates",
+        artifact_event_name(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
         entries=entries,
         file_label=str(jsonl_path),
         summary=(
@@ -1151,8 +1152,8 @@ def prompt_generated_example_retry(
     if summary.failed_count <= 0 or not sys.stdin.isatty():
         return False
 
-    attempts_path = output_dir / "13_generated_example_attempts.jsonl"
-    failures_path = output_dir / "13_generated_example_failures.jsonl"
+    attempts_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
+    failures_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_FAILURES)
     sys.stdout.write(
         "\n"
         f"wordbyword: candidate-example attempt {summary.attempt_number} with {model} left "
@@ -1186,8 +1187,8 @@ def link_cleaned_examples(*, output_dir: Path) -> int:
     refresh_saved_output_metadata(output_dir, linked_dictionary_outputs=outputs)
 
     emit_rendered_artifact_drop(
-        "12_dictionary_candidates_with_cleaned_examples",
-        file_label=str(output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"),
+        artifact_event_name(ArtifactId.LINKED_DICTIONARY_CANDIDATES),
+        file_label=str(artifact_path(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)),
         summary=(
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("replaced", f"{outputs.linked_count:,} examples"),
@@ -1209,8 +1210,8 @@ def add_reference_meanings(*, output_dir: Path, reference_dictionary_path: Path)
         return 1
 
     emit_rendered_artifact_drop(
-        "14_vocabulary_with_meanings",
-        file_label=str(output_dir / "14_vocabulary_with_meanings.jsonl"),
+        artifact_event_name(ArtifactId.MEANING_DICTIONARY_CANDIDATES),
+        file_label=str(artifact_path(output_dir, ArtifactId.MEANING_DICTIONARY_CANDIDATES)),
         summary=(
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("matched", f"{outputs.matched_count:,} meanings"),
@@ -1259,8 +1260,8 @@ def generate_missing_meanings(
         return 1
 
     emit_rendered_artifact_drop(
-        "15_final_dictionary",
-        file_label=str(output_dir / "15_final_dictionary.jsonl"),
+        artifact_event_name(ArtifactId.FINAL_DICTIONARY),
+        file_label=str(artifact_path(output_dir, ArtifactId.FINAL_DICTIONARY)),
         summary=(
             ("relics", f"{len(outputs.rows):,} headwords"),
             ("generated", f"{outputs.generated_count:,} meanings"),

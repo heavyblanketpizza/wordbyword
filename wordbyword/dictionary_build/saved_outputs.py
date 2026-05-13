@@ -3,6 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from wordbyword.dictionary_build.artifacts import (
+    ArtifactId,
+    artifact_event_name,
+    artifact_exists,
+    artifact_filename,
+    artifact_path,
+    optional_artifacts_from,
+)
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_cleanup import (
@@ -34,13 +42,13 @@ from wordbyword.dictionary_build.output_files import (
     initialize_jsonl_file,
     initialize_rows_file,
     read_jsonl,
+    read_required_artifact_jsonl,
+    read_required_artifact_rows,
     read_required_jsonl,
-    read_required_rows,
     read_rows,
     write_jsonl,
     write_rows,
 )
-from wordbyword.dictionary_build.output_catalog import OPTIONAL_OUTPUT_FILES
 from wordbyword.dictionary_build.output_metadata import refresh_saved_output_metadata
 
 ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
@@ -89,25 +97,25 @@ def write_cleanup_outputs_from_saved(
         or dictionary_cleanup_client is not None
         or generated_example_client is not None
     ):
-        candidate_terms = read_required_rows(
-            output_dir / "06_candidate_terms.csv",
-            built_from="06_candidate_terms.csv",
+        candidate_terms = read_required_artifact_rows(
+            output_dir,
+            ArtifactId.CANDIDATE_TERMS,
             target="LLM cleanup stages",
         )
     example_sentences: list[dict[str, str]] | None = None
 
     if sentence_cleanup_client is not None:
         assert candidate_terms is not None
-        example_sentences = read_required_rows(
-            output_dir / "09_example_sentences.csv",
-            built_from="09_example_sentences.csv",
-            target="10_cleaned_example_sentences.csv",
+        example_sentences = read_required_artifact_rows(
+            output_dir,
+            ArtifactId.EXAMPLE_SENTENCES,
+            target=artifact_filename(ArtifactId.CLEANED_EXAMPLE_SENTENCES),
         )
         if artifact_callback is not None:
-            artifact_callback("09_example_sentences", example_sentences)
-        cleaned_example_sentence_path = output_dir / "10_cleaned_example_sentences.csv"
+            artifact_callback(artifact_event_name(ArtifactId.EXAMPLE_SENTENCES), example_sentences)
+        cleaned_example_sentence_path = artifact_path(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
         cleaned_example_sentence_fieldnames = cleaned_example_sentence_fields()
-        remove_optional_outputs_from(output_dir, "10_cleaned_example_sentences.csv")
+        remove_optional_outputs_from(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
         initialize_rows_file(cleaned_example_sentence_path, fieldnames=cleaned_example_sentence_fieldnames)
         cleaned_example_outputs = build_cleaned_example_sentence_outputs(
             example_sentences,
@@ -128,13 +136,13 @@ def write_cleanup_outputs_from_saved(
 
     if dictionary_cleanup_client is not None:
         assert candidate_terms is not None
-        dictionary_entries = read_required_jsonl(
-            output_dir / "08_dictionary_candidates.jsonl",
-            built_from="08_dictionary_candidates.jsonl",
-            target="11_cleaned_dictionary_candidates.jsonl",
+        dictionary_entries = read_required_artifact_jsonl(
+            output_dir,
+            ArtifactId.DICTIONARY_CANDIDATES,
+            target=artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
         )
-        cleaned_dictionary_candidate_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
-        remove_optional_outputs_from(output_dir, "11_cleaned_dictionary_candidates.jsonl")
+        cleaned_dictionary_candidate_path = artifact_path(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
+        remove_optional_outputs_from(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
         initialize_jsonl_file(cleaned_dictionary_candidate_path)
         support_sentence_rows = resolve_dictionary_support_rows(
             output_dir,
@@ -155,15 +163,15 @@ def write_cleanup_outputs_from_saved(
         write_jsonl(cleaned_dictionary_candidate_path, cleaned_dictionary_outputs.rows)
         if artifact_callback is not None:
             artifact_callback(
-                "11_cleaned_dictionary_candidates",
+                artifact_event_name(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
                 cleaned_dictionary_outputs.rows,
             )
 
     if (
         not retry_generated_examples_only
         and
-        (output_dir / "10_cleaned_example_sentences.csv").is_file()
-        and (output_dir / "11_cleaned_dictionary_candidates.jsonl").is_file()
+        artifact_exists(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
+        and artifact_exists(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
     ):
         linked_dictionary_outputs = write_linked_dictionary_candidates_from_saved(
             output_dir,
@@ -214,17 +222,17 @@ def resolve_dictionary_support_rows(
     if cleaned_example_outputs is not None:
         return cleaned_example_outputs.rows
 
-    cleaned_example_path = output_dir / "10_cleaned_example_sentences.csv"
-    if cleaned_example_path.is_file():
+    cleaned_example_path = artifact_path(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
+    if artifact_exists(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES):
         return read_rows(cleaned_example_path)
 
     if loaded_example_sentences is not None:
         return loaded_example_sentences
 
-    return read_required_rows(
-        output_dir / "09_example_sentences.csv",
-        built_from="09_example_sentences.csv",
-        target="11_cleaned_dictionary_candidates.jsonl",
+    return read_required_artifact_rows(
+        output_dir,
+        ArtifactId.EXAMPLE_SENTENCES,
+        target=artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
     )
 
 
@@ -234,20 +242,24 @@ def write_linked_dictionary_candidates_from_saved(
     artifact_callback: ArtifactCallback | None = None,
     require_inputs: bool = True,
 ) -> LinkedDictionaryOutputs | None:
-    linked_output_path = output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"
-    cleaned_example_path = output_dir / "10_cleaned_example_sentences.csv"
-    cleaned_dictionary_path = output_dir / "11_cleaned_dictionary_candidates.jsonl"
+    linked_output_path = artifact_path(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)
+    cleaned_example_path = artifact_path(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
+    cleaned_dictionary_path = artifact_path(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
 
-    if not cleaned_example_path.is_file() or not cleaned_dictionary_path.is_file():
-        remove_optional_outputs_from(output_dir, "12_dictionary_candidates_with_cleaned_examples.jsonl")
+    if (
+        not artifact_exists(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES)
+        or not artifact_exists(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
+    ):
+        remove_optional_outputs_from(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)
         if require_inputs:
             missing = []
-            if not cleaned_example_path.is_file():
-                missing.append("10_cleaned_example_sentences.csv")
-            if not cleaned_dictionary_path.is_file():
-                missing.append("11_cleaned_dictionary_candidates.jsonl")
+            if not artifact_exists(output_dir, ArtifactId.CLEANED_EXAMPLE_SENTENCES):
+                missing.append(artifact_filename(ArtifactId.CLEANED_EXAMPLE_SENTENCES))
+            if not artifact_exists(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES):
+                missing.append(artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES))
+            target = artifact_filename(ArtifactId.LINKED_DICTIONARY_CANDIDATES)
             raise ValueError(
-                f"Cannot build 12_dictionary_candidates_with_cleaned_examples.jsonl because "
+                f"Cannot build {target} because "
                 f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} missing in {output_dir}. "
                 "Run the saved cleanup stages first."
             )
@@ -255,7 +267,7 @@ def write_linked_dictionary_candidates_from_saved(
 
     cleaned_example_rows = read_rows(cleaned_example_path)
     cleaned_dictionary_rows = read_jsonl(cleaned_dictionary_path)
-    remove_optional_outputs_from(output_dir, "12_dictionary_candidates_with_cleaned_examples.jsonl")
+    remove_optional_outputs_from(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)
     linked_outputs = build_linked_dictionary_candidate_outputs(
         cleaned_dictionary_rows,
         cleaned_example_rows,
@@ -263,7 +275,7 @@ def write_linked_dictionary_candidates_from_saved(
     write_jsonl(linked_output_path, linked_outputs.rows)
     if artifact_callback is not None:
         artifact_callback(
-            "12_dictionary_candidates_with_cleaned_examples",
+            artifact_event_name(ArtifactId.LINKED_DICTIONARY_CANDIDATES),
             linked_outputs.rows,
         )
     return linked_outputs
@@ -279,10 +291,10 @@ def write_generated_dictionary_candidates_from_saved(
     linked_dictionary_outputs: LinkedDictionaryOutputs | None = None,
     candidate_terms: Sequence[Mapping[str, object]] | None = None,
 ) -> GeneratedExampleOutputs:
-    linked_output_path = output_dir / "12_dictionary_candidates_with_cleaned_examples.jsonl"
-    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
-    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
-    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+    linked_output_path = artifact_path(output_dir, ArtifactId.LINKED_DICTIONARY_CANDIDATES)
+    generated_output_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_DICTIONARY)
+    generated_attempts_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
+    generated_failures_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_FAILURES)
 
     if linked_dictionary_outputs is not None:
         linked_rows = linked_dictionary_outputs.rows
@@ -300,14 +312,14 @@ def write_generated_dictionary_candidates_from_saved(
     resolved_candidate_terms = (
         list(candidate_terms)
         if candidate_terms is not None
-        else read_required_rows(
-            output_dir / "06_candidate_terms.csv",
-            built_from="06_candidate_terms.csv",
-            target="13_vocabulary_with_generated_examples.jsonl",
+        else read_required_artifact_rows(
+            output_dir,
+            ArtifactId.CANDIDATE_TERMS,
+            target=artifact_filename(ArtifactId.GENERATED_EXAMPLE_DICTIONARY),
         )
     )
 
-    remove_optional_outputs_from(output_dir, "13_vocabulary_with_generated_examples.jsonl")
+    remove_optional_outputs_from(output_dir, ArtifactId.GENERATED_EXAMPLE_DICTIONARY)
     initialize_jsonl_file(generated_output_path)
     initialize_jsonl_file(generated_attempts_path)
     initialize_jsonl_file(generated_failures_path)
@@ -346,7 +358,7 @@ def write_generated_dictionary_candidates_from_saved(
     write_jsonl(generated_failures_path, generated_outputs.failure_rows)
     if artifact_callback is not None:
         artifact_callback(
-            "13_vocabulary_with_generated_examples",
+            artifact_event_name(ArtifactId.GENERATED_EXAMPLE_DICTIONARY),
             generated_outputs.rows,
         )
     return generated_outputs
@@ -360,13 +372,13 @@ def retry_generated_dictionary_candidates_from_saved(
     artifact_callback: ArtifactCallback | None = None,
     candidate_terms: Sequence[Mapping[str, object]] | None = None,
 ) -> GeneratedExampleOutputs:
-    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
-    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
-    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+    generated_output_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_DICTIONARY)
+    generated_attempts_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
+    generated_failures_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_FAILURES)
 
-    generated_rows = read_required_jsonl(
-        generated_output_path,
-        built_from="13_vocabulary_with_generated_examples.jsonl",
+    generated_rows = read_required_artifact_jsonl(
+        output_dir,
+        ArtifactId.GENERATED_EXAMPLE_DICTIONARY,
         target="retry-generated-examples",
     )
     failure_rows = (
@@ -378,14 +390,14 @@ def retry_generated_dictionary_candidates_from_saved(
     resolved_candidate_terms = (
         list(candidate_terms)
         if candidate_terms is not None
-        else read_required_rows(
-            output_dir / "06_candidate_terms.csv",
-            built_from="06_candidate_terms.csv",
+        else read_required_artifact_rows(
+            output_dir,
+            ArtifactId.CANDIDATE_TERMS,
             target="retry-generated-examples",
         )
     )
 
-    remove_optional_outputs_from(output_dir, "14_vocabulary_with_meanings.jsonl")
+    remove_optional_outputs_from(output_dir, ArtifactId.MEANING_DICTIONARY_CANDIDATES)
     if not failure_rows:
         generated_outputs = retry_generated_dictionary_candidate_outputs(
             generated_rows,
@@ -399,7 +411,7 @@ def retry_generated_dictionary_candidates_from_saved(
         initialize_jsonl_file(generated_failures_path)
         if artifact_callback is not None:
             artifact_callback(
-                "13_vocabulary_with_generated_examples",
+                artifact_event_name(ArtifactId.GENERATED_EXAMPLE_DICTIONARY),
                 generated_outputs.rows,
             )
         return generated_outputs
@@ -432,7 +444,7 @@ def retry_generated_dictionary_candidates_from_saved(
     write_jsonl(generated_failures_path, generated_outputs.failure_rows)
     if artifact_callback is not None:
         artifact_callback(
-            "13_vocabulary_with_generated_examples",
+            artifact_event_name(ArtifactId.GENERATED_EXAMPLE_DICTIONARY),
             generated_outputs.rows,
         )
     return generated_outputs
@@ -444,21 +456,20 @@ def write_meaning_dictionary_candidates_from_saved(
     reference_dictionary_path: Path,
     artifact_callback: ArtifactCallback | None = None,
 ) -> MeaningAssignmentOutputs:
-    generated_output_path = output_dir / "13_vocabulary_with_generated_examples.jsonl"
-    meaning_output_path = output_dir / "14_vocabulary_with_meanings.jsonl"
+    meaning_output_path = artifact_path(output_dir, ArtifactId.MEANING_DICTIONARY_CANDIDATES)
 
-    generated_rows = read_required_jsonl(
-        generated_output_path,
-        built_from="13_vocabulary_with_generated_examples.jsonl",
-        target="14_vocabulary_with_meanings.jsonl",
+    generated_rows = read_required_artifact_jsonl(
+        output_dir,
+        ArtifactId.GENERATED_EXAMPLE_DICTIONARY,
+        target=artifact_filename(ArtifactId.MEANING_DICTIONARY_CANDIDATES),
     )
     reference_rows = read_required_jsonl(
         reference_dictionary_path,
         built_from=str(reference_dictionary_path),
-        target="14_vocabulary_with_meanings.jsonl",
+        target=artifact_filename(ArtifactId.MEANING_DICTIONARY_CANDIDATES),
     )
 
-    remove_optional_outputs_from(output_dir, "14_vocabulary_with_meanings.jsonl")
+    remove_optional_outputs_from(output_dir, ArtifactId.MEANING_DICTIONARY_CANDIDATES)
     remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir)
     initialize_jsonl_file(meaning_output_path)
     meaning_outputs = build_dictionary_candidates_with_meanings(
@@ -469,7 +480,7 @@ def write_meaning_dictionary_candidates_from_saved(
     write_jsonl(meaning_output_path, meaning_outputs.rows)
     if artifact_callback is not None:
         artifact_callback(
-            "14_vocabulary_with_meanings",
+            artifact_event_name(ArtifactId.MEANING_DICTIONARY_CANDIDATES),
             meaning_outputs.rows,
         )
     refresh_saved_output_metadata(
@@ -486,15 +497,14 @@ def write_generated_meaning_dictionary_candidates_from_saved(
     generated_meaning_progress: CleanupProgressCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> GeneratedMeaningOutputs:
-    meaning_output_path = output_dir / "14_vocabulary_with_meanings.jsonl"
-    generated_meaning_output_path = output_dir / "15_final_dictionary.jsonl"
+    generated_meaning_output_path = artifact_path(output_dir, ArtifactId.FINAL_DICTIONARY)
 
-    meaning_rows = read_required_jsonl(
-        meaning_output_path,
-        built_from="14_vocabulary_with_meanings.jsonl",
-        target="15_final_dictionary.jsonl",
+    meaning_rows = read_required_artifact_jsonl(
+        output_dir,
+        ArtifactId.MEANING_DICTIONARY_CANDIDATES,
+        target=artifact_filename(ArtifactId.FINAL_DICTIONARY),
     )
-    remove_optional_outputs_from(output_dir, "15_final_dictionary.jsonl")
+    remove_optional_outputs_from(output_dir, ArtifactId.FINAL_DICTIONARY)
     initialize_jsonl_file(generated_meaning_output_path)
     write_jsonl(
         generated_meaning_output_path,
@@ -521,7 +531,7 @@ def write_generated_meaning_dictionary_candidates_from_saved(
     write_jsonl(generated_meaning_output_path, generated_meaning_outputs.rows)
     if artifact_callback is not None:
         artifact_callback(
-            "15_final_dictionary",
+            artifact_event_name(ArtifactId.FINAL_DICTIONARY),
             generated_meaning_outputs.rows,
         )
     refresh_saved_output_metadata(
@@ -532,26 +542,21 @@ def write_generated_meaning_dictionary_candidates_from_saved(
 
 
 def remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir: Path) -> None:
-    generated_attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    generated_attempts_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
     if generated_attempts_path.is_file():
         generated_attempts_path.unlink()
     remove_empty_generated_example_failures(output_dir)
 
 
-def remove_optional_outputs_from(output_dir: Path, first_filename: str) -> None:
-    try:
-        start_index = OPTIONAL_OUTPUT_FILES.index(first_filename)
-    except ValueError as error:
-        raise ValueError(f"Unknown optional output file: {first_filename}") from error
-
-    for filename in OPTIONAL_OUTPUT_FILES[start_index:]:
-        path = output_dir / filename
+def remove_optional_outputs_from(output_dir: Path, first_artifact_id: ArtifactId) -> None:
+    for artifact_id in optional_artifacts_from(first_artifact_id):
+        path = artifact_path(output_dir, artifact_id)
         if path.is_file():
             path.unlink()
 
 
 def remove_empty_generated_example_failures(output_dir: Path) -> bool:
-    generated_failures_path = output_dir / "13_generated_example_failures.jsonl"
+    generated_failures_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_FAILURES)
     if not generated_failures_path.is_file():
         return False
     if generated_failures_path.read_text(encoding="utf-8").strip():
@@ -561,7 +566,7 @@ def remove_empty_generated_example_failures(output_dir: Path) -> bool:
 
 
 def _next_generated_example_attempt_number(output_dir: Path) -> int:
-    attempts_path = output_dir / "13_generated_example_attempts.jsonl"
+    attempts_path = artifact_path(output_dir, ArtifactId.GENERATED_EXAMPLE_ATTEMPTS)
     if not attempts_path.is_file():
         return 2
 

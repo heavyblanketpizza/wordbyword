@@ -5,8 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from wordbyword.dictionary_build.artifacts import (
+    ArtifactId,
+    all_output_artifact_ids,
+    artifact_filename,
+    artifact_path,
+    legacy_output_filenames,
+    required_artifact_path,
+)
 from wordbyword.dictionary_build.models import CountEntry, PageText
-from wordbyword.dictionary_build.output_catalog import BASE_OUTPUT_FILES, LEGACY_OUTPUT_FILES, OPTIONAL_OUTPUT_FILES
 from wordbyword.dictionary_build.text import clean_example_text
 
 
@@ -21,41 +28,11 @@ def cleanup_previous_outputs(
 ) -> None:
     # Optional stages are downstream of the deterministic base artifacts, so any
     # base rebuild invalidates them even when no optional stage is being rerun.
-    for filename in {
-        *BASE_OUTPUT_FILES,
-        *OPTIONAL_OUTPUT_FILES,
-        *(["10_cleaned_example_sentences.csv"] if include_cleaned_example_sentences else []),
-        *(["11_cleaned_dictionary_candidates.jsonl"] if include_cleaned_dictionary_candidates else []),
-        *(
-            ["12_dictionary_candidates_with_cleaned_examples.jsonl"]
-            if include_linked_dictionary_candidates
-            else []
-        ),
-        *(
-            ["13_vocabulary_with_generated_examples.jsonl"]
-            if include_generated_dictionary_candidates
-            else []
-        ),
-        *(
-            [
-                "13_generated_example_attempts.jsonl",
-                "13_generated_example_failures.jsonl",
-                "14_vocabulary_with_meanings.jsonl",
-                "15_final_dictionary.jsonl",
-            ]
-            if include_generated_dictionary_candidates
-            else []
-        ),
-        *(
-            [
-                "14_vocabulary_with_meanings.jsonl",
-                "15_final_dictionary.jsonl",
-            ]
-            if include_meaning_dictionary_candidates
-            else []
-        ),
-        *LEGACY_OUTPUT_FILES,
-    }:
+    filenames = {
+        *(artifact_filename(artifact_id) for artifact_id in all_output_artifact_ids()),
+        *legacy_output_filenames(),
+    }
+    for filename in filenames:
         path = output_dir / filename
         if path.is_file():
             path.unlink()
@@ -139,11 +116,17 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
             cleaned = line.strip()
             if not cleaned:
                 continue
-            rows.append(json.loads(cleaned))
+            try:
+                row = json.loads(cleaned)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Invalid JSON on line {line_number} of {path}: {error.msg}") from error
+            if not isinstance(row, dict):
+                raise ValueError(f"Line {line_number} of {path} is not a JSON object.")
+            rows.append(row)
     return rows
 
 
@@ -163,6 +146,22 @@ def read_required_jsonl(path: Path, *, built_from: str, target: str) -> list[dic
             "Run the deterministic pipeline first."
         )
     return read_jsonl(path)
+
+
+def read_required_artifact_rows(output_dir: Path, artifact_id: ArtifactId, *, target: str) -> list[dict[str, str]]:
+    return read_rows(required_artifact_path(output_dir, artifact_id, target=target))
+
+
+def read_required_artifact_jsonl(output_dir: Path, artifact_id: ArtifactId, *, target: str) -> list[dict[str, Any]]:
+    return read_jsonl(required_artifact_path(output_dir, artifact_id, target=target))
+
+
+def initialize_artifact_jsonl_file(output_dir: Path, artifact_id: ArtifactId) -> None:
+    initialize_jsonl_file(artifact_path(output_dir, artifact_id))
+
+
+def initialize_artifact_rows_file(output_dir: Path, artifact_id: ArtifactId, *, fieldnames: list[str]) -> None:
+    initialize_rows_file(artifact_path(output_dir, artifact_id), fieldnames=fieldnames)
 
 
 def write_vocabulary(path: Path, vocabulary: dict[tuple[str, str], CountEntry]) -> None:
