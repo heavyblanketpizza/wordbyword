@@ -1,290 +1,310 @@
 # wordbyword
 
-Internal progress note for building a 학년별 dynamic Korean vocabulary dictionary that can guide LLM rewrites of mature reading materials, especially newspapers and scientific or research articles, into grade-appropriate Korean reading.
+`wordbyword` builds Korean learner-vocabulary artifacts from source documents, rewrites class source materials into grade-friendly Korean, renders editable DOCX handouts, and tracks vocabulary signals from materials used in class.
 
-The project is currently a vocabulary-and-example preparation pipeline plus a class-material workflow. The upstream dictionary substrate covers source text extraction, Korean morphology, canonical vocabulary grouping, candidate scoring, learner-dictionary cleanup, cleaned example selection, missing example generation, and meaning completion. Downstream class tools parse source materials, rewrite them for grade-friendly Korean reading, render editable DOCX handouts, and archive used class printouts for later analytics.
+The root `README.md` is the canonical technical guide. `BEGINNERS_GUIDE.md` is the tracked plain-language guide. Generated output folders do not own project documentation.
 
-## Current Shape
+## Quick Start
 
-- Input: Korean PDFs, `.txt`, and `.md` files under `build-dictionary/original/`.
-- Base run: deterministic extraction and scoring from source documents into numbered CSV/JSONL artifacts.
-- Optional LLM runs: saved-output cleanup stages that use Ollama to curate example sentences, filter dictionary candidates, link cleaned examples, generate missing examples, and retry failed generated examples.
-- Near-term product objective: turn used class-session printouts into analytics that update a separate, live classroom copy of the vocabulary dictionary.
-- Not implemented yet: grade-level bands, learner difficulty calibration, class-session analytics, and evaluation of whether rewritten text stays faithful to the original.
-
-## Folder Layout
-
-- Python implementation modules are grouped by workflow under `wordbyword/dictionary_build/`, `wordbyword/classroom_printout_studio/`, `wordbyword/class_archive/`, and `wordbyword/cli/`.
-- Classroom printout studio materials live under `classroom-printout-studio/`, grouped into source materials, rewritten materials, and printable handouts.
-- Put original books and documents in `build-dictionary/original/`.
-- Run the pipeline with `uv --no-cache run python -m wordbyword`.
-- Generated files are written to `build-dictionary/`.
-- Put the reference meaning dictionary at `build-dictionary/references/reference-dictionary.jsonl`.
-- Only `.gitkeep` placeholders are tracked for those local input folders; PDFs and reference JSONL stay ignored.
-
-Supported source formats:
-
-- `.pdf`
-- `.txt`
-- `.md`
-
-## Class Printout Workflow
-
-Use this for normal class handout generation:
+Install and verify the project:
 
 ```bash
-uv --no-cache run python -m wordbyword --build-class-printouts
+uv sync --dev
+uv run pytest -q
+uv run ruff check .
 ```
 
-This starts from `classroom-printout-studio/class-source-materials`, parses PDFs with PaddleOCR-VL, rewrites each parsed source with vocabulary guidance from `build-dictionary/15_final_dictionary.jsonl`, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
-
-Run the stage-specific commands below only when you want to inspect OCR output, rerun just the rewrite stage, or reprint from already rewritten materials.
-
-## Source Material Parsing
-
-Use this when you only want to parse/OCR source materials without rewriting or printing:
+Build the full dictionary from `build-dictionary/original/`:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials
+uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b
 ```
 
-This defaults to `classroom-printout-studio/class-source-materials` and uses PaddleOCR-VL for PDFs. If a local
-`.venv-paddleocr-vl` or `.venv-paddleocr` sidecar exists, wordbyword uses it automatically.
+That command resumes from the latest verified checkpoint, runs only the dirty stages through `15`, stops if generated-example failures remain after `13`, then writes `14_vocabulary_with_meanings.jsonl` and `15_final_dictionary.jsonl`.
 
-The command writes one source-specific folder under `classroom-printout-studio/class-source-materials/parsed/<source-id>/`:
-
-- `manifest.json`: source metadata, checksum, parser status, and bundle file map.
-- `content.md`: the primary human-readable and LLM-ready Markdown output for PDFs.
-- `chunks.json`: page-level Markdown chunks with parser metadata.
-- `document_model.json`: validated sidecar tying source metadata, pages, assets, and outputs together.
-- `parser_output.json`: raw structured parser output for debugging and traceability.
-- `quality_report.json`: per-page extraction diagnostics, OCR flags, table warnings, and asset inventory.
-- `assets/`: a single flat folder for parser-generated images, tables, page crops, and other visual assets.
-
-PaddleOCR-VL-1.5 is the default PDF parser lane:
+Build only the deterministic base when debugging early artifacts:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-device cpu
-uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword
 ```
 
-This mode renders each PDF page to `assets/page-0001.png`, sends the page images to PaddleOCR-VL-1.5, and writes the same bundle contract: `content.md`, `chunks.json`, `document_model.json`, `parser_output.json`, and `quality_report.json`. PaddleOCR-VL is intentionally not a base dependency. Paddle documents Python 3.9-3.13 as the verified manual-install range for this path, while this project currently runs on Python 3.14, so use a separate PaddleOCR virtual environment, Docker image, or PaddleOCR-VL service when running the model locally.
-
-With `--paddleocr-vl-sidecar-env`, wordbyword activates the sidecar by running that environment's `bin/python` or `Scripts/python.exe`. `--paddleocr-vl-sidecar-python` can point directly at a Python executable instead. If no sidecar flag is passed, wordbyword checks `WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON`, `WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV`, `.venv-paddleocr-vl`, and `.venv-paddleocr`. The main process renders page images, launches the sidecar PaddleOCR worker for each PDF, polls page results as they are produced, incrementally rewrites the merged `content.md`, `chunks.json`, and `parser_output.json`, then writes final `document_model.json` and `quality_report.json`. Final parsed outputs are per source file, not per page. When the page results are complete, wordbyword terminates any still-running sidecar process so PaddleOCR resources are released.
-
-PaddleOCR-VL inference runs in an isolated child process when no sidecar env is configured. If you stop the command with `Ctrl-C`, wordbyword terminates the child process, removes the interrupted source's partial parse workspace, and exits with code `130`.
-
-Useful source-material options:
-
-```bash
-uv --no-cache run python -m wordbyword --parse-source-material classroom-printout-studio/class-source-materials/popular-physicsprize2025.pdf
-uv --no-cache run python -m wordbyword --parse-source-materials --skip-pdf-parse
-uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
-```
-
-## Source Material Rewriting
-
-When running stages manually, use the whole-document Ollama rewrite stage to create Korean 1학년-friendly materials from already parsed source bundles. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
-
-```bash
-uv --no-cache run python -m wordbyword --rewrite-whole-source-materials --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-whole-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
-```
-
-The batch command defaults to `classroom-printout-studio/class-source-materials/parsed`. The single-material command still takes one parsed bundle folder.
-
-The rewrite stage reads each parsed source's full `content.md`, sends its text and linked image assets to Ollama in one document-order request per source, and writes outputs under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`:
-
-- `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
-- `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
-- `context_packet.md`: audit copy of parsed source metadata, assets, and interleaved content for debugging.
-- `attempts.jsonl`: the whole-document rewrite attempt, ordered prompt messages, response, attached asset ids, and validation result.
-- `failures.jsonl`: unresolved whole-document rewrite failures.
-- `quality_report.json`: rewrite counts, image attachment counts, and soft QA metrics.
-- `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
-- `assets/`: copied parsed assets so Markdown image links remain local.
-
-This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
-
-The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 250 canonical keys and examples to Ollama, asks for 20 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
-
-```bash
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
-```
-
-The batch command defaults to `classroom-printout-studio/class-source-materials/parsed`, and the dictionary defaults to `build-dictionary/15_final_dictionary.jsonl`. Pass `--rewrite-dictionary` only when using a custom dictionary path.
-
-Vocabulary-guided outputs are written under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
-
-## Printable Class Materials
-
-For normal use, run the full workflow:
+Build class printouts from source materials:
 
 ```bash
 uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
 
-When sources have already been rewritten, run the printable stage to create editable A4 classroom handouts as DOCX files for human revision:
+That full class-printout command starts from `classroom-printout-studio/class-source-materials`, parses PDFs with PaddleOCR-VL, rewrites only the sources parsed in that run with vocabulary guidance from `build-dictionary/15_final_dictionary.jsonl`, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
+
+## Local Folders
+
+Tracked placeholders:
+
+- `build-dictionary/original/.gitkeep`
+- `build-dictionary/references/.gitkeep`
+
+Local ignored working folders:
+
+- `build-dictionary/`: generated dictionary artifacts plus local source/reference files.
+- `classroom-printout-studio/`: local class source materials, parsed bundles, rewritten bundles, and printouts.
+- `wbw-vocabulary-intelligence/`: local class archive, usage signals, live lexicon, and after-class reports.
+
+Put dictionary source files in:
+
+```text
+build-dictionary/original/
+```
+
+Put the reference meaning dictionary at:
+
+```text
+build-dictionary/references/reference-dictionary.jsonl
+```
+
+Put class source PDFs in:
+
+```text
+classroom-printout-studio/class-source-materials/
+```
+
+Generated stage outputs are replaceable. The full dictionary build records verified checkpoint cache metadata in `00_summary.json` and reuses saved stages only when schemas, inputs, options, dependencies, and artifact hashes still match. Per-source parse, rewrite, print, and after-class report outputs are regenerated in their output folders.
+
+## Dictionary Workflow
+
+The normal full workflow reads `.pdf`, `.txt`, and `.md` files from `build-dictionary/original/` and writes stages `00` through `15`:
+
+```bash
+uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b
+```
+
+The full workflow is resumable by default. It prints `SKIP`, `RUN`, or `REBUILD` for each checkpoint and stores cache metadata under `00_summary.json["build_cache"]`. Use `--force` when you intentionally want to ignore valid saved work:
+
+```bash
+uv --no-cache run python -m wordbyword --build-dictionary --force --ollama-model gemma4:31b
+```
+
+The full workflow is strict. If `13_generated_example_failures.jsonl` still has unresolved rows, the command returns nonzero and stops before meaning assignment. Repair stage `13` with the recovery commands, then run `--add-reference-meanings` and `--generate-missing-meanings` to finish from the repaired saved artifacts.
+
+The base-only command writes stages `00` through `09` and intentionally does not call Ollama:
+
+```bash
+uv --no-cache run python -m wordbyword
+```
+
+Useful base options:
+
+```bash
+uv --no-cache run python -m wordbyword --input build-dictionary/original --output build-dictionary
+uv --no-cache run python -m wordbyword --include-numbers
+uv --no-cache run python -m wordbyword --include-punctuation
+```
+
+Recovery and debugging commands reuse saved artifacts:
+
+```bash
+uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --clean-dictionary-candidates --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --link-cleaned-examples
+uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --add-reference-meanings
+uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-model gemma4:31b
+```
+
+Inspect the latest dictionary-shaped JSONL:
+
+```bash
+uv --no-cache run python -m wordbyword --show-distribution
+uv --no-cache run python -m wordbyword --show-distribution build-dictionary/15_final_dictionary.jsonl
+```
+
+Do not rerun the bare base command when you only mean to continue a full dictionary build; it intentionally rebuilds `00` through `09`. Use `--build-dictionary` to resume safely from verified saved artifacts.
+
+## Dictionary Artifacts
+
+| Stage | File | Purpose |
+| --- | --- | --- |
+| 00 | `00_summary.json` | Run metadata, counts, output list, and pipeline stage map. |
+| 01 | `01_extracted_pages.csv` | Cleaned page-level text extracted from each PDF or text source. |
+| 02 | `02_sentences.csv` | Sentence-like chunks after layout cleanup and noise filtering. |
+| 03 | `03_tokens.csv` | Kiwi tokenizer output with forms, POS tags, offsets, and source sentence. |
+| 04 | `04_surface_words.csv` | Visible word forms as they appeared in the cleaned source text. |
+| 05 | `05_vocabulary_raw.csv` | Raw lexical vocabulary terms counted from Korean morphology. |
+| 06 | `06_candidate_terms.csv` | Cleaned, grouped, and scored word candidates. |
+| 07 | `07_rejected_terms.csv` | Vocabulary terms removed by deterministic cleanup rules. |
+| 08 | `08_dictionary_candidates.jsonl` | Vocabulary candidate packets for manual or LLM curation. |
+| 09 | `09_example_sentences.csv` | High-signal sentence catalog for vocabulary examples. |
+| 10 | `10_cleaned_example_sentences.csv` | Ollama-curated source sentences kept, fixed, rebuilt, or deleted. |
+| 11 | `11_cleaned_dictionary_candidates.jsonl` | Ollama-filtered learner-dictionary candidates. |
+| 12 | `12_dictionary_candidates_with_cleaned_examples.jsonl` | Dictionary candidates linked to unique cleaned examples when available. |
+| 13 | `13_vocabulary_with_generated_examples.jsonl` | Selected vocabulary with generated examples for rows still missing a good one. |
+| 13 sidecar | `13_generated_example_attempts.jsonl` | Attempt log for generated example passes. |
+| 13 sidecar | `13_generated_example_failures.jsonl` | Current unresolved generated example failures. |
+| 14 | `14_vocabulary_with_meanings.jsonl` | Vocabulary enriched with reference-dictionary meanings when keys match. |
+| 15 | `15_final_dictionary.jsonl` | Final dictionary with Ollama-written Korean meanings for remaining blanks. |
+
+When quality looks wrong, inspect the numbered files in order. The first bad artifact usually identifies the stage that needs attention.
+
+## Class Printout Workflow
+
+Normal class handout generation:
+
+```bash
+uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
+```
+
+Stage-specific commands are for debugging or rerunning one part of the workflow.
+
+Parse source materials only:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-materials
+uv --no-cache run python -m wordbyword --parse-source-material classroom-printout-studio/class-source-materials/example.pdf
+```
+
+The default parse directory is `classroom-printout-studio/class-source-materials`. PDFs are parsed with PaddleOCR-VL. Non-PDF source-material extensions may be discovered, but only PDFs currently produce the full parsed bundle.
+
+PaddleOCR-VL sidecar behavior:
+
+- Prefer `.venv-paddleocr-vl` in the repo root.
+- Then `.venv-paddleocr`.
+- Or set `WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON` / `WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV`.
+- Or pass `--paddleocr-vl-sidecar-python` / `--paddleocr-vl-sidecar-env`.
+- Users should not need to export `PYTHONPATH`; the sidecar launch injects the repo root.
+
+Useful parse options:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials --skip-pdf-parse
+uv --no-cache run python -m wordbyword --parse-source-materials --pdf-render-dpi 180
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
+```
+
+Parse output per source:
+
+- `manifest.json`
+- `content.md`
+- `chunks.json`
+- `document_model.json`
+- `parser_output.json`
+- `quality_report.json`
+- `assets/`
+
+Rewrite parsed materials manually:
+
+```bash
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/example --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-whole-source-materials --ollama-model gemma4:31b
+```
+
+Vocabulary-guided rewrites default to `classroom-printout-studio/class-source-materials/parsed` and `build-dictionary/15_final_dictionary.jsonl`. They write bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/`.
+
+Print rewritten materials manually:
 
 ```bash
 uv --no-cache run python -m wordbyword --print-class-materials --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
-```
-
-The batch print command defaults to rewritten vocabulary-guided bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided`. `--build-class-printouts` starts from the default source-material folder and runs the full class-printout pipeline. The single-material print command still takes one rewritten bundle folder.
-
-The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. When image assets are available, the prompt attaches resized visual previews for selectable candidates and requires a vision-capable Ollama model; the model may choose up to two visually inspected image assets from the rewritten bundle. It does not author DOCX directly and it cannot use external images.
-
-Printable outputs are written per source:
-
-- `print_plan.json`: validated LLM JSON plan for the handout.
-- `content.md`: Markdown audit copy generated from the print plan.
-- `material.docx`: editable A4 Word document for human revision.
-- `attempts.jsonl`: printable-plan prompt and model response.
-- `failures.jsonl`: rejected printable-plan attempts.
-- `quality_report.json`: render status, font, section count, image count, and human-revision target.
-- `manifest.json`: source rewrite metadata, model, render settings, and file map.
-- `assets/`: copied rewritten-bundle assets referenced by the plan.
-
-Useful printable overrides:
-
-```bash
+uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/example --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --print-class-materials --print-body-font-size 13
 uv --no-cache run python -m wordbyword --print-class-materials --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
-uv --no-cache run python -m wordbyword --print-class-materials --print-output-root classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama
 ```
 
-## Class Session Archive
+Printable outputs per source:
 
-Past class printouts can be dropped into `wbw-vocabulary-intelligence/class-session-archive/` as `.docx` or `.pdf` files. Teachers can use rough names such as `material.docx`, `material 2.docx`, or `printout.pdf`; the archive rename command extracts text, asks Ollama only for classification metadata, validates the result, and performs any filesystem rename in code.
+- `print_plan.json`
+- `content.md`
+- `material.docx`
+- `attempts.jsonl`
+- `failures.jsonl`
+- `quality_report.json`
+- `manifest.json`
+- `assets/`
 
-Dry-run the rename plan first:
+The print stage asks Ollama for a strict JSON print plan, then renders DOCX locally. The model does not write the Word file directly.
+
+## Class Archive And Usage Signals
+
+Drop used class printouts into:
+
+```text
+wbw-vocabulary-intelligence/class-session-archive/
+```
+
+Preview archive renames:
 
 ```bash
 uv --no-cache run python -m wordbyword --rename-class-session-archive --ollama-model gemma4:31b
 ```
 
-Apply the plan:
+Apply archive renames:
 
 ```bash
 uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-archive-renames --ollama-model gemma4:31b
 ```
 
-The default archive folder is `wbw-vocabulary-intelligence/class-session-archive/`. The command only considers direct `.docx` and `.pdf` files inside the archive folder. It never edits document contents, never deletes files, never moves files outside the archive, and never overwrites an existing file. Applied runs write `.wordbyword-archive-ledger.json` so the original filename and first-seen timestamp are preserved after renames.
+The rename command considers direct `.docx` and `.pdf` files only. It never edits document contents, never deletes files, never moves files outside the archive, and never overwrites an existing file.
 
-## Class Usage Signals
-
-After class printouts are named in the archive format, build a deterministic usage-signal bundle from the used materials:
+Build deterministic usage signals from managed archive filenames:
 
 ```bash
 uv --no-cache run python -m wordbyword --build-usage-signals
 ```
 
-The command reads direct `.docx` and `.pdf` files under `wbw-vocabulary-intelligence/class-session-archive/` whose filenames already match the archive convention, then writes the same heuristic `00` to `09` artifact set under `wbw-vocabulary-intelligence/usage-signal-build/`. Rough filenames are ignored so teachers can rename first and keep analytics tied to stable class-material ids. This step does not call Ollama, update the live grade lexicon, or calculate ROI.
-
-Update the live grade lexicon from the usage signal candidates:
+Update the live grade lexicon:
 
 ```bash
 uv --no-cache run python -m wordbyword --update-live-lexicon
 ```
 
-This stage regenerates `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` from `build-dictionary/15_final_dictionary.jsonl`, renaming textbook signals to `canonical_count` and `canonical_document_count`, removing Ollama provenance flags, then overlaying class usage from `wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl`. Matching rows receive `class_count`, `class_printout_count`, merged usage variants, and a blended `roi_score`; unmatched usage candidates are written to `wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl` for later review. The update is idempotent and does not touch the legacy `grade1-live-lexicon.jsonl` by default.
+`--build-usage-signals` writes `00` through `09` usage artifacts under `wbw-vocabulary-intelligence/usage-signal-build/`. `--update-live-lexicon` writes `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` and unmatched usage candidates.
 
-## Outputs
+## After-Class Reports
 
-The pipeline writes these files:
-
-- `00_summary.json`: counts, scanned documents, generated files, and ordered pipeline stages.
-- `01_extracted_pages.csv`: cleaned page-level text extracted from each PDF or text source.
-- `02_sentences.csv`: every parsed sentence after layout cleanup, with document, page, and sentence index.
-- `03_tokens.csv`: every tokenizer occurrence with document, page, sentence, form, POS tag, and offsets.
-- `04_surface_words.csv`: surface-level words as they appear in the source text.
-- `05_vocabulary_raw.csv`: raw unique vocabulary terms from Korean-aware morphology.
-- `06_candidate_terms.csv`: deterministically cleaned term candidates with canonical keys, variants, legacy `quality_score`, experimental centered `quality_score_v2`, component v2 scores, and ROI scores. ROI is blank until calculated.
-- `07_rejected_terms.csv`: vocabulary terms removed by deterministic cleanup, with rejection reasons.
-- `08_dictionary_candidates.jsonl`: structured vocabulary candidate packets for learner-dictionary curation.
-- `09_example_sentences.csv`: high-signal sentence catalog filtered by canonical-key coverage, density, sentence shape, and normalized quality scores.
-- `10_cleaned_example_sentences.csv`: optional Ollama-curated sentence set that keeps, lightly fixes, rebuilds, or deletes `09` rows with a strong bias toward minimal edits.
-- `11_cleaned_dictionary_candidates.jsonl`: optional Ollama-filtered learner-dictionary candidate set with low-signal names and debris removed from `08`.
-- `12_dictionary_candidates_with_cleaned_examples.jsonl`: deterministic stage that keeps the `11` row shape, promotes `curation_status` to `rewrite_ready`, and replaces `example` with the winning cleaned sentence from `10` when one is assigned.
-- `13_vocabulary_with_generated_examples.jsonl`: optional Ollama stage that keeps the `12` row shape, treats the rows as selected vocabulary, preserves cleaned-example wins, and writes a completely new example sentence for rows where `example_replaced_with_cleaned_sentence` is `false`.
-- `13_generated_example_attempts.jsonl`: sidecar log of every stage-13 generated sentence attempt, including rejected outputs.
-- `13_generated_example_failures.jsonl`: sidecar log of the currently unresolved stage-13 failures after validation and any approved retries.
-- `14_vocabulary_with_meanings.jsonl`: deterministic stage that keeps the `13` row shape, sets `curation_status` to `confirmed`, and adds a `meaning` field from `build-dictionary/references/reference-dictionary.jsonl` when `canonical_key` matches. Rows without a reference match get `meaning: ""` for later LLM completion.
-- `15_final_dictionary.jsonl`: final dictionary artifact. It keeps the `14` row shape and writes Korean meanings for rows whose `meaning` field is empty, using the canonical key and example sentence as context.
-- `README.md`: a generated guide for reading the `build-dictionary/` folder in pipeline order.
-
-When artifact quality looks wrong, inspect the numbered files in order. Start with `01_extracted_pages.csv` to see whether PDF text extraction is already noisy, then check `02_sentences.csv` to see whether layout fragments were split or merged incorrectly.
-
-## Usage
+Generate one adult-facing Korean report from one managed archived class printout:
 
 ```bash
-uv --no-cache run python -m wordbyword
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
 ```
 
-Useful options:
+The input must be one `.docx` or `.pdf` file whose filename already matches the managed archive pattern. If it does not, run the archive rename dry run and apply step first.
+
+Report outputs are written under `wbw-vocabulary-intelligence/after-class-reports/grade1-ko-a4-ollama/<source-id>/`:
+
+- `heuristic-analysis/`
+- `report_plan.json`
+- `content.md`
+- `after_class_report.docx`
+- `attempts.jsonl`
+- `failures.jsonl`
+- `quality_report.json`
+- `manifest.json`
+
+Useful overrides:
 
 ```bash
-uv --no-cache run python -m wordbyword --input build-dictionary/original --output build-dictionary
-uv --no-cache run python -m wordbyword --include-punctuation
-uv --no-cache run python -m wordbyword --include-numbers
-uv --no-cache run python -m wordbyword --clean-example-sentences
-uv --no-cache run python -m wordbyword --clean-dictionary-candidates
-uv --no-cache run python -m wordbyword --link-cleaned-examples
-uv --no-cache run python -m wordbyword --generate-missing-examples
-uv --no-cache run python -m wordbyword --retry-generated-examples
-uv --no-cache run python -m wordbyword --add-reference-meanings
-uv --no-cache run python -m wordbyword --generate-missing-meanings
-uv --no-cache run python -m wordbyword --show-distribution
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --after-class-report-output-root wbw-vocabulary-intelligence/after-class-reports/grade1-ko-a4-ollama
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --after-class-report-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
 ```
 
-The default pipeline run is deterministic and rebuilds `01` through `09` from `build-dictionary/original/`.
+## LLM Providers
 
-The LLM cleanup stages are intentionally separate and reuse saved artifacts from `build-dictionary/`:
-
-```bash
-uv --no-cache run python -m wordbyword
-uv --no-cache run python -m wordbyword --clean-example-sentences
-uv --no-cache run python -m wordbyword --clean-dictionary-candidates
-uv --no-cache run python -m wordbyword --link-cleaned-examples
-uv --no-cache run python -m wordbyword --generate-missing-examples
-uv --no-cache run python -m wordbyword --retry-generated-examples
-uv --no-cache run python -m wordbyword --add-reference-meanings
-uv --no-cache run python -m wordbyword --generate-missing-meanings
-```
-
-- `--clean-example-sentences` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/09_example_sentences.csv` to write `10_cleaned_example_sentences.csv`.
-- `--clean-dictionary-candidates` reads saved `build-dictionary/06_candidate_terms.csv` and `build-dictionary/08_dictionary_candidates.jsonl` to write `11_cleaned_dictionary_candidates.jsonl`.
-- `--link-cleaned-examples` reads saved `build-dictionary/10_cleaned_example_sentences.csv` and `build-dictionary/11_cleaned_dictionary_candidates.jsonl` to write `12_dictionary_candidates_with_cleaned_examples.jsonl`.
-- `--generate-missing-examples` reads saved `build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl` to write selected vocabulary in `13_vocabulary_with_generated_examples.jsonl` and the stage-13 attempt/failure logs.
-- `--retry-generated-examples` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
-- `--add-reference-meanings` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/references/reference-dictionary.jsonl` to write `14_vocabulary_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
-- `--generate-missing-meanings` reads saved `build-dictionary/14_vocabulary_with_meanings.jsonl` and asks Ollama to write Korean meanings for rows whose `meaning` field is empty, writing `15_final_dictionary.jsonl`.
-- `--show-distribution` renders the terminal distribution panel for the latest saved dictionary JSONL, preferring `15_final_dictionary.jsonl` when it exists, without making LLM calls. Pass an explicit JSONL path to inspect a specific artifact such as `11_cleaned_dictionary_candidates.jsonl`.
-- When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
-- When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
-
-Pure numbers are ignored in vocabulary and surface word outputs unless `--include-numbers` is set.
-
-The candidate files are the first deterministic cleanup layer. They keep the raw files intact, then group obvious variants such as particles and endings, normalize verb/adjective stems to dictionary-style forms, reject layout fragments, assign rough deterministic quality scores, and leave ROI blank/null until a priority score is calculated.
-
-## LLM Providers And Cleanup
-
-The package exposes a small provider layer for rewrite and dictionary-curation work:
+The helper layer supports these providers:
 
 - `openai`
 - `claude`
 - `google`
 - `ollama`
 
-Set credentials with environment variables before calling the LLM helpers:
+Environment variables:
 
 ```bash
 export OPENAI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 export GOOGLE_API_KEY=...
-export OLLAMA_BASE_URL=http://localhost:11434
+export GEMINI_API_KEY=...
+export WORDBYWORD_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 Optional model overrides:
@@ -293,73 +313,19 @@ Optional model overrides:
 export WORDBYWORD_OPENAI_MODEL=gpt-4o
 export WORDBYWORD_CLAUDE_MODEL=claude-3-5-sonnet-20240620
 export WORDBYWORD_GOOGLE_MODEL=gemini-1.5-pro
-export WORDBYWORD_OLLAMA_MODEL=llama3.1
+export WORDBYWORD_OLLAMA_MODEL=gemma4:31b
 ```
 
-All LLM helper clients default to `temperature=0.7`. Override with `default_temperature=` only when you need a different sampling level.
+The command-line workflows use Ollama for cleanup, rewrite, print planning, archive classification, and after-class report generation.
 
-The optional sentence cleanup stage uses Ollama and defaults to `gemma4:31b` when `--clean-example-sentences` is enabled. Override it at runtime if needed:
-
-```bash
-uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model gemma4:31b
-```
-
-The cleanup stage sends saved `09_example_sentences.csv` rows to Ollama in batches of `50` rows by default.
-
-The optional dictionary cleanup stage sends saved `08_dictionary_candidates.jsonl` rows to Ollama in batches of `40` rows by default and writes `11_cleaned_dictionary_candidates.jsonl`.
-
-The optional missing-example generation stage sends saved `12_dictionary_candidates_with_cleaned_examples.jsonl` rows whose `example_replaced_with_cleaned_sentence` flag is `false` to Ollama in batches of `40` rows by default, checkpoints selected vocabulary in `13_vocabulary_with_generated_examples.jsonl` after each batch, logs every attempt to `13_generated_example_attempts.jsonl`, and keeps unresolved failures in `13_generated_example_failures.jsonl`. When a generated sentence fails validation, the CLI can prompt you to retry only the failed subset; the retry pass compares the source example, the failed generated sentence, and the validation failure reason, then decides whether to keep the generated sentence, rewrite it to match the source meaning, rewrite the source for learner quality, or write a new example from scratch:
-
-```bash
-uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
-```
-
-The reference-meaning stage is deterministic and does not call an LLM. Before writing stage 14, it deletes the stage-13 attempt log and removes the failure log when it is empty. It checkpoints `14_vocabulary_with_meanings.jsonl` row by row while matching each stage-13 `canonical_key` against `build-dictionary/references/reference-dictionary.jsonl`:
-
-```bash
-uv --no-cache run python -m wordbyword --add-reference-meanings
-```
-
-The optional missing-meaning generation stage sends saved `14_vocabulary_with_meanings.jsonl` rows whose `meaning` field is empty to Ollama in batches of `40` rows by default. Each prompt includes the row id, `canonical_key`, display form, and example sentence. The stage checkpoints `15_final_dictionary.jsonl` after each batch and marks generated rows with `meaning_generated_with_ollama: true`:
-
-```bash
-uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-model gemma4:31b
-```
-
-## What This Enables Next
-
-The current `15_final_dictionary.jsonl` shape is the final dictionary artifact for this build. The next layer should probably add grade metadata around those headwords rather than changing the extraction pipeline:
-
-- grade band or target reader level for each canonical key
-- allowed forms, variants, and example sentences per grade band
-- difficulty evidence from frequency, dispersion, source examples, and manual/LLM judgment
-- rewrite prompts that tell the LLM which mature terms to preserve, simplify, gloss, or replace
-- evaluation rows comparing original and rewritten article sentences for faithfulness, readability, and vocabulary-band fit
-
-Programmatic example:
-
-```python
-from wordbyword import build_dictionary_entry, openai_client, rewrite_sentence
-
-client = openai_client()
-rewritten = rewrite_sentence(client, sentence="학생이 책을 읽고 있다.", focus_terms=["책", "읽다"])
-entry = build_dictionary_entry(
-    client,
-    candidate={"canonical_key": "읽다", "display": "읽다", "pos_group": "verb"},
-    example_sentences=[rewritten],
-)
-```
-
-## Verify
+## Verification
 
 ```bash
 uv run pytest -q
 uv run ruff check .
-uv run python -m unittest discover tests -q
 ```
 
-Run the live Ollama rewrite smoke test only when a local `gemma4:31b` is available:
+Run the live Ollama smoke test only when a local `gemma4:31b` is available:
 
 ```bash
 WORDBYWORD_RUN_OLLAMA_LIVE_TESTS=1 uv run python -m unittest tests.test_llm.LiveOllamaIntegrationTest

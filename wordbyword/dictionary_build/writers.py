@@ -63,7 +63,6 @@ from wordbyword.dictionary_build.output_files import (
 )
 from wordbyword.dictionary_build.output_metadata import (
     refresh_saved_output_metadata,
-    write_output_readme,
     write_summary,
 )
 from wordbyword.dictionary_build.saved_outputs import (
@@ -117,7 +116,6 @@ __all__ = [
     "write_linked_dictionary_candidates_from_saved",
     "write_generated_meaning_dictionary_candidates_from_saved",
     "write_meaning_dictionary_candidates_from_saved",
-    "write_output_readme",
     "write_outputs",
     "write_rows",
     "write_summary",
@@ -253,10 +251,5 @@ def write_outputs(
         documents=documents,
         cleaned_example_outputs=cleaned_example_outputs,
         cleaned_dictionary_outputs=cleaned_dictionary_outputs,
-    )
-    write_output_readme(
-        artifact_path(output_dir, ArtifactId.README),
-        include_cleaned_example_sentences=cleaned_example_outputs is not None,
-        include_cleaned_dictionary_candidates=cleaned_dictionary_outputs is not None,
     )
     refresh_saved_output_metadata(output_dir)

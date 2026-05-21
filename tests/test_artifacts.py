@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ from wordbyword.dictionary_build.artifacts import (
     output_filenames,
     pipeline_stage_rows,
 )
+from wordbyword.dictionary_build.output_metadata import refresh_saved_output_metadata
 
 
 class DictionaryArtifactCatalogTest(unittest.TestCase):
@@ -32,7 +34,6 @@ class DictionaryArtifactCatalogTest(unittest.TestCase):
                 "07_rejected_terms.csv",
                 "08_dictionary_candidates.jsonl",
                 "09_example_sentences.csv",
-                "README.md",
             ],
         )
         self.assertEqual(
@@ -56,6 +57,7 @@ class DictionaryArtifactCatalogTest(unittest.TestCase):
             ],
         )
         self.assertIn("filtered_example_sentence.csv", legacy_output_filenames())
+        self.assertIn("README.md", legacy_output_filenames())
 
     def test_output_filenames_can_exclude_missing_stage_thirteen_sidecars(self) -> None:
         filenames = output_filenames(
@@ -149,3 +151,16 @@ class DictionaryArtifactCatalogTest(unittest.TestCase):
                     ArtifactId.FINAL_DICTIONARY,
                 ],
             )
+
+    def test_metadata_refresh_does_not_write_generated_readme(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            artifact_path(output_dir, ArtifactId.SUMMARY).write_text("{}", encoding="utf-8")
+            artifact_path(output_dir, ArtifactId.FINAL_DICTIONARY).write_text("{}\n", encoding="utf-8")
+
+            refresh_saved_output_metadata(output_dir)
+
+            summary = json.loads(artifact_path(output_dir, ArtifactId.SUMMARY).read_text(encoding="utf-8"))
+            self.assertIn("15_final_dictionary.jsonl", summary["outputs"])
+            self.assertNotIn("README.md", summary["outputs"])
+            self.assertFalse((output_dir / "README.md").exists())

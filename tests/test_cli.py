@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,10 +24,11 @@ from wordbyword.cli import (
     resolve_distribution_path,
     show_distribution,
     source_parse_options_from_args,
+    validate_args,
 )
 from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
-from wordbyword.dictionary_build.llm import CompletionResult
+from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationError
 from wordbyword.dictionary_build.pipeline import PipelineResult
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
@@ -38,11 +40,78 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(args.input, DEFAULT_INPUT_DIR)
         self.assertEqual(args.input, Path("build-dictionary/original"))
+        self.assertFalse(args.build_dictionary)
         self.assertEqual(args.reference_dictionary, DEFAULT_REFERENCE_DICTIONARY_PATH)
         self.assertEqual(
             args.reference_dictionary,
             Path("build-dictionary/references/reference-dictionary.jsonl"),
         )
+
+    def test_build_dictionary_accepts_normal_dictionary_modifiers(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--build-dictionary",
+                "--force",
+                "--input",
+                "custom-input",
+                "--output",
+                "custom-output",
+                "--reference-dictionary",
+                "references.jsonl",
+                "--ollama-model",
+                "gemma4:31b",
+                "--ollama-base-url",
+                "http://localhost:11434",
+                "--include-punctuation",
+                "--include-numbers",
+            ]
+        )
+
+        self.assertTrue(args.build_dictionary)
+        self.assertTrue(args.force)
+        self.assertEqual(args.input, Path("custom-input"))
+        self.assertEqual(args.output, Path("custom-output"))
+        self.assertEqual(args.reference_dictionary, Path("references.jsonl"))
+        self.assertEqual(args.ollama_model, "gemma4:31b")
+        self.assertEqual(args.ollama_base_url, "http://localhost:11434")
+        self.assertTrue(args.include_punctuation)
+        self.assertTrue(args.include_numbers)
+
+    def test_build_dictionary_rejects_incompatible_commands(self) -> None:
+        incompatible_args = [
+            ["--clean-example-sentences"],
+            ["--clean-dictionary-candidates"],
+            ["--link-cleaned-examples"],
+            ["--generate-missing-examples"],
+            ["--retry-generated-examples"],
+            ["--add-reference-meanings"],
+            ["--generate-missing-meanings"],
+            ["--show-distribution"],
+            ["--build-class-printouts"],
+            ["--build-usage-signals"],
+        ]
+
+        for extra_args in incompatible_args:
+            with self.subTest(extra_args=extra_args):
+                parser = build_parser()
+                args = parser.parse_args(["--build-dictionary", *extra_args])
+                stderr = io.StringIO()
+                with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+                    validate_args(parser, args)
+
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--build-dictionary cannot be combined", stderr.getvalue())
+
+    def test_force_without_build_dictionary_is_rejected(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--force"])
+        stderr = io.StringIO()
+
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+            validate_args(parser, args)
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--force can only be used with --build-dictionary", stderr.getvalue())
 
     def test_class_printout_commands_have_zero_config_roots(self) -> None:
         parser = build_parser()
@@ -309,6 +378,87 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         print_material.assert_not_called()
+
+
+class BuildDictionaryCliTest(unittest.TestCase):
+    def test_main_with_build_dictionary_uses_resumable_builder(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            output_dir = root / "output"
+            output_dir.mkdir()
+            input_dir = root / "input"
+            reference_path = root / "reference.jsonl"
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch(
+                    "wordbyword.cli.app.build_resumable_dictionary",
+                    return_value=SimpleNamespace(pipeline_result=pipeline_result(output_dir)),
+                ) as build_dictionary,
+            ):
+                exit_code = main(
+                    [
+                        "--build-dictionary",
+                        "--force",
+                        "--input",
+                        str(input_dir),
+                        "--output",
+                        str(output_dir),
+                        "--reference-dictionary",
+                        str(reference_path),
+                        "--ollama-model",
+                        "gemma4:31b",
+                        "--ollama-base-url",
+                        "http://localhost:11434",
+                        "--include-punctuation",
+                        "--include-numbers",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            build_dictionary.assert_called_once()
+            kwargs = build_dictionary.call_args.kwargs
+            self.assertEqual(kwargs["input_dir"], input_dir)
+            self.assertEqual(kwargs["output_dir"], output_dir)
+            self.assertEqual(kwargs["reference_dictionary_path"], reference_path)
+            self.assertTrue(kwargs["include_punctuation"])
+            self.assertTrue(kwargs["include_numbers"])
+            self.assertEqual(kwargs["model"], "gemma4:31b")
+            self.assertEqual(kwargs["base_url"], "http://localhost:11434")
+            self.assertTrue(kwargs["force"])
+            self.assertIsNotNone(kwargs["checkpoint_status"])
+
+    def test_build_dictionary_reports_resumable_builder_failure(self) -> None:
+        stderr = io.StringIO()
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr), patch(
+            "wordbyword.cli.app.build_resumable_dictionary",
+            side_effect=ValueError("bad saved artifact"),
+        ):
+            exit_code = main(["--build-dictionary"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("bad saved artifact", stderr.getvalue())
+
+    def test_build_dictionary_stops_on_unresolved_generated_example_failures(self) -> None:
+        stderr = io.StringIO()
+        with patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr), patch(
+            "wordbyword.cli.app.build_resumable_dictionary",
+            side_effect=wordbyword_cli_unresolved_generated_example_failures(),
+        ):
+            exit_code = main(["--build-dictionary"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("1 unresolved generated-example failure", stderr.getvalue())
+        self.assertIn("13_generated_example_failures.jsonl", stderr.getvalue())
+
+
+def wordbyword_cli_unresolved_generated_example_failures():
+    from wordbyword.dictionary_build.resumable import UnresolvedGeneratedExampleFailures
+
+    return UnresolvedGeneratedExampleFailures(
+        1,
+        Path("build-dictionary/13_generated_example_failures.jsonl"),
+    )
 
 
 class ShowDistributionCliTest(unittest.TestCase):
@@ -809,6 +959,20 @@ class ShowDistributionCliTest(unittest.TestCase):
             mock_pipeline.assert_not_called()
             self.assertIn("15_final_dictionary.jsonl", stdout.getvalue())
 
+    def test_generate_missing_meanings_reports_client_configuration_errors(self) -> None:
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr), patch(
+            "wordbyword.cli.app.ollama_client",
+            side_effect=LLMConfigurationError("bad ollama config"),
+        ):
+            exit_code = generate_missing_meanings(
+                output_dir=Path("build-dictionary"),
+                model="gemma4:31b",
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("bad ollama config", stderr.getvalue())
+
     def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
@@ -894,6 +1058,37 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
         self.assertFalse(should_retry)
+
+
+class DocumentationCommandTest(unittest.TestCase):
+    def test_documented_wordbyword_commands_parse(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        command_lines: list[tuple[Path, str]] = []
+        for path in (root / "README.md", root / "BEGINNERS_GUIDE.md"):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("uv ") and "python -m wordbyword" in stripped:
+                    command_lines.append((path, stripped))
+
+        self.assertGreater(len(command_lines), 0)
+        parser = build_parser()
+        for path, command in command_lines:
+            with self.subTest(path=path.name, command=command):
+                parts = shlex.split(command)
+                cli_args = parts[parts.index("wordbyword") + 1 :]
+                parser.parse_args(cli_args)
+
+
+def pipeline_result(output_dir: Path) -> PipelineResult:
+    return PipelineResult(
+        documents=0,
+        extracted_pages=0,
+        sentences=0,
+        token_occurrences=0,
+        vocabulary_terms=0,
+        surface_words=0,
+        output_dir=output_dir,
+    )
 
 
 def attempt_summary(*, attempt_number: int, failed_count: int) -> GeneratedExampleAttemptSummary:

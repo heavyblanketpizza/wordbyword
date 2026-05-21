@@ -45,6 +45,7 @@ class PipelineTest(unittest.TestCase):
             (output_dir / "06_expressions_raw.csv").write_text("old output", encoding="utf-8")
             (output_dir / "08_candidate_expressions.csv").write_text("old output", encoding="utf-8")
             (output_dir / "filtered_example_sentence.csv").write_text("old output", encoding="utf-8")
+            (output_dir / "README.md").write_text("old generated guide", encoding="utf-8")
             stale_optional_outputs = [
                 "10_cleaned_example_sentences.csv",
                 "11_cleaned_dictionary_candidates.jsonl",
@@ -86,7 +87,7 @@ class PipelineTest(unittest.TestCase):
             self.assertTrue((output_dir / "09_example_sentences.csv").exists())
             for filename in stale_optional_outputs:
                 self.assertFalse((output_dir / filename).exists())
-            self.assertTrue((output_dir / "README.md").exists())
+            self.assertFalse((output_dir / "README.md").exists())
             self.assertFalse((output_dir / "tokens.csv").exists())
             self.assertFalse((output_dir / "expressions.csv").exists())
             self.assertFalse((output_dir / "06_expressions_raw.csv").exists())

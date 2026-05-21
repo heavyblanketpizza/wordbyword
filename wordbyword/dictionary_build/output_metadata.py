@@ -8,7 +8,6 @@ from typing import Any
 from wordbyword.dictionary_build.artifacts import (
     ArtifactId,
     artifact_exists,
-    artifact_filename,
     artifact_path,
     output_filenames,
     pipeline_stage_rows,
@@ -87,45 +86,6 @@ def write_summary(
         summary["cleaned_dictionary_candidate_actions"] = dict(cleaned_dictionary_outputs.action_counts)
         summary["cleaned_dictionary_candidate_reasons"] = dict(cleaned_dictionary_outputs.rejection_reason_counts)
     path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def write_output_readme(
-    path: Path,
-    *,
-    include_cleaned_example_sentences: bool = False,
-    include_cleaned_dictionary_candidates: bool = False,
-    include_linked_dictionary_candidates: bool = False,
-    include_generated_dictionary_candidates: bool = False,
-    include_meaning_dictionary_candidates: bool = False,
-    include_generated_meaning_dictionary_candidates: bool = False,
-) -> None:
-    lines = [
-        "# wordbyword build-dictionary",
-        "",
-        "Read these files in numeric order to follow the pipeline from source text to vocabulary candidates.",
-        "",
-        "| Stage | File | Purpose |",
-        "| --- | --- | --- |",
-    ]
-    for stage in pipeline_stage_rows(
-        include_cleaned_example_sentences=include_cleaned_example_sentences,
-        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
-        include_linked_dictionary_candidates=include_linked_dictionary_candidates,
-        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
-        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
-        include_generated_meaning_dictionary_candidates=include_generated_meaning_dictionary_candidates,
-    ):
-        lines.append(f"| {stage['stage']} | `{stage['file']}` | {stage['description']} |")
-
-    lines.extend(
-        [
-            "",
-            f"When artifact quality looks wrong, start at `{artifact_filename(ArtifactId.EXTRACTED_PAGES)}` and move forward.",
-            "The first file where the text looks wrong usually points to the stage that needs work.",
-            "",
-        ]
-    )
-    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def refresh_saved_output_metadata(
@@ -259,13 +219,3 @@ def refresh_saved_output_metadata(
 
     if summary or summary_path.is_file():
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    write_output_readme(
-        artifact_path(output_dir, ArtifactId.README),
-        include_cleaned_example_sentences=include_cleaned_example_sentences,
-        include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
-        include_linked_dictionary_candidates=include_linked_dictionary_candidates,
-        include_generated_dictionary_candidates=include_generated_dictionary_candidates,
-        include_meaning_dictionary_candidates=include_meaning_dictionary_candidates,
-        include_generated_meaning_dictionary_candidates=include_generated_meaning_dictionary_candidates,
-    )

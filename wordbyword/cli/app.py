@@ -26,6 +26,12 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
+from wordbyword.dictionary_build.resumable import (
+    CheckpointStatus,
+    UnresolvedGeneratedExampleFailures,
+    build_resumable_dictionary,
+    generated_example_failure_count as resumable_generated_example_failure_count,
+)
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
     SourceMaterialParseError,
     parse_source_material,
@@ -149,6 +155,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_immediate_command(args: argparse.Namespace) -> int | None:
+    if args.build_dictionary:
+        return build_dictionary_cli(args)
     if args.parse_source_material is not None:
         options = source_parse_options_from_args(args)
         return parse_source_material_cli(
@@ -281,6 +289,81 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             base_url=args.ollama_base_url,
         )
     return None
+
+
+def build_dictionary_cli(args: argparse.Namespace) -> int:
+    emit_boot_screen(
+        input_dir=args.input,
+        output_dir=args.output,
+        clean_example_sentences=True,
+        sentence_cleanup_model=args.ollama_model,
+    )
+
+    try:
+        result = build_resumable_dictionary(
+            input_dir=args.input,
+            output_dir=args.output,
+            reference_dictionary_path=args.reference_dictionary,
+            include_punctuation=args.include_punctuation,
+            include_numbers=args.include_numbers,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            force=args.force,
+            progress=emit_stage_update,
+            cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="example",
+                item_label="rows",
+            ),
+            dictionary_cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="dictionary",
+                item_label="terms",
+            ),
+            generated_example_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="candidate example",
+                item_label="terms",
+            ),
+            generated_meaning_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="meaning",
+                item_label="terms",
+            ),
+            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+            checkpoint_status=emit_dictionary_build_checkpoint_status,
+        )
+    except UnresolvedGeneratedExampleFailures as error:
+        sys.stderr.write(
+            "wordbyword: full dictionary build stopped because stage 13 left "
+            f"{error.count:,} unresolved generated-example failure(s).\n"
+            f"  failures: {error.path}\n"
+            "  repair: run --retry-generated-examples until failures are clear, then run "
+            "--add-reference-meanings and --generate-missing-meanings.\n"
+        )
+        return 1
+    except (ValueError, PipelineUsageError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    emit_completion_screen(
+        result.pipeline_result,
+        input_dir=args.input,
+        include_punctuation=args.include_punctuation,
+        include_numbers=args.include_numbers,
+        clean_example_sentences=True,
+        sentence_cleanup_model=args.ollama_model,
+    )
+    return 0
+
+
+def emit_dictionary_build_checkpoint_status(status: CheckpointStatus) -> None:
+    sys.stdout.write(f"wordbyword: {status.action.value} {status.key} {status.label}: {status.reason}\n")
+    sys.stdout.flush()
+
+
+def generated_example_failure_count(output_dir: Path) -> int:
+    return resumable_generated_example_failure_count(output_dir)
 
 
 def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
@@ -1423,12 +1506,6 @@ def generate_missing_meanings(
     generated_meaning_client: SupportsCompletion | None = None,
 ) -> int:
     owns_client = generated_meaning_client is None
-    client = generated_meaning_client or ollama_client(
-        model=model,
-        base_url=base_url,
-        timeout_seconds=300.0,
-        max_output_tokens=4096,
-    )
 
     def generated_meaning_progress(progress: CleanupBatchProgress) -> None:
         emit_cleanup_progress(
@@ -1439,6 +1516,12 @@ def generate_missing_meanings(
         )
 
     try:
+        client = generated_meaning_client or ollama_client(
+            model=model,
+            base_url=base_url,
+            timeout_seconds=300.0,
+            max_output_tokens=4096,
+        )
         try:
             outputs = write_generated_meaning_dictionary_candidates_from_saved(
                 output_dir,
@@ -1448,7 +1531,7 @@ def generate_missing_meanings(
         finally:
             if owns_client:
                 warn_if_model_unload_fails(client)
-    except (ValueError, LLMRequestError, LLMResponseError) as error:
+    except (ValueError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 

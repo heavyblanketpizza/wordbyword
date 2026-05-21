@@ -69,6 +69,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include pure number terms in vocabulary and surface word outputs.",
     )
     parser.add_argument(
+        "--build-dictionary",
+        action="store_true",
+        help="Build dictionary stages 00 through 15 in one strict workflow.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --build-dictionary, ignore saved checkpoints and rebuild every stage.",
+    )
+    parser.add_argument(
         "--clean-example-sentences",
         action="store_true",
         help="Use saved build-dictionary/09_example_sentences.csv and build-dictionary/06_candidate_terms.csv to write 10_cleaned_example_sentences.csv.",
@@ -553,6 +563,29 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.build_usage_signals,
         args.update_live_lexicon,
     ]
+    dictionary_stage_commands = [
+        args.clean_example_sentences,
+        args.clean_dictionary_candidates,
+        args.link_cleaned_examples,
+        args.generate_missing_examples,
+        args.retry_generated_examples,
+        args.add_reference_meanings,
+        args.generate_missing_meanings,
+    ]
+    if args.build_dictionary and any(
+        dictionary_stage_commands + immediate_commands + [args.show_distribution is not None]
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --build-dictionary cannot be combined with stage-specific "
+            "dictionary commands, distribution display, class printout commands, archive/report "
+            "commands, or usage-signal commands.\n",
+        )
+    if args.force and not args.build_dictionary:
+        parser.exit(
+            2,
+            "wordbyword: error: --force can only be used with --build-dictionary.\n",
+        )
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
             2,
@@ -577,6 +610,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         or args.print_class_material is not None
         or args.print_class_materials is not None
         or args.build_class_printouts is not None
+        or args.build_dictionary
     ) and args.source_id:
         parser.exit(
             2,

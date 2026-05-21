@@ -23,7 +23,6 @@ class ArtifactId(StrEnum):
     REJECTED_TERMS = "rejected_terms"
     DICTIONARY_CANDIDATES = "dictionary_candidates"
     EXAMPLE_SENTENCES = "example_sentences"
-    README = "readme"
     CLEANED_EXAMPLE_SENTENCES = "cleaned_example_sentences"
     CLEANED_DICTIONARY_CANDIDATES = "cleaned_dictionary_candidates"
     LINKED_DICTIONARY_CANDIDATES = "linked_dictionary_candidates"
@@ -60,7 +59,6 @@ BASE_ARTIFACT_IDS: tuple[ArtifactId, ...] = (
     ArtifactId.REJECTED_TERMS,
     ArtifactId.DICTIONARY_CANDIDATES,
     ArtifactId.EXAMPLE_SENTENCES,
-    ArtifactId.README,
 )
 
 OPTIONAL_ARTIFACT_IDS: tuple[ArtifactId, ...] = (
@@ -91,6 +89,7 @@ LEGACY_OUTPUT_FILES: tuple[str, ...] = (
     "09_rejected_candidates.csv",
     "10_dictionary_candidates.jsonl",
     "filtered_example_sentence.csv",
+    "README.md",
 )
 
 _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
@@ -166,11 +165,6 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
             "High-signal sentence catalog filtered by canonical-key coverage, density, "
             "sentence shape, and normalized quality scores."
         ),
-    ),
-    ArtifactId.README: ArtifactSpec(
-        id=ArtifactId.README,
-        filename="README.md",
-        format=ArtifactFormat.TEXT,
     ),
     ArtifactId.CLEANED_EXAMPLE_SENTENCES: ArtifactSpec(
         id=ArtifactId.CLEANED_EXAMPLE_SENTENCES,
