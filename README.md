@@ -237,7 +237,7 @@ uv --no-cache run python -m wordbyword --generate-missing-meanings
 - `--retry-generated-examples` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/13_generated_example_failures.jsonl` to run only the stage-13 repair pass on unresolved failures.
 - `--add-reference-meanings` reads saved `build-dictionary/13_vocabulary_with_generated_examples.jsonl` and `build-dictionary/references/reference-dictionary.jsonl` to write `14_vocabulary_with_meanings.jsonl`. Use `--reference-dictionary path/to/reference-dictionary.jsonl` to override the reference source.
 - `--generate-missing-meanings` reads saved `build-dictionary/14_vocabulary_with_meanings.jsonl` and asks Ollama to write Korean meanings for rows whose `meaning` field is empty, writing `15_final_dictionary.jsonl`.
-- `--show-distribution` renders the terminal distribution panel for an existing `11_cleaned_dictionary_candidates.jsonl` without making LLM calls.
+- `--show-distribution` renders the terminal distribution panel for the latest saved dictionary JSONL, preferring `15_final_dictionary.jsonl` when it exists, without making LLM calls. Pass an explicit JSONL path to inspect a specific artifact such as `11_cleaned_dictionary_candidates.jsonl`.
 - When `10_cleaned_example_sentences.csv` already exists, stage `11` reuses it as support context; otherwise it falls back to saved `09_example_sentences.csv`.
 - When both `10` and `11` exist, stage `12` is also refreshed automatically after either cleanup stage runs.
 

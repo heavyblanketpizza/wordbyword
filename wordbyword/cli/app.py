@@ -399,10 +399,33 @@ def count_nonempty(entries: Sequence[Mapping[str, object]], key: str) -> int:
     return sum(1 for entry in entries if bool(str(entry.get(key, "")).strip()))
 
 
+DICTIONARY_DISTRIBUTION_ARTIFACT_IDS = (
+    ArtifactId.DICTIONARY_CANDIDATES,
+    ArtifactId.CLEANED_DICTIONARY_CANDIDATES,
+    ArtifactId.LINKED_DICTIONARY_CANDIDATES,
+    ArtifactId.GENERATED_EXAMPLE_DICTIONARY,
+    ArtifactId.MEANING_DICTIONARY_CANDIDATES,
+    ArtifactId.FINAL_DICTIONARY,
+)
+
+DEFAULT_DISTRIBUTION_ARTIFACT_IDS = tuple(reversed(DICTIONARY_DISTRIBUTION_ARTIFACT_IDS))
+
+
 def resolve_distribution_path(supplied: str, output_dir: Path) -> Path:
     if supplied:
         return Path(supplied)
-    return artifact_path(output_dir, ArtifactId.CLEANED_DICTIONARY_CANDIDATES)
+    for artifact_id in DEFAULT_DISTRIBUTION_ARTIFACT_IDS:
+        path = artifact_path(output_dir, artifact_id)
+        if path.is_file():
+            return path
+    return artifact_path(output_dir, ArtifactId.FINAL_DICTIONARY)
+
+
+def distribution_stage_for_path(jsonl_path: Path) -> str:
+    for artifact_id in DICTIONARY_DISTRIBUTION_ARTIFACT_IDS:
+        if jsonl_path.name == artifact_filename(artifact_id):
+            return artifact_event_name(artifact_id)
+    return artifact_event_name(ArtifactId.FINAL_DICTIONARY)
 
 
 def load_dictionary_candidates(jsonl_path: Path) -> list[dict[str, object]]:
@@ -450,8 +473,8 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
     if not jsonl_path.is_file():
         sys.stderr.write(
             f"wordbyword: cannot read distribution source: {jsonl_path}\n"
-            "  hint: run with --clean-dictionary-candidates first, "
-            f"or pass a path: --show-distribution path/to/{artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES)}\n"
+            f"  hint: run with --generate-missing-meanings to write {artifact_filename(ArtifactId.FINAL_DICTIONARY)}, "
+            f"or pass an explicit path: --show-distribution path/to/{artifact_filename(ArtifactId.CLEANED_DICTIONARY_CANDIDATES)}\n"
         )
         return 1
 
@@ -462,7 +485,7 @@ def show_distribution(*, jsonl_path: Path, model: str) -> int:
         return 1
 
     emit_rendered_artifact_drop(
-        artifact_event_name(ArtifactId.CLEANED_DICTIONARY_CANDIDATES),
+        distribution_stage_for_path(jsonl_path),
         entries=entries,
         file_label=str(jsonl_path),
         summary=(

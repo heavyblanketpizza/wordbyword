@@ -155,9 +155,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="JSONL",
         help=(
-            "Render the cyberpunk distribution panel for an existing "
-            "11_cleaned_dictionary_candidates.jsonl and exit. Optional path; "
-            "defaults to <output-dir>/11_cleaned_dictionary_candidates.jsonl."
+            "Render the cyberpunk distribution panel for the latest saved "
+            "dictionary JSONL and exit. Optional path; defaults to "
+            "<output-dir>/15_final_dictionary.jsonl when available."
         ),
     )
     parser.add_argument(

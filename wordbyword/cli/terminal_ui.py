@@ -439,6 +439,14 @@ RELIC_DROP_ART_QUALITY = [
     "  ╰──────────────────────────────────────────────────────────╯  ",
 ]
 
+RELIC_DROP_ART_DICTIONARY_CANDIDATES = [
+    "    ░▒▓█▓▒░  ░▒▓ DICTIONARY RELIC // CANDIDATES LOCKED ▓▒░  ░▒▓█▓▒░    ",
+    "  ╭──────────────────────────────────────────────────────────╮  ",
+    "  │  ▓▒░  ░▒▓ 08_dictionary_candidates.jsonl ▓▒░  ░▒▓  │  ",
+    "  │   ◉─◉─◉   ▟▙ headword stack online ▟▙   ◉─◉─◉   ░░░░░░░   │  ",
+    "  ╰──────────────────────────────────────────────────────────╯  ",
+]
+
 RELIC_DROP_ART_SENTENCES = [
     "    ░▒▓█▓▒░  ░▒▓ EXAMPLE STREAM // SIGNAL FIXED ▓▒░  ░▒▓█▓▒░    ",
     "  ╭──────────────────────────────────────────────────────────╮  ",
@@ -545,7 +553,10 @@ def render_artifact_drop(
     color: bool,
     width: int = 100,
 ) -> str:
-    if stage == "11_cleaned_dictionary_candidates":
+    if stage == "08_dictionary_candidates":
+        art = RELIC_DROP_ART_DICTIONARY_CANDIDATES
+        accent = TOKYO_NIGHT["pink"]
+    elif stage == "11_cleaned_dictionary_candidates":
         art = RELIC_DROP_ART_QUALITY
         accent = TOKYO_NIGHT["pink"]
     elif stage == "12_dictionary_candidates_with_cleaned_examples":
@@ -590,7 +601,14 @@ def render_artifact_drop(
     if info_lines:
         parts.extend(info_lines)
         parts.append(rule)
-    if entries is not None and stage == "11_cleaned_dictionary_candidates":
+    if entries is not None and stage in {
+        "08_dictionary_candidates",
+        "11_cleaned_dictionary_candidates",
+        "12_dictionary_candidates_with_cleaned_examples",
+        "13_vocabulary_with_generated_examples",
+        "14_vocabulary_with_meanings",
+        "15_final_dictionary",
+    }:
         parts.append(render_dictionary_distribution(entries, color=color, width=width))
     return "\n".join(parts)
 

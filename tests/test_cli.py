@@ -94,9 +94,35 @@ class ParserDefaultsTest(unittest.TestCase):
 
 
 class ShowDistributionCliTest(unittest.TestCase):
-    def test_resolve_distribution_path_uses_output_default(self) -> None:
-        path = resolve_distribution_path("", Path("build-dictionary"))
-        self.assertEqual(path, Path("build-dictionary") / "11_cleaned_dictionary_candidates.jsonl")
+    def test_resolve_distribution_path_uses_final_default_when_no_dictionary_artifacts_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace) / "build-dictionary"
+            output_dir.mkdir()
+
+            path = resolve_distribution_path("", output_dir)
+
+            self.assertEqual(path, output_dir / "15_final_dictionary.jsonl")
+
+    def test_resolve_distribution_path_prefers_final_dictionary_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace) / "build-dictionary"
+            output_dir.mkdir()
+            (output_dir / "08_dictionary_candidates.jsonl").write_text("{}\n", encoding="utf-8")
+            (output_dir / "15_final_dictionary.jsonl").write_text("{}\n", encoding="utf-8")
+
+            path = resolve_distribution_path("", output_dir)
+
+            self.assertEqual(path, output_dir / "15_final_dictionary.jsonl")
+
+    def test_resolve_distribution_path_falls_back_to_latest_available_dictionary_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace) / "build-dictionary"
+            output_dir.mkdir()
+            (output_dir / "08_dictionary_candidates.jsonl").write_text("{}\n", encoding="utf-8")
+
+            path = resolve_distribution_path("", output_dir)
+
+            self.assertEqual(path, output_dir / "08_dictionary_candidates.jsonl")
 
     def test_resolve_distribution_path_uses_supplied_value(self) -> None:
         path = resolve_distribution_path("/tmp/relics.jsonl", Path("build-dictionary"))
@@ -128,7 +154,35 @@ class ShowDistributionCliTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_dictionary_candidates(jsonl_path)
 
-    def test_show_distribution_prints_panel_for_existing_jsonl(self) -> None:
+    def test_show_distribution_prints_final_dictionary_panel(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            jsonl_path = Path(workspace) / "15_final_dictionary.jsonl"
+            rows = [
+                {"quality_score": 0.12, "count": 3},
+                {"quality_score": 0.46, "count": 18},
+                {"quality_score": 0.91, "count": 220},
+            ]
+            jsonl_path.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = show_distribution(jsonl_path=jsonl_path, model="gemma4:31b")
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("RELIC DROP //", output)
+            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
+            self.assertIn("3 headwords", output)
+            self.assertIn("replay // no llm calls", output)
+            self.assertIn("quality_score distribution", output)
+            self.assertIn("occurrence count distribution", output)
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_show_distribution_preserves_explicit_stage_eleven_panel(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "11_cleaned_dictionary_candidates.jsonl"
             rows = [
@@ -156,6 +210,26 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertIn("occurrence count distribution", output)
             self.assertEqual(stderr.getvalue(), "")
 
+    def test_show_distribution_uses_matching_panel_for_known_intermediate_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            jsonl_path = Path(workspace) / "14_vocabulary_with_meanings.jsonl"
+            jsonl_path.write_text(
+                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                exit_code = show_distribution(jsonl_path=jsonl_path, model="gemma4:31b")
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("MEANING RELAY // REFERENCE MERGED", output)
+            self.assertIn("quality_score distribution", output)
+            self.assertIn("occurrence count distribution", output)
+            self.assertEqual(stderr.getvalue(), "")
+
     def test_show_distribution_reports_missing_file_to_stderr(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             missing = Path(workspace) / "absent.jsonl"
@@ -168,7 +242,51 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertEqual(stdout.getvalue(), "")
             self.assertIn("cannot read distribution source", stderr.getvalue())
-            self.assertIn("--clean-dictionary-candidates", stderr.getvalue())
+            self.assertIn("15_final_dictionary.jsonl", stderr.getvalue())
+            self.assertIn("--generate-missing-meanings", stderr.getvalue())
+            self.assertIn("--show-distribution path/to/11_cleaned_dictionary_candidates.jsonl", stderr.getvalue())
+
+    def test_main_with_show_distribution_uses_final_dictionary_default(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace) / "build-dictionary"
+            output_dir.mkdir()
+            jsonl_path = output_dir / "15_final_dictionary.jsonl"
+            jsonl_path.write_text(
+                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+                exit_code = main(["--output", str(output_dir), "--show-distribution"])
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            output = stdout.getvalue()
+            self.assertIn("15_final_dictionary.jsonl", output)
+            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
+            self.assertIn("quality_score distribution", output)
+
+    def test_main_with_show_distribution_uses_available_dictionary_artifact_without_path(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace) / "build-dictionary"
+            output_dir.mkdir()
+            jsonl_path = output_dir / "08_dictionary_candidates.jsonl"
+            jsonl_path.write_text(
+                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+                exit_code = main(["--output", str(output_dir), "--show-distribution"])
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            output = stdout.getvalue()
+            self.assertIn("08_dictionary_candidates.jsonl", output)
+            self.assertIn("DICTIONARY RELIC // CANDIDATES LOCKED", output)
+            self.assertIn("quality_score distribution", output)
 
     def test_main_with_show_distribution_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -185,6 +303,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
             self.assertIn("RELIC DROP //", stdout.getvalue())
+            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", stdout.getvalue())
 
     def test_link_cleaned_examples_builds_stage_twelve_without_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
