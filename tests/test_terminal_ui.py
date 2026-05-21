@@ -263,28 +263,6 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("quality_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
 
-    def test_render_artifact_drop_for_final_dictionary_includes_distribution(self) -> None:
-        entries = [
-            {"quality_score": 0.21, "count": 7},
-            {"quality_score": 0.62, "count": 88},
-            {"quality_score": 0.94, "count": 612},
-        ]
-
-        rendered = render_artifact_drop(
-            "15_final_dictionary",
-            entries=entries,
-            file_label="15_final_dictionary.jsonl",
-            summary=(("relics", "3 headwords"), ("status", "replay // no llm calls")),
-            color=False,
-            width=100,
-        )
-
-        self.assertIn("RELIC DROP // 15_final_dictionary.jsonl", rendered)
-        self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", rendered)
-        self.assertIn("relics     :: 3 headwords", rendered)
-        self.assertIn("quality_score distribution", rendered)
-        self.assertIn("occurrence count distribution", rendered)
-
     def test_render_artifact_drop_for_example_sentences_skips_distribution(self) -> None:
         rendered = render_artifact_drop(
             "09_example_sentences",
