@@ -28,9 +28,21 @@ Supported source formats:
 - `.txt`
 - `.md`
 
+## Class Printout Workflow
+
+Use this for normal class handout generation:
+
+```bash
+uv --no-cache run python -m wordbyword --build-class-printouts
+```
+
+This starts from `classroom-printout-studio/class-source-materials`, parses PDFs with PaddleOCR-VL, rewrites each parsed source with vocabulary guidance from `build-dictionary/15_final_dictionary.jsonl`, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
+
+Run the stage-specific commands below only when you want to inspect OCR output, rerun just the rewrite stage, or reprint from already rewritten materials.
+
 ## Source Material Parsing
 
-Use this first to create one isolated parse workspace per mature class material:
+Use this when you only want to parse/OCR source materials without rewriting or printing:
 
 ```bash
 uv --no-cache run python -m wordbyword --parse-source-materials
@@ -72,12 +84,14 @@ uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-r
 
 ## Source Material Rewriting
 
-After source materials are parsed, run the whole-document Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
+When running stages manually, use the whole-document Ollama rewrite stage to create Korean 1학년-friendly materials from already parsed source bundles. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
 
 ```bash
-uv --no-cache run python -m wordbyword --rewrite-whole-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-whole-source-materials --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --rewrite-whole-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
+
+The batch command defaults to `classroom-printout-studio/class-source-materials/parsed`. The single-material command still takes one parsed bundle folder.
 
 The rewrite stage reads each parsed source's full `content.md`, sends its text and linked image assets to Ollama in one document-order request per source, and writes outputs under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`:
 
@@ -95,21 +109,30 @@ This mode does not fall back to page rewriting or truncate oversized documents; 
 The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 250 canonical keys and examples to Ollama, asks for 20 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
 
 ```bash
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --rewrite-dictionary build-dictionary/15_final_dictionary.jsonl --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materials --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
+
+The batch command defaults to `classroom-printout-studio/class-source-materials/parsed`, and the dictionary defaults to `build-dictionary/15_final_dictionary.jsonl`. Pass `--rewrite-dictionary` only when using a custom dictionary path.
 
 Vocabulary-guided outputs are written under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/<source-id>/` and include the whole-document rewrite artifact bundle plus `selection_attempts.jsonl` and `selected_vocabulary.json`.
 
 ## Printable Class Materials
 
-After a source has been rewritten, run the printable stage to create editable A4 classroom handouts as DOCX files for human revision. This is a separate downstream workflow: it reads rewritten bundles and writes outputs under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`. A4 is the paper size, not a one-page length target; generated DOCX files may span multiple A4 pages.
+For normal use, run the full workflow:
 
 ```bash
-uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --print-class-materials --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
+
+When sources have already been rewritten, run the printable stage to create editable A4 classroom handouts as DOCX files for human revision:
+
+```bash
+uv --no-cache run python -m wordbyword --print-class-materials --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
+```
+
+The batch print command defaults to rewritten vocabulary-guided bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided`. `--build-class-printouts` starts from the default source-material folder and runs the full class-printout pipeline. The single-material print command still takes one rewritten bundle folder.
 
 The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. When image assets are available, the prompt attaches resized visual previews for selectable candidates and requires a vision-capable Ollama model; the model may choose up to two visually inspected image assets from the rewritten bundle. It does not author DOCX directly and it cannot use external images.
 
@@ -124,7 +147,7 @@ Printable outputs are written per source:
 - `manifest.json`: source rewrite metadata, model, render settings, and file map.
 - `assets/`: copied rewritten-bundle assets referenced by the plan.
 
-Useful printable options:
+Useful printable overrides:
 
 ```bash
 uv --no-cache run python -m wordbyword --print-class-materials --print-body-font-size 13
