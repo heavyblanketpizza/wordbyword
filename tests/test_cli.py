@@ -43,7 +43,6 @@ class ParserDefaultsTest(unittest.TestCase):
             args.reference_dictionary,
             Path("build-dictionary/references/reference-dictionary.jsonl"),
         )
-        self.assertEqual(args.pdf_parser, "paddleocr-vl")
 
     def test_class_printout_commands_have_zero_config_roots(self) -> None:
         parser = build_parser()
@@ -56,16 +55,17 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(print_args.print_class_materials, DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT)
         self.assertEqual(workflow_args.build_class_printouts, DEFAULT_SOURCE_MATERIAL_ROOT)
 
-    def test_paddleocr_vl_settings_are_built_only_for_paddle_parser(self) -> None:
+    def test_removed_pdf_parser_option_is_rejected(self) -> None:
         parser = build_parser()
 
-        heuristic_args = parser.parse_args(["--pdf-parser", "heuristic"])
-        self.assertIsNone(paddleocr_vl_settings_from_args(heuristic_args))
+        with patch("sys.stderr", io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["--pdf-parser", "heuristic"])
+
+    def test_paddleocr_vl_settings_are_built_for_source_material_parser(self) -> None:
+        parser = build_parser()
 
         paddle_args = parser.parse_args(
             [
-                "--pdf-parser",
-                "paddleocr-vl",
                 "--paddleocr-vl-device",
                 "cpu",
                 "--paddleocr-vl-engine",
@@ -257,7 +257,6 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         parse_materials.assert_called_once()
         self.assertEqual(parse_materials.call_args.args[0], DEFAULT_SOURCE_MATERIAL_ROOT)
-        self.assertEqual(parse_materials.call_args.kwargs["pdf_parser"], "paddleocr-vl")
         self.assertEqual(parse_materials.call_args.kwargs["paddleocr_vl_settings"].sidecar_env, ".venv-paddleocr-vl")
         self.assertEqual(rewrite_material.call_args_list[0].args[0], Path("/tmp/parsed/lesson-a"))
         self.assertEqual(rewrite_material.call_args_list[1].args[0], Path("/tmp/parsed/lesson-b"))

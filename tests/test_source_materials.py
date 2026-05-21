@@ -26,7 +26,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
     def test_source_id_for_uses_stable_filesystem_slug(self) -> None:
         self.assertEqual(source_id_for(Path("Popular Chemistry Prize 2025.pdf")), "popular-chemistry-prize-2025")
 
-    def test_single_pdf_writes_markdown_first_parse_outputs_and_flat_assets_folder(self) -> None:
+    def test_single_pdf_writes_paddleocr_parse_outputs_and_flat_assets_folder_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             source_path = root / "sample.pdf"
@@ -43,7 +43,17 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                 folder.mkdir(parents=True, exist_ok=True)
                 (folder / "old.txt").write_text("bad", encoding="utf-8")
 
-            bundle = parse_source_material(source_path, output_root=output_root)
+            FakePaddleOCRVL.init_kwargs = None
+            FakePaddleOCRVL.predict_input = None
+            with (
+                patch("wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl._load_paddleocr_vl_class", return_value=FakePaddleOCRVL),
+                patch("wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl.paddleocr_vl_version", return_value="3.3.0"),
+            ):
+                bundle = parse_source_material(
+                    source_path,
+                    output_root=output_root,
+                    paddleocr_vl_settings=PaddleOCRVLSettings(isolated_process=False),
+                )
 
             self.assertEqual(bundle.source_id, "sample")
             self.assertTrue(bundle.manifest_path.is_file())
@@ -62,23 +72,27 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(manifest["schema_version"], "wordbyword.source_material_workspace.v1")
             self.assertEqual(manifest["source"]["filename"], "sample.pdf")
             self.assertEqual(manifest["parser"]["status"], "parsed")
+            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.5")
             self.assertEqual(manifest["files"]["content_markdown"], "content.md")
             self.assertEqual(manifest["files"]["quality_report_json"], "quality_report.json")
 
             content = (bundle.output_dir / "content.md").read_text(encoding="utf-8")
-            self.assertIn("Water Cycle", content)
+            self.assertIn("PaddleOCR-VL text from page-0001.png", content)
             self.assertIn("<!-- page:1 -->", content)
 
             chunks = json.loads((bundle.output_dir / "chunks.json").read_text(encoding="utf-8"))
             self.assertEqual(len(chunks), 1)
             self.assertEqual(chunks[0]["page"], 1)
-            self.assertIn("Water Cycle", chunks[0]["text"])
+            self.assertIn("PaddleOCR-VL text from page-0001.png", chunks[0]["text"])
 
             quality = json.loads((bundle.output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["schema_version"], "wordbyword.paddleocr_vl_pdf_parse.v1")
             self.assertEqual(quality["page_count"], 1)
             self.assertEqual(quality["page_render_count"], 1)
             self.assertGreater(quality["markdown_chars"], 0)
             self.assertTrue((bundle.output_dir / "assets" / "page-0001.png").is_file())
+            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.5")
+            self.assertEqual(len(FakePaddleOCRVL.predict_input), 1)
 
     def test_paddleocr_vl_pdf_parser_writes_page_image_parse_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -96,7 +110,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                 bundle = parse_source_material(
                     source_path,
                     output_root=output_root,
-                    pdf_parser="paddleocr-vl",
                     paddleocr_vl_settings=PaddleOCRVLSettings(device="cpu", isolated_process=False),
                 )
 
@@ -139,7 +152,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                 parse_source_material(
                     source_path,
                     output_root=output_root,
-                    pdf_parser="paddleocr-vl",
                     paddleocr_vl_settings=PaddleOCRVLSettings(
                         device="progress-cpu",
                         isolated_process=False,
@@ -256,7 +268,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                 bundle = parse_source_material(
                     source_path,
                     output_root=output_root,
-                    pdf_parser="paddleocr-vl",
                     paddleocr_vl_settings=PaddleOCRVLSettings(
                         sidecar_python=sys.executable,
                         sidecar_poll_seconds=0.05,
@@ -285,7 +296,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                     parse_source_material(
                         source_path,
                         output_root=output_root,
-                        pdf_parser="paddleocr-vl",
                         paddleocr_vl_settings=PaddleOCRVLSettings(
                             device="cpu",
                             isolated_process=False,
@@ -309,7 +319,6 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                     parse_source_material(
                         source_path,
                         output_root=output_root,
-                        pdf_parser="paddleocr-vl",
                         paddleocr_vl_settings=PaddleOCRVLSettings(
                             device="cpu",
                             isolated_process=False,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import mimetypes
 import re
 import shutil
@@ -12,11 +11,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fitz
-import pymupdf4llm
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from wordbyword._json_io import jsonable, write_json
+from wordbyword._json_io import write_json
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLPageResult,
@@ -27,9 +25,7 @@ from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
 )
 
 WORKSPACE_SCHEMA_VERSION = "wordbyword.source_material_workspace.v1"
-PDF_PARSE_SCHEMA_VERSION = "wordbyword.heuristic_pdf_parse.v1"
 PADDLEOCR_VL_PARSE_SCHEMA_VERSION = "wordbyword.paddleocr_vl_pdf_parse.v1"
-PdfParserName = Literal["heuristic", "paddleocr-vl"]
 SourceMaterialProgressPhase = Literal["start", "render", "load", "ocr", "write", "complete"]
 DEFAULT_SOURCE_MATERIAL_ROOT = Path("classroom-printout-studio/class-source-materials")
 DEFAULT_PARSED_SOURCE_ROOT = DEFAULT_SOURCE_MATERIAL_ROOT / "parsed"
@@ -66,7 +62,6 @@ REMOVED_ASSET_SUBFOLDERS = {
     "pages",
     "tables",
 }
-PDF_MARKDOWN_IMAGE_PATTERN = re.compile(r"(!\[[^\]]*]\()([^)]+)(\))")
 
 
 class SourceMetadata(BaseModel):
@@ -207,7 +202,7 @@ class SourceMaterialBatchResult:
 class SourceMaterialProgress:
     phase: SourceMaterialProgressPhase
     source_path: Path
-    parser: PdfParserName
+    parser: str
     detail: str
     source_index: int = 1
     total_sources: int = 1
@@ -228,10 +223,7 @@ def parse_source_material(
     output_root: Path = DEFAULT_PARSED_SOURCE_ROOT,
     source_id: str | None = None,
     parse_pdf: bool = True,
-    pdf_parser: PdfParserName = "heuristic",
-    render_pages: bool = True,
     render_dpi: int = 144,
-    image_dpi: int = 180,
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
     progress: SourceMaterialProgressCallback | None = None,
     source_index: int = 1,
@@ -254,7 +246,7 @@ def parse_source_material(
         progress,
         phase="start",
         source_path=source_path,
-        parser=pdf_parser,
+        parser="paddleocr-vl",
         detail=f"preparing {source_path.name}",
         source_index=source_index,
         total_sources=total_sources,
@@ -265,37 +257,22 @@ def parse_source_material(
     if suffix == ".pdf" and parse_pdf:
         parser_metadata = _parser_metadata(
             status="parsed",
-            pdf_parser=pdf_parser,
             reason="",
-            render_pages=render_pages,
             render_dpi=render_dpi,
-            image_dpi=image_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
         )
-        if pdf_parser == "paddleocr-vl":
-            parse_result = _parse_pdf_with_paddleocr_vl(
-                source_path=source_path,
-                output_dir=output_dir,
-                assets_dir=assets_dir,
-                source_metadata=source_metadata,
-                parser_metadata=parser_metadata,
-                render_dpi=render_dpi,
-                settings=paddleocr_vl_settings or PaddleOCRVLSettings(),
-                progress=progress,
-                source_index=source_index,
-                total_sources=total_sources,
-            )
-        else:
-            parse_result = _parse_pdf(
-                source_path=source_path,
-                output_dir=output_dir,
-                assets_dir=assets_dir,
-                source_metadata=source_metadata,
-                parser_metadata=parser_metadata,
-                render_pages=render_pages,
-                render_dpi=render_dpi,
-                image_dpi=image_dpi,
-            )
+        parse_result = _parse_pdf_with_paddleocr_vl(
+            source_path=source_path,
+            output_dir=output_dir,
+            assets_dir=assets_dir,
+            source_metadata=source_metadata,
+            parser_metadata=parser_metadata,
+            render_dpi=render_dpi,
+            settings=paddleocr_vl_settings or PaddleOCRVLSettings(),
+            progress=progress,
+            source_index=source_index,
+            total_sources=total_sources,
+        )
         manifest = _build_parsed_manifest(
             source_metadata=source_metadata,
             parser_metadata=parse_result.parser,
@@ -303,15 +280,12 @@ def parse_source_material(
     else:
         parser_metadata = _parser_metadata(
             status="skipped" if suffix != ".pdf" else "not_run",
-            pdf_parser=pdf_parser,
             reason=(
-                "Only PDF parsing is implemented in the current heuristic parser."
+                "Only PDF source-material parsing is implemented."
                 if suffix != ".pdf"
                 else "PDF parsing was disabled for this run."
             ),
-            render_pages=render_pages,
             render_dpi=render_dpi,
-            image_dpi=image_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
         )
         manifest = _build_workspace_manifest(
@@ -325,7 +299,7 @@ def parse_source_material(
         progress,
         phase="complete",
         source_path=source_path,
-        parser=pdf_parser,
+        parser="paddleocr-vl",
         detail=f"prepared {resolved_source_id}",
         source_index=source_index,
         total_sources=total_sources,
@@ -345,10 +319,7 @@ def parse_source_materials(
     *,
     output_root: Path = DEFAULT_PARSED_SOURCE_ROOT,
     parse_pdf: bool = True,
-    pdf_parser: PdfParserName = "heuristic",
-    render_pages: bool = True,
     render_dpi: int = 144,
-    image_dpi: int = 180,
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
     progress: SourceMaterialProgressCallback | None = None,
 ) -> SourceMaterialBatchResult:
@@ -362,10 +333,7 @@ def parse_source_materials(
                 output_root=output_root,
                 source_id=_unique_source_id(source_path, source_dir, used_source_ids),
                 parse_pdf=parse_pdf,
-                pdf_parser=pdf_parser,
-                render_pages=render_pages,
                 render_dpi=render_dpi,
-                image_dpi=image_dpi,
                 paddleocr_vl_settings=paddleocr_vl_settings,
                 progress=progress,
                 source_index=index,
@@ -417,7 +385,7 @@ def _emit_source_material_progress(
     *,
     phase: SourceMaterialProgressPhase,
     source_path: Path,
-    parser: PdfParserName,
+    parser: str,
     detail: str,
     source_index: int = 1,
     total_sources: int = 1,
@@ -464,81 +432,6 @@ def _paddleocr_progress_adapter(
         )
 
     return report
-
-
-def _parse_pdf(
-    *,
-    source_path: Path,
-    output_dir: Path,
-    assets_dir: Path,
-    source_metadata: SourceMetadata,
-    parser_metadata: ParserMetadata,
-    render_pages: bool,
-    render_dpi: int,
-    image_dpi: int,
-) -> ParsedPdfDocument:
-    markdown_chunks = _extract_markdown_chunks(
-        source_path=source_path,
-        assets_dir=assets_dir,
-        image_dpi=image_dpi,
-    )
-    content_markdown = _compose_markdown(markdown_chunks)
-    content_markdown = _rewrite_markdown_asset_links(content_markdown, assets_dir=assets_dir)
-    content_path = output_dir / "content.md"
-    content_path.write_text(content_markdown, encoding="utf-8")
-
-    chunks = [
-        PageChunk(
-            page=index,
-            text=_rewrite_markdown_asset_links(str(chunk.get("text", "")), assets_dir=assets_dir),
-            metadata=jsonable(chunk.get("metadata", {})),
-            toc_items=jsonable(chunk.get("toc_items", [])),
-            page_boxes=jsonable(chunk.get("page_boxes", [])),
-        )
-        for index, chunk in enumerate(markdown_chunks, start=1)
-    ]
-    chunks_path = output_dir / "chunks.json"
-    _write_json(chunks_path, [chunk.model_dump(mode="json") for chunk in chunks])
-
-    parser_output = _extract_parser_output_json(source_path=source_path)
-    parser_output_path = output_dir / "parser_output.json"
-    _write_json(parser_output_path, parser_output)
-
-    pages, page_render_assets = _inspect_pdf_pages(
-        source_path=source_path,
-        assets_dir=assets_dir,
-        chunks=chunks,
-        render_pages=render_pages,
-        render_dpi=render_dpi,
-    )
-    assets = _collect_assets(
-        assets_dir=assets_dir,
-        page_render_assets=page_render_assets,
-    )
-    quality_report = _quality_report(
-        source_metadata=source_metadata,
-        parser_metadata=parser_metadata,
-        content_markdown=content_markdown,
-        pages=pages,
-        assets=assets,
-    )
-    quality_report_path = output_dir / "quality_report.json"
-    _write_json(quality_report_path, quality_report.model_dump(mode="json"))
-
-    parsed_document = ParsedPdfDocument(
-        schema_version=PDF_PARSE_SCHEMA_VERSION,
-        source=source_metadata,
-        parser=parser_metadata,
-        content_markdown_path="content.md",
-        chunks_path="chunks.json",
-        parser_output_path="parser_output.json",
-        quality_report_path="quality_report.json",
-        pages=pages,
-        assets=assets,
-    )
-    document_model_path = output_dir / "document_model.json"
-    _write_json(document_model_path, parsed_document.model_dump(mode="json"))
-    return parsed_document
 
 
 def _parse_pdf_with_paddleocr_vl(
@@ -661,8 +554,6 @@ def _parse_pdf_with_paddleocr_vl_impl(
         source_path=source_path,
         assets_dir=assets_dir,
         chunks=chunks,
-        render_pages=False,
-        render_dpi=render_dpi,
         rendered_page_assets=page_render_assets_by_page,
     )
     assets = _collect_assets(
@@ -773,80 +664,11 @@ def _write_paddleocr_vl_merged_outputs(
     return content_markdown, chunks
 
 
-def _extract_markdown_chunks(*, source_path: Path, assets_dir: Path, image_dpi: int) -> list[dict[str, Any]]:
-    raw_chunks = pymupdf4llm.to_markdown(
-        source_path.as_posix(),
-        write_images=True,
-        image_path=assets_dir.as_posix(),
-        image_format="png",
-        image_size_limit=0.03,
-        page_chunks=True,
-        page_separators=False,
-        show_progress=False,
-        dpi=image_dpi,
-        use_ocr=False,
-    )
-    if not isinstance(raw_chunks, list):
-        raise SourceMaterialParseError("PyMuPDF4LLM did not return page chunks.")
-    return [dict(chunk) for chunk in raw_chunks]
-
-
-def _extract_parser_output_json(*, source_path: Path) -> dict[str, Any]:
-    raw_output = pymupdf4llm.to_json(
-        source_path.as_posix(),
-        write_images=False,
-        embed_images=False,
-        show_progress=False,
-        use_ocr=False,
-    )
-    if isinstance(raw_output, str):
-        try:
-            parsed = json.loads(raw_output)
-        except json.JSONDecodeError as error:
-            raise SourceMaterialParseError(f"PyMuPDF4LLM JSON output is invalid: {error.msg}") from error
-    else:
-        parsed = raw_output
-    if not isinstance(parsed, dict):
-        raise SourceMaterialParseError("PyMuPDF4LLM JSON output is not a JSON object.")
-    return jsonable(parsed)
-
-
-def _compose_markdown(chunks: list[dict[str, Any]]) -> str:
-    sections: list[str] = []
-    for page_number, chunk in enumerate(chunks, start=1):
-        text = str(chunk.get("text", "")).strip()
-        if not text:
-            text = "_No text extracted on this page._"
-        sections.append(f"<!-- page:{page_number} -->\n\n{text}")
-    return "\n\n---\n\n".join(sections).strip() + "\n"
-
-
-def _rewrite_markdown_asset_links(markdown: str, *, assets_dir: Path) -> str:
-    assets_dir_resolved = assets_dir.resolve()
-
-    def replace(match: re.Match[str]) -> str:
-        target = match.group(2)
-        if target.startswith(("http://", "https://", "data:")):
-            return match.group(0)
-        if target.startswith("assets/"):
-            return match.group(0)
-        target_path = Path(target)
-        try:
-            relative = target_path.resolve().relative_to(assets_dir_resolved)
-        except ValueError:
-            return match.group(0)
-        return f"{match.group(1)}assets/{relative.as_posix()}{match.group(3)}"
-
-    return PDF_MARKDOWN_IMAGE_PATTERN.sub(replace, markdown)
-
-
 def _inspect_pdf_pages(
     *,
     source_path: Path,
     assets_dir: Path,
     chunks: list[PageChunk],
-    render_pages: bool,
-    render_dpi: int,
     rendered_page_assets: dict[int, str] | None = None,
 ) -> tuple[list[PageQuality], set[str]]:
     pages: list[PageQuality] = []
@@ -861,9 +683,6 @@ def _inspect_pdf_pages(
             render_asset = (rendered_page_assets or {}).get(index, "")
             if render_asset:
                 page_render_assets.add(render_asset)
-            elif render_pages:
-                render_asset = _render_page(page=page, page_number=index, assets_dir=assets_dir, dpi=render_dpi)
-                page_render_assets.add(render_asset)
             chunk = chunk_by_page.get(index)
             markdown_chars = len(chunk.text) if chunk is not None else 0
             pages.append(
@@ -877,7 +696,7 @@ def _inspect_pdf_pages(
                     image_blocks=image_blocks,
                     drawing_count=drawing_count,
                     pymupdf_table_count=table_count,
-                    needs_ocr=len(raw_text.strip()) < 20 and markdown_chars < 20,
+                    needs_ocr=markdown_chars < 20,
                     page_render_asset=render_asset,
                 )
             )
@@ -890,7 +709,7 @@ def _render_pdf_page_images(
     assets_dir: Path,
     dpi: int,
     progress: SourceMaterialProgressCallback | None = None,
-    parser: PdfParserName = "heuristic",
+    parser: str = "paddleocr-vl",
     source_index: int = 1,
     total_sources: int = 1,
 ) -> dict[int, str]:
@@ -1016,13 +835,13 @@ def _quality_report(
     content_markdown: str,
     pages: list[PageQuality],
     assets: list[AssetMetadata],
-    schema_version: str = PDF_PARSE_SCHEMA_VERSION,
+    schema_version: str = PADDLEOCR_VL_PARSE_SCHEMA_VERSION,
 ) -> QualityReport:
     warnings: list[str] = []
     needs_ocr_pages = [page.page for page in pages if page.needs_ocr]
     if needs_ocr_pages:
         warnings.append(
-            "Some pages have little or no selectable text and should be passed to an OCR or vision parser."
+            "Some pages have little or no OCR text and should be reviewed or parsed again with different PaddleOCR-VL settings."
         )
     if not content_markdown.strip():
         warnings.append("No Markdown content was extracted.")
@@ -1086,48 +905,25 @@ def _source_metadata(*, source_path: Path, source_id: str) -> SourceMetadata:
 def _parser_metadata(
     *,
     status: Literal["parsed", "not_run", "skipped"],
-    pdf_parser: PdfParserName,
     reason: str,
-    render_pages: bool,
     render_dpi: int,
-    image_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
 ) -> ParserMetadata:
-    if status == "parsed" and pdf_parser == "paddleocr-vl":
-        settings = paddleocr_vl_settings or PaddleOCRVLSettings()
-        return ParserMetadata(
-            status=status,
-            name="paddleocr-vl-1.5",
-            version="",
-            reason=reason,
-            parsed_at=datetime.now(timezone.utc).isoformat(),
-            settings={
-                "primary_output": "content.md",
-                "page_image_inputs": True,
-                "render_dpi": render_dpi,
-                "image_workflow": "PDF pages are rendered to PNG before PaddleOCR-VL inference.",
-                "pipeline_version": "v1.5",
-                "asset_layout": "flat assets/ folder per source material",
-                **{key: value for key, value in asdict(settings).items() if value is not None},
-            },
-        )
+    settings = paddleocr_vl_settings or PaddleOCRVLSettings()
     return ParserMetadata(
         status=status,
-        name="pymupdf4llm+pymupdf+pillow" if status == "parsed" else "",
-        version=str(getattr(pymupdf4llm, "__version__", getattr(pymupdf4llm, "VERSION", "")))
-        if status == "parsed"
-        else "",
+        name="paddleocr-vl-1.5" if status == "parsed" else "",
+        version="",
         reason=reason,
         parsed_at=datetime.now(timezone.utc).isoformat() if status == "parsed" else None,
         settings={
             "primary_output": "content.md",
-            "markdown_page_chunks": True,
-            "write_extracted_images": status == "parsed",
-            "image_dpi": image_dpi,
-            "render_pages": render_pages,
+            "page_image_inputs": status == "parsed",
             "render_dpi": render_dpi,
-            "ocr": "disabled; low-text pages are flagged in quality_report.json",
+            "image_workflow": "PDF pages are rendered to PNG before PaddleOCR-VL inference.",
+            "pipeline_version": "v1.5",
             "asset_layout": "flat assets/ folder per source material",
+            **({key: value for key, value in asdict(settings).items() if value is not None} if status == "parsed" else {}),
         },
     )
 

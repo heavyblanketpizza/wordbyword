@@ -27,7 +27,6 @@ from wordbyword.dictionary_build.llm import (
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
-    PdfParserName,
     SourceMaterialParseError,
     parse_source_material,
     parse_source_materials,
@@ -157,10 +156,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             output_root=options.output_root,
             source_id=args.source_id,
             parse_pdf=options.parse_pdf,
-            pdf_parser=options.pdf_parser,
-            render_pages=options.render_pages,
             render_dpi=options.render_dpi,
-            image_dpi=options.image_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
         )
     if args.parse_source_materials is not None:
@@ -169,10 +165,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             source_dir=args.parse_source_materials,
             output_root=options.output_root,
             parse_pdf=options.parse_pdf,
-            pdf_parser=options.pdf_parser,
-            render_pages=options.render_pages,
             render_dpi=options.render_dpi,
-            image_dpi=options.image_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
         )
     if args.rewrite_whole_source_material is not None:
@@ -229,10 +222,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             source_dir=args.build_class_printouts,
             parse_output_root=options.output_root,
             parse_pdf=options.parse_pdf,
-            pdf_parser=options.pdf_parser,
-            render_pages=options.render_pages,
             render_dpi=options.render_dpi,
-            image_dpi=options.image_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
             rewrite_output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
             dictionary_path=rewrite_dictionary_path_from_args(args),
@@ -297,20 +287,11 @@ def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
     return args.rewrite_dictionary or artifact_path(args.output, ArtifactId.FINAL_DICTIONARY)
 
 
-def parse_pdf_parser_name(value: str) -> PdfParserName:
-    if value not in ("heuristic", "paddleocr-vl"):
-        raise PipelineUsageError(f"unsupported PDF parser: {value}")
-    return value
-
-
 def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
     return SourceParseOptions(
         output_root=args.source_output_root,
         parse_pdf=not args.skip_pdf_parse,
-        pdf_parser=parse_pdf_parser_name(args.pdf_parser),
-        render_pages=not args.no_page_renders,
         render_dpi=args.pdf_render_dpi,
-        image_dpi=args.pdf_image_dpi,
         paddleocr_vl_settings=None if args.skip_pdf_parse else paddleocr_vl_settings_from_args(args),
     )
 
@@ -543,10 +524,7 @@ def parse_source_material_cli(
     output_root: Path,
     source_id: str | None,
     parse_pdf: bool,
-    pdf_parser: PdfParserName,
-    render_pages: bool,
     render_dpi: int,
-    image_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
 ) -> int:
     try:
@@ -555,10 +533,7 @@ def parse_source_material_cli(
             output_root=output_root,
             source_id=source_id,
             parse_pdf=parse_pdf,
-            pdf_parser=pdf_parser,
-            render_pages=render_pages,
             render_dpi=render_dpi,
-            image_dpi=image_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
             progress=emit_source_material_progress,
         )
@@ -590,10 +565,7 @@ def parse_source_materials_cli(
     source_dir: Path,
     output_root: Path,
     parse_pdf: bool,
-    pdf_parser: PdfParserName,
-    render_pages: bool,
     render_dpi: int,
-    image_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
 ) -> int:
     try:
@@ -601,10 +573,7 @@ def parse_source_materials_cli(
             source_dir,
             output_root=output_root,
             parse_pdf=parse_pdf,
-            pdf_parser=pdf_parser,
-            render_pages=render_pages,
             render_dpi=render_dpi,
-            image_dpi=image_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
             progress=emit_source_material_progress,
         )
@@ -929,10 +898,7 @@ def build_class_printouts_cli(
     source_dir: Path,
     parse_output_root: Path,
     parse_pdf: bool,
-    pdf_parser: PdfParserName,
-    render_pages: bool,
     render_dpi: int,
-    image_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
     rewrite_output_root: Path,
     dictionary_path: Path,
@@ -947,10 +913,7 @@ def build_class_printouts_cli(
             source_dir,
             output_root=parse_output_root,
             parse_pdf=parse_pdf,
-            pdf_parser=pdf_parser,
-            render_pages=render_pages,
             render_dpi=render_dpi,
-            image_dpi=image_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
             progress=emit_source_material_progress,
         )
@@ -1252,8 +1215,6 @@ def warn_if_model_unload_fails(client: SupportsCompletion) -> None:
 
 
 def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:
-    if getattr(args, "pdf_parser", "heuristic") != "paddleocr-vl":
-        return None
     sidecar_env = (
         args.paddleocr_vl_sidecar_env.as_posix()
         if args.paddleocr_vl_sidecar_env is not None
@@ -1277,8 +1238,8 @@ def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSett
         raise PipelineUsageError(
             "PaddleOCR-VL parser is selected, but PaddleOCR-VL is not available. "
             "Create .venv-paddleocr-vl, set WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV, "
-            "or pass --paddleocr-vl-sidecar-env /path/to/env. Use --pdf-parser heuristic "
-            "to bypass PaddleOCR-VL."
+            "or pass --paddleocr-vl-sidecar-env /path/to/env. Use --skip-pdf-parse "
+            "only when you intentionally want workspace preparation without PDF parsing."
         )
 
     return PaddleOCRVLSettings(

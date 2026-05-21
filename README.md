@@ -60,19 +60,12 @@ This mode renders each PDF page to `assets/page-0001.png`, sends the page images
 
 With `--paddleocr-vl-sidecar-env`, wordbyword activates the sidecar by running that environment's `bin/python` or `Scripts/python.exe`. `--paddleocr-vl-sidecar-python` can point directly at a Python executable instead. If no sidecar flag is passed, wordbyword checks `WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON`, `WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV`, `.venv-paddleocr-vl`, and `.venv-paddleocr`. The main process renders page images, launches the sidecar PaddleOCR worker for each PDF, polls page results as they are produced, incrementally rewrites the merged `content.md`, `chunks.json`, and `parser_output.json`, then writes final `document_model.json` and `quality_report.json`. Final parsed outputs are per source file, not per page. When the page results are complete, wordbyword terminates any still-running sidecar process so PaddleOCR resources are released.
 
-The heuristic PDF parser remains available as an explicit fallback:
-
-```bash
-uv --no-cache run python -m wordbyword --parse-source-materials --pdf-parser heuristic
-```
-
 PaddleOCR-VL inference runs in an isolated child process when no sidecar env is configured. If you stop the command with `Ctrl-C`, wordbyword terminates the child process, removes the interrupted source's partial parse workspace, and exits with code `130`.
 
 Useful source-material options:
 
 ```bash
 uv --no-cache run python -m wordbyword --parse-source-material classroom-printout-studio/class-source-materials/popular-physicsprize2025.pdf
-uv --no-cache run python -m wordbyword --parse-source-materials --no-page-renders
 uv --no-cache run python -m wordbyword --parse-source-materials --skip-pdf-parse
 uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
 ```

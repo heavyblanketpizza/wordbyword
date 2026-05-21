@@ -19,7 +19,7 @@ from wordbyword.class_archive.live_lexicon import (
 )
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
-from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT, PdfParserName
+from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 DEFAULT_OUTPUT_DIR = Path("build-dictionary")
@@ -37,10 +37,7 @@ PIPELINE_CLEANUP_FLAGS = (
 class SourceParseOptions:
     output_root: Path
     parse_pdf: bool
-    pdf_parser: PdfParserName
-    render_pages: bool
     render_dpi: int
-    image_dpi: int
     paddleocr_vl_settings: PaddleOCRVLSettings | None
 
 
@@ -189,30 +186,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only prepare source-material workspaces; do not run the PDF parser.",
     )
     parser.add_argument(
-        "--pdf-parser",
-        choices=("heuristic", "paddleocr-vl"),
-        default="paddleocr-vl",
-        help=(
-            "PDF parser to use for source materials. Defaults to paddleocr-vl, which renders "
-            "each PDF page to PNG and runs PaddleOCR-VL-1.5. Use heuristic for PyMuPDF4LLM parsing."
-        ),
-    )
-    parser.add_argument(
-        "--no-page-renders",
-        action="store_true",
-        help="Do not render full-page PNG review assets for parsed PDFs.",
-    )
-    parser.add_argument(
         "--pdf-render-dpi",
         type=int,
         default=144,
-        help="DPI for full-page PNG review assets. Defaults to 144.",
-    )
-    parser.add_argument(
-        "--pdf-image-dpi",
-        type=int,
-        default=180,
-        help="DPI for images extracted by PyMuPDF4LLM. Defaults to 180.",
+        help="DPI for PDF page PNG inputs sent to PaddleOCR-VL. Defaults to 144.",
     )
     parser.add_argument(
         "--paddleocr-vl-device",
