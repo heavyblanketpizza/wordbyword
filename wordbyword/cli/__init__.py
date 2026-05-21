@@ -3,6 +3,7 @@
 from wordbyword.cli.app import (
     add_reference_meanings,
     build_usage_signals_cli,
+    discover_paddleocr_vl_sidecar_env,
     generate_after_class_reading_report_cli,
     generate_missing_meanings,
     link_cleaned_examples,
@@ -18,6 +19,7 @@ from wordbyword.cli.app import (
     source_parse_options_from_args,
     update_live_lexicon_cli,
 )
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT
 from wordbyword.cli.options import (
     DEFAULT_INPUT_DIR,
     DEFAULT_OUTPUT_DIR,
@@ -31,10 +33,12 @@ __all__ = [
     "DEFAULT_INPUT_DIR",
     "DEFAULT_OUTPUT_DIR",
     "DEFAULT_REFERENCE_DICTIONARY_PATH",
+    "DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT",
     "SourceParseOptions",
     "add_reference_meanings",
     "build_usage_signals_cli",
     "build_parser",
+    "discover_paddleocr_vl_sidecar_env",
     "generate_after_class_reading_report_cli",
     "generate_missing_meanings",
     "link_cleaned_examples",

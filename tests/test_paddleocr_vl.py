@@ -7,11 +7,21 @@ from unittest.mock import patch
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
     PaddleOCRVLInterruptedError,
     PaddleOCRVLSettings,
+    _sidecar_process_env,
     run_paddleocr_vl,
 )
 
 
 class PaddleOCRVLWorkerSupervisionTest(unittest.TestCase):
+    def test_sidecar_process_env_adds_repo_root_to_pythonpath(self) -> None:
+        with patch.dict("os.environ", {"PATH": "/usr/bin", "PYTHONPATH": "/tmp/existing"}, clear=True):
+            env = _sidecar_process_env(PaddleOCRVLSettings(sidecar_env="/tmp/paddle-env"))
+
+        expected_repo_root = Path(__file__).resolve().parents[1].as_posix()
+        self.assertTrue(env["PYTHONPATH"].startswith(expected_repo_root))
+        self.assertIn("/tmp/existing", env["PYTHONPATH"].split(":"))
+        self.assertEqual(env["VIRTUAL_ENV"], "/tmp/paddle-env")
+
     def test_keyboard_interrupt_terminates_worker_process(self) -> None:
         context = FakeMultiprocessingContext()
 

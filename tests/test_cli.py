@@ -5,11 +5,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from wordbyword.cli import (
     DEFAULT_INPUT_DIR,
     DEFAULT_REFERENCE_DICTIONARY_PATH,
+    DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     build_parser,
     add_reference_meanings,
     generate_missing_meanings,
@@ -20,10 +22,14 @@ from wordbyword.cli import (
     prompt_generated_example_retry,
     resolve_distribution_path,
     show_distribution,
+    source_parse_options_from_args,
 )
+from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.dictionary_build.llm import CompletionResult
 from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_SOURCE_MATERIAL_ROOT
+from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 
 class ParserDefaultsTest(unittest.TestCase):
@@ -37,12 +43,23 @@ class ParserDefaultsTest(unittest.TestCase):
             args.reference_dictionary,
             Path("build-dictionary/references/reference-dictionary.jsonl"),
         )
-        self.assertEqual(args.pdf_parser, "heuristic")
+        self.assertEqual(args.pdf_parser, "paddleocr-vl")
+
+    def test_class_printout_commands_have_zero_config_roots(self) -> None:
+        parser = build_parser()
+
+        parse_args = parser.parse_args(["--parse-source-materials"])
+        print_args = parser.parse_args(["--print-class-materials"])
+        workflow_args = parser.parse_args(["--build-class-printouts"])
+
+        self.assertEqual(parse_args.parse_source_materials, DEFAULT_SOURCE_MATERIAL_ROOT)
+        self.assertEqual(print_args.print_class_materials, DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT)
+        self.assertEqual(workflow_args.build_class_printouts, DEFAULT_SOURCE_MATERIAL_ROOT)
 
     def test_paddleocr_vl_settings_are_built_only_for_paddle_parser(self) -> None:
         parser = build_parser()
 
-        heuristic_args = parser.parse_args([])
+        heuristic_args = parser.parse_args(["--pdf-parser", "heuristic"])
         self.assertIsNone(paddleocr_vl_settings_from_args(heuristic_args))
 
         paddle_args = parser.parse_args(
@@ -66,7 +83,8 @@ class ParserDefaultsTest(unittest.TestCase):
                 "120",
             ]
         )
-        settings = paddleocr_vl_settings_from_args(paddle_args)
+        with patch("wordbyword.cli.app.validate_paddleocr_vl_sidecar") as validate_sidecar:
+            settings = paddleocr_vl_settings_from_args(paddle_args)
 
         self.assertIsNotNone(settings)
         assert settings is not None
@@ -79,6 +97,90 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(settings.sidecar_env, "/tmp/paddle-env")
         self.assertEqual(settings.sidecar_python, "/tmp/paddle-env/bin/python")
         self.assertEqual(settings.sidecar_timeout_seconds, 120)
+        validate_sidecar.assert_called_once_with(
+            sidecar_env="/tmp/paddle-env",
+            sidecar_python="/tmp/paddle-env/bin/python",
+        )
+
+    def test_paddleocr_vl_settings_auto_discovers_local_sidecar(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--parse-source-materials"])
+
+        with (
+            patch("wordbyword.cli.app.discover_paddleocr_vl_sidecar_env", return_value=Path(".venv-paddleocr-vl")),
+            patch("wordbyword.cli.app.validate_paddleocr_vl_sidecar") as validate_sidecar,
+        ):
+            settings = source_parse_options_from_args(args).paddleocr_vl_settings
+
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings.sidecar_env, ".venv-paddleocr-vl")
+        self.assertIsNone(settings.sidecar_python)
+        validate_sidecar.assert_called_once_with(sidecar_env=".venv-paddleocr-vl", sidecar_python=None)
+
+    def test_paddleocr_vl_settings_respects_explicit_sidecar_over_auto_discovery(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--parse-source-materials",
+                "--paddleocr-vl-sidecar-env",
+                "/tmp/explicit-paddle-env",
+            ]
+        )
+
+        with (
+            patch("wordbyword.cli.app.discover_paddleocr_vl_sidecar_env", return_value=Path(".venv-paddleocr-vl")),
+            patch("wordbyword.cli.app.validate_paddleocr_vl_sidecar") as validate_sidecar,
+        ):
+            settings = source_parse_options_from_args(args).paddleocr_vl_settings
+
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings.sidecar_env, "/tmp/explicit-paddle-env")
+        validate_sidecar.assert_called_once_with(sidecar_env="/tmp/explicit-paddle-env", sidecar_python=None)
+
+    def test_paddleocr_vl_settings_uses_env_sidecar_before_local_discovery(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--parse-source-materials"])
+
+        with (
+            patch.dict("os.environ", {"WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV": "/tmp/env-paddle"}, clear=True),
+            patch("wordbyword.cli.app.discover_paddleocr_vl_sidecar_env") as discover_sidecar,
+            patch("wordbyword.cli.app.validate_paddleocr_vl_sidecar") as validate_sidecar,
+        ):
+            settings = source_parse_options_from_args(args).paddleocr_vl_settings
+
+        self.assertIsNotNone(settings)
+        assert settings is not None
+        self.assertEqual(settings.sidecar_env, "/tmp/env-paddle")
+        discover_sidecar.assert_not_called()
+        validate_sidecar.assert_called_once_with(sidecar_env="/tmp/env-paddle", sidecar_python=None)
+
+    def test_paddleocr_vl_settings_fail_fast_when_no_runtime_is_available(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--parse-source-materials"])
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("wordbyword.cli.app.discover_paddleocr_vl_sidecar_env", return_value=None),
+            patch("wordbyword.cli.app.current_python_has_paddleocr", return_value=False),
+        ):
+            with self.assertRaises(PipelineUsageError):
+                source_parse_options_from_args(args)
+
+    def test_skip_pdf_parse_does_not_require_paddleocr_vl_runtime(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--parse-source-materials", "--skip-pdf-parse"])
+
+        with (
+            patch("wordbyword.cli.app.discover_paddleocr_vl_sidecar_env") as discover_sidecar,
+            patch("wordbyword.cli.app.current_python_has_paddleocr") as current_has_paddleocr,
+        ):
+            options = source_parse_options_from_args(args)
+
+        self.assertIsNone(options.paddleocr_vl_settings)
+        discover_sidecar.assert_not_called()
+        current_has_paddleocr.assert_not_called()
 
     def test_main_reports_source_material_interrupt_with_130_exit(self) -> None:
         stderr = io.StringIO()
@@ -91,6 +193,123 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 130)
         self.assertIn("interrupted", stderr.getvalue())
+
+    def test_build_class_printouts_runs_only_the_bundles_parsed_in_this_run(self) -> None:
+        parsed_bundles = [
+            SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/parsed/lesson-a")),
+            SimpleNamespace(source_id="lesson-b", output_dir=Path("/tmp/parsed/lesson-b")),
+        ]
+        parsed_result = SimpleNamespace(
+            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
+            output_root=Path("classroom-printout-studio/class-source-materials/parsed"),
+            bundles=parsed_bundles,
+        )
+        rewrite_outputs = [
+            SimpleNamespace(
+                source_id="lesson-a",
+                output_dir=Path("/tmp/rewritten/lesson-a"),
+                failed_page_count=0,
+                rewritten_page_count=2,
+                selected_vocabulary=[{"canonical_key": "물"}],
+            ),
+            SimpleNamespace(
+                source_id="lesson-b",
+                output_dir=Path("/tmp/rewritten/lesson-b"),
+                failed_page_count=0,
+                rewritten_page_count=3,
+                selected_vocabulary=[{"canonical_key": "빛"}],
+            ),
+        ]
+        print_outputs = [
+            SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/print/lesson-a"), accepted=True),
+            SimpleNamespace(source_id="lesson-b", output_dir=Path("/tmp/print/lesson-b"), accepted=True),
+        ]
+        clients = [object(), object()]
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
+            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result) as parse_materials,
+            patch(
+                "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                side_effect=rewrite_outputs,
+            ) as rewrite_material,
+            patch("wordbyword.cli.app.print_class_material", side_effect=print_outputs) as print_material,
+            patch("wordbyword.cli.app.ollama_client", side_effect=clients),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(
+                [
+                    "--build-class-printouts",
+                    "--rewrite-dictionary",
+                    "build-dictionary/15_final_dictionary.jsonl",
+                    "--rewrite-output-root",
+                    "/tmp/rewritten",
+                    "--print-output-root",
+                    "/tmp/print",
+                    "--print-body-font-size",
+                    "13",
+                    "--print-font-path",
+                    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        parse_materials.assert_called_once()
+        self.assertEqual(parse_materials.call_args.args[0], DEFAULT_SOURCE_MATERIAL_ROOT)
+        self.assertEqual(parse_materials.call_args.kwargs["pdf_parser"], "paddleocr-vl")
+        self.assertEqual(parse_materials.call_args.kwargs["paddleocr_vl_settings"].sidecar_env, ".venv-paddleocr-vl")
+        self.assertEqual(rewrite_material.call_args_list[0].args[0], Path("/tmp/parsed/lesson-a"))
+        self.assertEqual(rewrite_material.call_args_list[1].args[0], Path("/tmp/parsed/lesson-b"))
+        self.assertEqual(
+            [rewrite_call.kwargs["dictionary_path"] for rewrite_call in rewrite_material.call_args_list],
+            [Path("build-dictionary/15_final_dictionary.jsonl"), Path("build-dictionary/15_final_dictionary.jsonl")],
+        )
+        self.assertEqual(
+            [rewrite_call.kwargs["output_root"] for rewrite_call in rewrite_material.call_args_list],
+            [Path("/tmp/rewritten"), Path("/tmp/rewritten")],
+        )
+        self.assertEqual(print_material.call_args_list[0].args[0], Path("/tmp/rewritten/lesson-a"))
+        self.assertEqual(print_material.call_args_list[1].args[0], Path("/tmp/rewritten/lesson-b"))
+        self.assertEqual(
+            [print_call.kwargs["output_root"] for print_call in print_material.call_args_list],
+            [Path("/tmp/print"), Path("/tmp/print")],
+        )
+        self.assertEqual(
+            [print_call.kwargs["body_font_size"] for print_call in print_material.call_args_list],
+            [13, 13],
+        )
+
+    def test_build_class_printouts_returns_nonzero_when_a_rewrite_fails(self) -> None:
+        parsed_result = SimpleNamespace(
+            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
+            output_root=Path("classroom-printout-studio/class-source-materials/parsed"),
+            bundles=[SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/parsed/lesson-a"))],
+        )
+        rewrite_output = SimpleNamespace(
+            source_id="lesson-a",
+            output_dir=Path("/tmp/rewritten/lesson-a"),
+            failed_page_count=1,
+            rewritten_page_count=0,
+            selected_vocabulary=[],
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
+            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result),
+            patch(
+                "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                return_value=rewrite_output,
+            ),
+            patch("wordbyword.cli.app.print_class_material") as print_material,
+            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(["--build-class-printouts"])
+
+        self.assertEqual(exit_code, 1)
+        print_material.assert_not_called()
 
 
 class ShowDistributionCliTest(unittest.TestCase):

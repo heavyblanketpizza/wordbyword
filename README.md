@@ -33,8 +33,11 @@ Supported source formats:
 Use this first to create one isolated parse workspace per mature class material:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials
+uv --no-cache run python -m wordbyword --parse-source-materials
 ```
+
+This defaults to `classroom-printout-studio/class-source-materials` and uses PaddleOCR-VL for PDFs. If a local
+`.venv-paddleocr-vl` or `.venv-paddleocr` sidecar exists, wordbyword uses it automatically.
 
 The command writes one source-specific folder under `classroom-printout-studio/class-source-materials/parsed/<source-id>/`:
 
@@ -42,22 +45,26 @@ The command writes one source-specific folder under `classroom-printout-studio/c
 - `content.md`: the primary human-readable and LLM-ready Markdown output for PDFs.
 - `chunks.json`: page-level Markdown chunks with parser metadata.
 - `document_model.json`: validated sidecar tying source metadata, pages, assets, and outputs together.
-- `parser_output.json`: raw structured PyMuPDF4LLM layout output for debugging and traceability.
+- `parser_output.json`: raw structured parser output for debugging and traceability.
 - `quality_report.json`: per-page extraction diagnostics, OCR flags, table warnings, and asset inventory.
 - `assets/`: a single flat folder for parser-generated images, tables, page crops, and other visual assets.
 
-The heuristic PDF parser is Markdown-first. It uses PyMuPDF4LLM for reading order, Markdown conversion, page chunks, and image extraction; PyMuPDF for page inspection and full-page review renders; Pillow for asset metadata; and Pydantic for validated sidecars. OCR is not run in this heuristic pass. Pages with little or no selectable text are flagged in `quality_report.json` for a later OCR or vision parser.
-
-PaddleOCR-VL-1.5 can be used as an optional PDF parser lane:
+PaddleOCR-VL-1.5 is the default PDF parser lane:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-device cpu
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-sidecar-env .venv-paddleocr --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-device cpu
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
 ```
 
 This mode renders each PDF page to `assets/page-0001.png`, sends the page images to PaddleOCR-VL-1.5, and writes the same bundle contract: `content.md`, `chunks.json`, `document_model.json`, `parser_output.json`, and `quality_report.json`. PaddleOCR-VL is intentionally not a base dependency. Paddle documents Python 3.9-3.13 as the verified manual-install range for this path, while this project currently runs on Python 3.14, so use a separate PaddleOCR virtual environment, Docker image, or PaddleOCR-VL service when running the model locally.
 
-With `--paddleocr-vl-sidecar-env`, wordbyword activates the sidecar by running that environment's `bin/python` or `Scripts/python.exe`. `--paddleocr-vl-sidecar-python` can point directly at a Python executable instead. The main process renders page images, launches the sidecar PaddleOCR worker for each PDF, polls page results as they are produced, incrementally rewrites the merged `content.md`, `chunks.json`, and `parser_output.json`, then writes final `document_model.json` and `quality_report.json`. Final parsed outputs are per source file, not per page. When the page results are complete, wordbyword terminates any still-running sidecar process so PaddleOCR resources are released.
+With `--paddleocr-vl-sidecar-env`, wordbyword activates the sidecar by running that environment's `bin/python` or `Scripts/python.exe`. `--paddleocr-vl-sidecar-python` can point directly at a Python executable instead. If no sidecar flag is passed, wordbyword checks `WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON`, `WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV`, `.venv-paddleocr-vl`, and `.venv-paddleocr`. The main process renders page images, launches the sidecar PaddleOCR worker for each PDF, polls page results as they are produced, incrementally rewrites the merged `content.md`, `chunks.json`, and `parser_output.json`, then writes final `document_model.json` and `quality_report.json`. Final parsed outputs are per source file, not per page. When the page results are complete, wordbyword terminates any still-running sidecar process so PaddleOCR resources are released.
+
+The heuristic PDF parser remains available as an explicit fallback:
+
+```bash
+uv --no-cache run python -m wordbyword --parse-source-materials --pdf-parser heuristic
+```
 
 PaddleOCR-VL inference runs in an isolated child process when no sidecar env is configured. If you stop the command with `Ctrl-C`, wordbyword terminates the child process, removes the interrupted source's partial parse workspace, and exits with code `130`.
 
@@ -65,9 +72,9 @@ Useful source-material options:
 
 ```bash
 uv --no-cache run python -m wordbyword --parse-source-material classroom-printout-studio/class-source-materials/popular-physicsprize2025.pdf
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --no-page-renders
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --skip-pdf-parse
-uv --no-cache run python -m wordbyword --parse-source-materials classroom-printout-studio/class-source-materials --pdf-parser paddleocr-vl --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
+uv --no-cache run python -m wordbyword --parse-source-materials --no-page-renders
+uv --no-cache run python -m wordbyword --parse-source-materials --skip-pdf-parse
+uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
 ```
 
 ## Source Material Rewriting
@@ -107,7 +114,8 @@ After a source has been rewritten, run the printable stage to create editable A4
 
 ```bash
 uv --no-cache run python -m wordbyword --print-class-material classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/popular-physicsprize2025 --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --print-class-materials --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
 
 The printable stage asks Ollama for a strict JSON print plan, then renders the editable DOCX deterministically. When image assets are available, the prompt attaches resized visual previews for selectable candidates and requires a vision-capable Ollama model; the model may choose up to two visually inspected image assets from the rewritten bundle. It does not author DOCX directly and it cannot use external images.
@@ -126,9 +134,9 @@ Printable outputs are written per source:
 Useful printable options:
 
 ```bash
-uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-body-font-size 13
-uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
-uv --no-cache run python -m wordbyword --print-class-materials classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided --print-output-root classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama
+uv --no-cache run python -m wordbyword --print-class-materials --print-body-font-size 13
+uv --no-cache run python -m wordbyword --print-class-materials --print-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
+uv --no-cache run python -m wordbyword --print-class-materials --print-output-root classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama
 ```
 
 ## Class Session Archive

@@ -594,6 +594,14 @@ def _sidecar_process_env(settings: PaddleOCRVLSettings) -> dict[str, str]:
         bin_dir = sidecar_env / ("Scripts" if sys.platform == "win32" else "bin")
         env["VIRTUAL_ENV"] = sidecar_env.as_posix()
         env["PATH"] = f"{bin_dir.as_posix()}{os.pathsep}{env.get('PATH', '')}"
+    import_root = Path(__file__).resolve().parents[3].as_posix()
+    python_path_entries = [import_root]
+    existing_python_path = env.get("PYTHONPATH", "")
+    if existing_python_path:
+        python_path_entries.extend(
+            entry for entry in existing_python_path.split(os.pathsep) if entry and entry != import_root
+        )
+    env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
     return env
 
 

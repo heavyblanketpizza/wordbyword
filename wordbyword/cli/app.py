@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -78,13 +80,20 @@ from wordbyword.dictionary_build.saved_outputs import (
     write_meaning_dictionary_candidates_from_saved,
 )
 
+PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
+PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON"
+DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS = (".venv-paddleocr-vl", ".venv-paddleocr")
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     validate_args(parser, args)
 
-    immediate_exit_code = run_immediate_command(args)
+    try:
+        immediate_exit_code = run_immediate_command(args)
+    except PipelineUsageError as exc:
+        parser.exit(2, f"wordbyword: error: {exc}\n")
     if immediate_exit_code is not None:
         return immediate_exit_code
 
@@ -214,6 +223,25 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             font_path=args.print_font_path,
             body_font_size=args.print_body_font_size,
         )
+    if args.build_class_printouts is not None:
+        options = source_parse_options_from_args(args)
+        return build_class_printouts_cli(
+            source_dir=args.build_class_printouts,
+            parse_output_root=options.output_root,
+            parse_pdf=options.parse_pdf,
+            pdf_parser=options.pdf_parser,
+            render_pages=options.render_pages,
+            render_dpi=options.render_dpi,
+            image_dpi=options.image_dpi,
+            paddleocr_vl_settings=options.paddleocr_vl_settings,
+            rewrite_output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            dictionary_path=rewrite_dictionary_path_from_args(args),
+            print_output_root=args.print_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            font_path=args.print_font_path,
+            body_font_size=args.print_body_font_size,
+        )
     if args.generate_after_class_reading_report is not None:
         return generate_after_class_reading_report_cli(
             printout_path=args.generate_after_class_reading_report,
@@ -283,7 +311,7 @@ def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptio
         render_pages=not args.no_page_renders,
         render_dpi=args.pdf_render_dpi,
         image_dpi=args.pdf_image_dpi,
-        paddleocr_vl_settings=paddleocr_vl_settings_from_args(args),
+        paddleocr_vl_settings=None if args.skip_pdf_parse else paddleocr_vl_settings_from_args(args),
     )
 
 
@@ -896,6 +924,134 @@ def print_class_materials_cli(
     return 0 if failed == 0 and written > 0 else 1
 
 
+def build_class_printouts_cli(
+    *,
+    source_dir: Path,
+    parse_output_root: Path,
+    parse_pdf: bool,
+    pdf_parser: PdfParserName,
+    render_pages: bool,
+    render_dpi: int,
+    image_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
+    rewrite_output_root: Path,
+    dictionary_path: Path,
+    print_output_root: Path,
+    model: str,
+    base_url: str | None,
+    font_path: Path | None,
+    body_font_size: int | None,
+) -> int:
+    try:
+        parsed = parse_source_materials(
+            source_dir,
+            output_root=parse_output_root,
+            parse_pdf=parse_pdf,
+            pdf_parser=pdf_parser,
+            render_pages=render_pages,
+            render_dpi=render_dpi,
+            image_dpi=image_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
+            progress=emit_source_material_progress,
+        )
+    except KeyboardInterrupt:
+        sys.stderr.write("wordbyword: class printout build interrupted during parsing; partial workspace cleaned.\n")
+        return 130
+    except SourceMaterialParseError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    if not parsed.bundles:
+        sys.stderr.write(f"wordbyword: no class source materials found in {source_dir}\n")
+        return 1
+
+    rewrite_client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=1200.0,
+        max_output_tokens=32768,
+    )
+    rewrite_outputs = []
+    try:
+        try:
+            for bundle in parsed.bundles:
+                rewrite_outputs.append(
+                    rewrite_vocabulary_guided_parsed_source_material(
+                        bundle.output_dir,
+                        dictionary_path=dictionary_path,
+                        output_root=rewrite_output_root,
+                        client=rewrite_client,
+                        model=model,
+                        progress=emit_source_rewrite_progress,
+                    )
+                )
+        finally:
+            warn_if_model_unload_fails(rewrite_client)
+    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    successful_rewrites = [output for output in rewrite_outputs if output.failed_page_count == 0]
+    failed_rewrites = len(rewrite_outputs) - len(successful_rewrites)
+    if not successful_rewrites:
+        sys.stdout.write(
+            "class printout workflow stopped after rewrite\n"
+            f"  source_dir: {parsed.source_dir}\n"
+            f"  parsed_sources: {len(parsed.bundles)}\n"
+            f"  rewritten: 0\n"
+            f"  failed_rewrites: {failed_rewrites}\n"
+        )
+        sys.stdout.flush()
+        return 1
+
+    print_client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=1200.0,
+        max_output_tokens=16384,
+    )
+    print_outputs = []
+    try:
+        try:
+            for rewrite_output in successful_rewrites:
+                print_outputs.append(
+                    print_class_material(
+                        rewrite_output.output_dir,
+                        output_root=print_output_root,
+                        client=print_client,
+                        model=model,
+                        font_path=font_path,
+                        body_font_size=body_font_size,
+                        progress=emit_printable_progress,
+                    )
+                )
+        finally:
+            warn_if_model_unload_fails(print_client)
+    except (PrintableMaterialError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    written = sum(1 for output in print_outputs if output.accepted)
+    failed_prints = sum(1 for output in print_outputs if not output.accepted)
+    sys.stdout.write(
+        "class printout workflow complete\n"
+        f"  source_dir: {parsed.source_dir}\n"
+        f"  parsed_root: {parsed.output_root}\n"
+        f"  rewrite_root: {rewrite_output_root}\n"
+        f"  print_root: {print_output_root}\n"
+        f"  parsed_sources: {len(parsed.bundles)}\n"
+        f"  rewritten: {len(successful_rewrites)}\n"
+        f"  failed_rewrites: {failed_rewrites}\n"
+        f"  docx_written: {written}\n"
+        f"  failed_prints: {failed_prints}\n"
+    )
+    for output in print_outputs:
+        status = "written" if output.accepted else "failed"
+        sys.stdout.write(f"  - {output.source_id}: {output.output_dir} ({status})\n")
+    sys.stdout.flush()
+    return 0 if failed_rewrites == 0 and failed_prints == 0 and written > 0 else 1
+
+
 def generate_after_class_reading_report_cli(
     *,
     printout_path: Path,
@@ -1098,6 +1254,33 @@ def warn_if_model_unload_fails(client: SupportsCompletion) -> None:
 def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:
     if getattr(args, "pdf_parser", "heuristic") != "paddleocr-vl":
         return None
+    sidecar_env = (
+        args.paddleocr_vl_sidecar_env.as_posix()
+        if args.paddleocr_vl_sidecar_env is not None
+        else None
+    )
+    sidecar_python = (
+        args.paddleocr_vl_sidecar_python.as_posix()
+        if args.paddleocr_vl_sidecar_python is not None
+        else None
+    )
+    if sidecar_env is None and sidecar_python is None:
+        sidecar_python = os.environ.get(PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR) or None
+        sidecar_env = os.environ.get(PADDLEOCR_VL_SIDECAR_ENV_VAR) or None
+    if sidecar_env is None and sidecar_python is None:
+        discovered_sidecar_env = discover_paddleocr_vl_sidecar_env()
+        sidecar_env = discovered_sidecar_env.as_posix() if discovered_sidecar_env is not None else None
+
+    if sidecar_env is not None or sidecar_python is not None:
+        validate_paddleocr_vl_sidecar(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
+    elif not current_python_has_paddleocr():
+        raise PipelineUsageError(
+            "PaddleOCR-VL parser is selected, but PaddleOCR-VL is not available. "
+            "Create .venv-paddleocr-vl, set WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV, "
+            "or pass --paddleocr-vl-sidecar-env /path/to/env. Use --pdf-parser heuristic "
+            "to bypass PaddleOCR-VL."
+        )
+
     return PaddleOCRVLSettings(
         device=args.paddleocr_vl_device,
         engine=args.paddleocr_vl_engine,
@@ -1112,14 +1295,84 @@ def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSett
         use_seal_recognition=args.paddleocr_vl_seal_recognition or None,
         use_ocr_for_image_block=False if args.paddleocr_vl_no_ocr_for_image_block else None,
         max_new_tokens=args.paddleocr_vl_max_new_tokens,
-        sidecar_env=args.paddleocr_vl_sidecar_env.as_posix()
-        if args.paddleocr_vl_sidecar_env is not None
-        else None,
-        sidecar_python=args.paddleocr_vl_sidecar_python.as_posix()
-        if args.paddleocr_vl_sidecar_python is not None
-        else None,
+        sidecar_env=sidecar_env,
+        sidecar_python=sidecar_python,
         sidecar_timeout_seconds=args.paddleocr_vl_sidecar_timeout_seconds,
     )
+
+
+def discover_paddleocr_vl_sidecar_env(*, roots: Sequence[Path] | None = None) -> Path | None:
+    for root in roots or paddleocr_vl_sidecar_search_roots():
+        for env_name in DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS:
+            candidate = root / env_name
+            if candidate.is_dir():
+                python_path = paddleocr_vl_sidecar_python_path(sidecar_env=candidate.as_posix(), sidecar_python=None)
+                if python_path is not None and paddleocr_vl_python_can_locate_paddleocr(python_path):
+                    return candidate
+    return None
+
+
+def paddleocr_vl_sidecar_search_roots() -> tuple[Path, ...]:
+    roots = [Path.cwd(), wordbyword_project_root()]
+    unique_roots: list[Path] = []
+    for root in roots:
+        resolved = root.resolve()
+        if resolved not in unique_roots:
+            unique_roots.append(resolved)
+    return tuple(unique_roots)
+
+
+def wordbyword_project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def current_python_has_paddleocr() -> bool:
+    return importlib.util.find_spec("paddleocr") is not None
+
+
+def validate_paddleocr_vl_sidecar(*, sidecar_env: str | None, sidecar_python: str | None) -> None:
+    python_path = paddleocr_vl_sidecar_python_path(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
+    label = sidecar_python or sidecar_env or "unknown sidecar"
+    if python_path is None or not paddleocr_vl_python_can_locate_paddleocr(python_path):
+        raise PipelineUsageError(
+            "PaddleOCR-VL sidecar cannot import paddleocr: "
+            f"{label}. Install PaddleOCR-VL there or choose a valid sidecar with "
+            "--paddleocr-vl-sidecar-env /path/to/env."
+        )
+
+
+def paddleocr_vl_sidecar_python_path(*, sidecar_env: str | None, sidecar_python: str | None) -> Path | None:
+    if sidecar_python:
+        return Path(sidecar_python).expanduser()
+    if not sidecar_env:
+        return None
+    sidecar_env_path = Path(sidecar_env).expanduser()
+    for candidate in (
+        sidecar_env_path / "bin" / "python",
+        sidecar_env_path / "Scripts" / "python.exe",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def paddleocr_vl_python_can_locate_paddleocr(python_path: Path) -> bool:
+    if not python_path.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            [
+                python_path.as_posix(),
+                "-c",
+                "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('paddleocr') else 1)",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=30.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def prompt_generated_example_retry(
