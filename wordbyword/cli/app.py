@@ -27,12 +27,9 @@ from wordbyword.classroom_printout_studio.source_parsing.materials import (
     parse_source_materials,
 )
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
-    DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
-    rewrite_source_material as rewrite_parsed_source_material,
-    rewrite_source_materials as rewrite_parsed_source_materials,
     rewrite_vocabulary_guided_source_material as rewrite_vocabulary_guided_parsed_source_material,
     rewrite_vocabulary_guided_source_materials as rewrite_vocabulary_guided_parsed_source_materials,
     rewrite_whole_source_material as rewrite_whole_parsed_source_material,
@@ -164,20 +161,6 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             render_dpi=options.render_dpi,
             image_dpi=options.image_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
-        )
-    if args.rewrite_source_material is not None:
-        return rewrite_source_material_cli(
-            parsed_bundle_dir=args.rewrite_source_material,
-            output_root=args.rewrite_output_root or DEFAULT_REWRITE_OUTPUT_ROOT,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    if args.rewrite_source_materials is not None:
-        return rewrite_source_materials_cli(
-            parsed_root=args.rewrite_source_materials,
-            output_root=args.rewrite_output_root or DEFAULT_REWRITE_OUTPUT_ROOT,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
         )
     if args.rewrite_whole_source_material is not None:
         return rewrite_whole_source_material_cli(
@@ -584,96 +567,6 @@ def parse_source_materials_cli(
         )
     sys.stdout.flush()
     return 0
-
-
-def rewrite_source_material_cli(
-    *,
-    parsed_bundle_dir: Path,
-    output_root: Path,
-    model: str,
-    base_url: str | None,
-) -> int:
-    client = ollama_client(
-        model=model,
-        base_url=base_url,
-        timeout_seconds=600.0,
-        max_output_tokens=8192,
-    )
-    try:
-        try:
-            outputs = rewrite_parsed_source_material(
-                parsed_bundle_dir,
-                output_root=output_root,
-                client=client,
-                model=model,
-                progress=emit_source_rewrite_progress,
-            )
-        finally:
-            warn_if_model_unload_fails(client)
-    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
-        sys.stderr.write(f"wordbyword: {error}\n")
-        return 1
-
-    sys.stdout.write(
-        "source material rewritten\n"
-        f"  source_id: {outputs.source_id}\n"
-        f"  output_dir: {outputs.output_dir}\n"
-        f"  rewritten_pages: {outputs.rewritten_page_count}\n"
-        f"  failed_pages: {outputs.failed_page_count}\n"
-        f"  content: {outputs.output_dir / 'content.md'}\n"
-    )
-    sys.stdout.flush()
-    return 0 if outputs.failed_page_count == 0 else 1
-
-
-def rewrite_source_materials_cli(
-    *,
-    parsed_root: Path,
-    output_root: Path,
-    model: str,
-    base_url: str | None,
-) -> int:
-    client = ollama_client(
-        model=model,
-        base_url=base_url,
-        timeout_seconds=600.0,
-        max_output_tokens=8192,
-    )
-    try:
-        try:
-            outputs = rewrite_parsed_source_materials(
-                parsed_root,
-                output_root=output_root,
-                client=client,
-                model=model,
-                progress=emit_source_rewrite_progress,
-            )
-        finally:
-            warn_if_model_unload_fails(client)
-    except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
-        sys.stderr.write(f"wordbyword: {error}\n")
-        return 1
-
-    failed_pages = sum(output.failed_page_count for output in outputs.source_outputs)
-    rewritten_pages = sum(output.rewritten_page_count for output in outputs.source_outputs)
-    sys.stdout.write(
-        "source materials rewritten\n"
-        f"  parsed_root: {outputs.parsed_root}\n"
-        f"  output_root: {outputs.output_root}\n"
-        f"  sources: {len(outputs.source_outputs)}\n"
-        f"  skipped_sources: {len(outputs.skipped_sources)}\n"
-        f"  rewritten_pages: {rewritten_pages}\n"
-        f"  failed_pages: {failed_pages}\n"
-    )
-    for output in outputs.source_outputs:
-        sys.stdout.write(
-            f"  - {output.source_id}: {output.output_dir} "
-            f"(rewritten: {output.rewritten_page_count}, failed: {output.failed_page_count})\n"
-        )
-    for skipped in outputs.skipped_sources:
-        sys.stdout.write(f"  - skipped {skipped['source_dir']}: {skipped['reason']}\n")
-    sys.stdout.flush()
-    return 0 if failed_pages == 0 and outputs.source_outputs else 1
 
 
 def rewrite_whole_source_material_cli(

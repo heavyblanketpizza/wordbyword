@@ -26,10 +26,8 @@ from wordbyword.dictionary_build.output_files import append_jsonl, initialize_js
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
 DEFAULT_TARGET_PROFILE = "grade1-ko"
-REWRITE_MODE_PAGE = "page"
 REWRITE_MODE_WHOLE_DOCUMENT = "whole_document"
 REWRITE_MODE_VOCABULARY_GUIDED = "vocabulary_guided"
-DEFAULT_REWRITE_OUTPUT_ROOT = Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama"
 DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
     Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-whole-document"
 )
@@ -154,25 +152,6 @@ class RewritePrompt:
 
 
 @dataclass(frozen=True)
-class SourceRewriteOutputs:
-    source_id: str
-    output_dir: Path
-    rewritten_page_count: int
-    failed_page_count: int
-    page_rows: list[dict[str, object]]
-    attempt_rows: list[dict[str, object]]
-    failure_rows: list[dict[str, object]]
-
-
-@dataclass(frozen=True)
-class SourceRewriteBatchOutputs:
-    parsed_root: Path
-    output_root: Path
-    source_outputs: list[SourceRewriteOutputs]
-    skipped_sources: list[dict[str, object]]
-
-
-@dataclass(frozen=True)
 class SourceWholeRewriteOutputs:
     source_id: str
     output_dir: Path
@@ -248,126 +227,6 @@ class SourceVocabularyGuidedRewriteBatchOutputs:
     output_root: Path
     source_outputs: list[SourceVocabularyGuidedRewriteOutputs]
     skipped_sources: list[dict[str, object]]
-
-
-def rewrite_source_material(
-    parsed_bundle_dir: Path,
-    *,
-    output_root: Path = DEFAULT_REWRITE_OUTPUT_ROOT,
-    client: SupportsCompletion,
-    model: str,
-    target_profile: str = DEFAULT_TARGET_PROFILE,
-    require_images: bool = True,
-    progress: ProgressCallback | None = None,
-) -> SourceRewriteOutputs:
-    context = build_context_packet(parsed_bundle_dir)
-    if not context.pages:
-        raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
-
-    output_dir = output_root / context.source_id
-    _report(progress, context.source_id, f"preparing rewrite output at {output_dir}")
-    prepare_output_dir(output_dir)
-    copy_assets(parsed_bundle_dir, output_dir)
-
-    content_assets = content_linked_assets(context)
-    if require_images and content_assets:
-        assert_client_supports_images(client)
-    image_payloads_by_path = image_payloads_by_asset_path(
-        parsed_bundle_dir,
-        content_assets,
-        require_images=require_images,
-    )
-    attached_assets = assets_with_payloads(content_assets, image_payloads_by_path)
-
-    context_packet_path = output_dir / "context_packet.md"
-    context_packet_path.write_text(context.content_markdown, encoding="utf-8")
-
-    attempts_path = output_dir / "attempts.jsonl"
-    failures_path = output_dir / "failures.jsonl"
-    initialize_jsonl_file(attempts_path)
-    initialize_jsonl_file(failures_path)
-
-    page_rows: list[dict[str, object]] = []
-    attempt_rows: list[dict[str, object]] = []
-    failure_rows: list[dict[str, object]] = []
-    rewritten_by_page: dict[int, str] = {}
-
-    for page in context.pages:
-        _report(progress, context.source_id, f"rewriting page {page.page}")
-        attempt = rewrite_page_with_full_context(
-            client,
-            context=context,
-            page=page,
-            image_payloads_by_path=image_payloads_by_path,
-            model=model,
-        )
-        attempt_rows.append(attempt)
-        append_jsonl(attempts_path, [attempt])
-        if bool(attempt["accepted"]):
-            rewritten_markdown = str(attempt["rewritten_markdown"])
-            rewritten_by_page[page.page] = rewritten_markdown
-        else:
-            failure_rows.append(attempt)
-            write_jsonl(failures_path, failure_rows)
-
-        page_rows = materialize_page_rows(context.pages, rewritten_by_page, failure_rows)
-        write_rewrite_artifacts(
-            output_dir,
-            context=context,
-            page_rows=page_rows,
-            attempt_rows=attempt_rows,
-            failure_rows=failure_rows,
-            model=model,
-            target_profile=target_profile,
-            attached_assets=attached_assets,
-        )
-
-    return SourceRewriteOutputs(
-        source_id=context.source_id,
-        output_dir=output_dir,
-        rewritten_page_count=len(rewritten_by_page),
-        failed_page_count=len(failure_rows),
-        page_rows=page_rows,
-        attempt_rows=attempt_rows,
-        failure_rows=failure_rows,
-    )
-
-
-def rewrite_source_materials(
-    parsed_root: Path,
-    *,
-    output_root: Path = DEFAULT_REWRITE_OUTPUT_ROOT,
-    client: SupportsCompletion,
-    model: str,
-    target_profile: str = DEFAULT_TARGET_PROFILE,
-    require_images: bool = True,
-    progress: ProgressCallback | None = None,
-) -> SourceRewriteBatchOutputs:
-    source_outputs: list[SourceRewriteOutputs] = []
-    skipped_sources: list[dict[str, object]] = []
-    for bundle_dir in discover_parsed_bundles(parsed_root):
-        skip_reason = skip_reason_for_bundle(bundle_dir)
-        if skip_reason:
-            skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
-            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
-            continue
-        source_outputs.append(
-            rewrite_source_material(
-                bundle_dir,
-                output_root=output_root,
-                client=client,
-                model=model,
-                target_profile=target_profile,
-                require_images=require_images,
-                progress=progress,
-            )
-        )
-    return SourceRewriteBatchOutputs(
-        parsed_root=parsed_root,
-        output_root=output_root,
-        source_outputs=source_outputs,
-        skipped_sources=skipped_sources,
-    )
 
 
 def rewrite_whole_source_material(
@@ -1214,96 +1073,6 @@ def unique_prompt_assets(prompt_messages: Sequence[PromptMessage]) -> tuple[Rewr
     return tuple(assets)
 
 
-def rewrite_page_with_full_context(
-    client: SupportsCompletion,
-    *,
-    context: ContextPacket,
-    page: RewritePage,
-    image_payloads_by_path: Mapping[str, str],
-    model: str,
-) -> dict[str, object]:
-    prompt = build_page_rewrite_prompt(context, page, image_payloads_by_path)
-    metrics: dict[str, object] = source_page_metrics(page.source_text)
-    try:
-        result = client.complete(
-            list(prompt.messages),
-            temperature=0.2,
-            max_output_tokens=max(2048, min(8192, len(page.source_text) * 2)),
-            json_mode=True,
-        )
-        rewritten_markdown = parse_and_validate_rewrite_response(
-            result,
-            context=context,
-            page=page,
-        )
-        metrics = {
-            **metrics,
-            **rewritten_page_metrics(
-                source_text=page.source_text,
-                rewritten_markdown=rewritten_markdown,
-            ),
-        }
-        return {
-            "source_id": context.source_id,
-            "page": page.page,
-            "model": model,
-            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": prompt.user_prompt,
-            "prompt_messages": list(prompt.prompt_messages),
-            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
-            "response": result.content,
-            "rewritten_markdown": rewritten_markdown,
-            "accepted": True,
-            "failure_reason": "",
-            "metrics": metrics,
-        }
-    except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
-        return {
-            "source_id": context.source_id,
-            "page": page.page,
-            "model": model,
-            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
-            "user_prompt": prompt.user_prompt,
-            "prompt_messages": list(prompt.prompt_messages),
-            "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
-            "response": "",
-            "rewritten_markdown": "",
-            "accepted": False,
-            "failure_reason": str(exc),
-            "metrics": metrics,
-        }
-
-
-def build_page_rewrite_prompt(
-    context: ContextPacket,
-    page: RewritePage,
-    image_payloads_by_path: Mapping[str, str],
-) -> RewritePrompt:
-    required_shape = {
-        "source_id": context.source_id,
-        "page": page.page,
-        "rewritten_markdown": "...",
-    }
-    instruction = "\n".join(
-        [
-            "Rewrite request:",
-            f"source_id: {context.source_id}",
-            f"current_page: {page.page}",
-            f"Rewrite only the source page marked {page_marker(page.page)} from the parsed content.md above.",
-            "Use the full parsed document and interleaved images above for context.",
-            "Preserve every image/html block from the current page exactly where it belongs.",
-            "",
-            "Return JSON exactly in this shape:",
-            json.dumps(required_shape, ensure_ascii=False),
-        ]
-    )
-    return build_interleaved_rewrite_prompt(
-        context,
-        final_instruction=instruction,
-        image_payloads_by_path=image_payloads_by_path,
-    )
-
-
 def rewrite_whole_document_with_full_context(
     client: SupportsCompletion,
     *,
@@ -1807,37 +1576,6 @@ def whole_document_max_output_tokens(context: ContextPacket) -> int:
     return max(8192, min(32768, len(context.source_content_markdown) * 2))
 
 
-def parse_and_validate_rewrite_response(
-    result: CompletionResult,
-    *,
-    context: ContextPacket,
-    page: RewritePage,
-) -> str:
-    if MARKDOWN_FENCE in result.content:
-        raise SourceRewriteError("Model response included a markdown fence.")
-    parsed = parse_json_object(result.content)
-    if str(parsed.get("source_id") or "") != context.source_id:
-        raise SourceRewriteError(f"Model response omitted requested source_id '{context.source_id}'.")
-    if int_or_none(parsed.get("page")) != page.page:
-        raise SourceRewriteError(f"Model response omitted requested page {page.page}.")
-    rewritten_markdown = str(parsed.get("rewritten_markdown") or "").strip()
-    if not rewritten_markdown:
-        raise SourceRewriteError(f"Model response for page {page.page} had empty rewritten_markdown.")
-    if MARKDOWN_FENCE in rewritten_markdown:
-        raise SourceRewriteError("Rewritten markdown included a markdown fence.")
-    if not KOREAN_PATTERN.search(rewritten_markdown):
-        raise SourceRewriteError(f"Rewritten page {page.page} did not contain Korean text.")
-    missing_asset_paths = [
-        path for path in image_paths_in_text(page.source_text) if path not in rewritten_markdown
-    ]
-    if missing_asset_paths:
-        raise SourceRewriteError(
-            f"Rewritten page {page.page} omitted asset reference(s): "
-            + ", ".join(missing_asset_paths)
-        )
-    return rewritten_markdown
-
-
 def parse_and_validate_whole_rewrite_response(
     result: CompletionResult,
     *,
@@ -1948,35 +1686,6 @@ def rewritten_document_metrics(*, context: ContextPacket, rewritten_markdown: st
     }
 
 
-def materialize_page_rows(
-    pages: Sequence[RewritePage],
-    rewritten_by_page: Mapping[int, str],
-    failure_rows: Sequence[Mapping[str, object]],
-) -> list[dict[str, object]]:
-    failure_by_page = {int(row["page"]): row for row in failure_rows if row.get("page")}
-    rows: list[dict[str, object]] = []
-    for page in pages:
-        rewritten_markdown = rewritten_by_page.get(page.page, "")
-        failure = failure_by_page.get(page.page)
-        rows.append(
-            {
-                "page": page.page,
-                "status": "rewritten" if rewritten_markdown else "failed",
-                "source_text": page.source_text,
-                "rewritten_markdown": rewritten_markdown,
-                "assets": [asset.json_row() for asset in page.assets],
-                "metrics": failure.get("metrics", {}) if failure else rewritten_page_metrics(
-                    source_text=page.source_text,
-                    rewritten_markdown=rewritten_markdown,
-                )
-                if rewritten_markdown
-                else source_page_metrics(page.source_text),
-                "failure_reason": str(failure.get("failure_reason", "")) if failure else "",
-            }
-        )
-    return rows
-
-
 def materialize_whole_document_page_rows(
     *,
     context: ContextPacket,
@@ -2034,8 +1743,8 @@ def write_rewrite_artifacts(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
+    rewrite_mode: str,
     content_markdown: str | None = None,
-    rewrite_mode: str = REWRITE_MODE_PAGE,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> None:
     (output_dir / "content.md").write_text(
@@ -2082,7 +1791,7 @@ def write_rewrite_artifacts(
         + "\n",
         encoding="utf-8",
     )
-    write_jsonl(output_dir / "attempts.jsonl", list(attempt_rows))  # compact checkpoints after each page
+    write_jsonl(output_dir / "attempts.jsonl", list(attempt_rows))
     write_jsonl(output_dir / "failures.jsonl", list(failure_rows))
 
 
@@ -2106,7 +1815,7 @@ def build_quality_report(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
-    rewrite_mode: str = REWRITE_MODE_PAGE,
+    rewrite_mode: str,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewritten_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
@@ -2145,7 +1854,7 @@ def build_rewrite_manifest(
     model: str,
     target_profile: str,
     attached_assets: Sequence[RewriteAsset],
-    rewrite_mode: str = REWRITE_MODE_PAGE,
+    rewrite_mode: str,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewrite = {

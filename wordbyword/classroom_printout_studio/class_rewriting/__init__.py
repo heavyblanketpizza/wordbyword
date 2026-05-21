@@ -1,12 +1,9 @@
 """Grade-aware class source-material rewrite modules."""
 
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
-    DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
-    SourceRewriteBatchOutputs,
     SourceRewriteError,
-    SourceRewriteOutputs,
     SourceVocabularyGuidedRewriteBatchOutputs,
     SourceVocabularyGuidedRewriteOutputs,
     SourceWholeRewriteBatchOutputs,
@@ -14,19 +11,14 @@ from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     build_context_packet,
     rewrite_vocabulary_guided_source_material,
     rewrite_vocabulary_guided_source_materials,
-    rewrite_source_material,
-    rewrite_source_materials,
     rewrite_whole_source_material,
     rewrite_whole_source_materials,
 )
 
 __all__ = [
-    "DEFAULT_REWRITE_OUTPUT_ROOT",
     "DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT",
     "DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT",
-    "SourceRewriteBatchOutputs",
     "SourceRewriteError",
-    "SourceRewriteOutputs",
     "SourceVocabularyGuidedRewriteBatchOutputs",
     "SourceVocabularyGuidedRewriteOutputs",
     "SourceWholeRewriteBatchOutputs",
@@ -34,8 +26,6 @@ __all__ = [
     "build_context_packet",
     "rewrite_vocabulary_guided_source_material",
     "rewrite_vocabulary_guided_source_materials",
-    "rewrite_source_material",
-    "rewrite_source_materials",
     "rewrite_whole_source_material",
     "rewrite_whole_source_materials",
 ]

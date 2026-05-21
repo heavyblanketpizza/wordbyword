@@ -72,32 +72,25 @@ uv --no-cache run python -m wordbyword --parse-source-materials classroom-printo
 
 ## Source Material Rewriting
 
-After source materials are parsed, run the Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
-
-```bash
-uv --no-cache run python -m wordbyword --rewrite-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rewrite-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
-```
-
-The rewrite stage reads each parsed source's `content.md`, sends its text and linked image assets to Ollama in document order, and writes outputs under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama/<source-id>/`:
-
-- `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
-- `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
-- `context_packet.md`: audit copy of parsed source metadata, assets, and interleaved content for debugging.
-- `attempts.jsonl`: every page rewrite attempt, ordered prompt messages, response, attached asset ids, and validation result.
-- `failures.jsonl`: unresolved page rewrite failures.
-- `quality_report.json`: rewrite counts, image attachment counts, and soft QA metrics.
-- `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
-- `assets/`: copied parsed assets so Markdown image links remain local.
-
-For comparison, the whole-document rewrite workflow sends the full parsed `content.md` to Ollama in one interleaved text/image request per source, instead of one request per page:
+After source materials are parsed, run the whole-document Ollama rewrite stage to create Korean 1학년-friendly materials. This stage reads only parsed source bundles under `classroom-printout-studio/class-source-materials/parsed`; it does not read or reference the built vocabulary under `build-dictionary/`.
 
 ```bash
 uv --no-cache run python -m wordbyword --rewrite-whole-source-materials classroom-printout-studio/class-source-materials/parsed --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --rewrite-whole-source-material classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025 --ollama-model gemma4:31b
 ```
 
-Whole-document outputs mirror the same artifact bundle under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`. This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
+The rewrite stage reads each parsed source's full `content.md`, sends its text and linked image assets to Ollama in one document-order request per source, and writes outputs under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-whole-document/<source-id>/`:
+
+- `content.md`: rewritten Korean Markdown for young readers, preserving page boundaries and image placements.
+- `chunks.json`: source page text, rewritten page text, asset references, QA metrics, and failure reasons.
+- `context_packet.md`: audit copy of parsed source metadata, assets, and interleaved content for debugging.
+- `attempts.jsonl`: the whole-document rewrite attempt, ordered prompt messages, response, attached asset ids, and validation result.
+- `failures.jsonl`: unresolved whole-document rewrite failures.
+- `quality_report.json`: rewrite counts, image attachment counts, and soft QA metrics.
+- `manifest.json`: source checksum, parser metadata, model, target profile, and output file map.
+- `assets/`: copied parsed assets so Markdown image links remain local.
+
+This mode does not fall back to page rewriting or truncate oversized documents; model/context failures are written to `failures.jsonl` and return a nonzero CLI exit.
 
 The vocabulary-guided whole-document workflow first reads `build-dictionary/15_final_dictionary.jsonl`, ranks eligible vocabulary by `max(quality_score, roi_score)` with blank/null ROI falling back to `quality_score`, sends the top 250 canonical keys and examples to Ollama, asks for 20 rewrite-guiding vocabulary choices, then rewrites the parsed source as a faithful story-style 1학년 text using that vocabulary:
 

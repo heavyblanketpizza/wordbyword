@@ -11,7 +11,6 @@ from unittest.mock import patch
 from wordbyword.cli import main
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMConfigurationError, LLMResponseError
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
-    DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
@@ -19,7 +18,6 @@ from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     build_context_packet,
     load_vocabulary_guided_candidates,
     parse_and_validate_vocabulary_selection_response,
-    rewrite_source_material,
     rewrite_vocabulary_guided_source_material,
     rewrite_whole_source_material,
 )
@@ -27,7 +25,6 @@ from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
 
 class SourceRewriteContextTest(unittest.TestCase):
     def test_default_rewrite_outputs_use_rewritten_for_class_root(self) -> None:
-        self.assertEqual(DEFAULT_REWRITE_OUTPUT_ROOT, Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama")
         self.assertEqual(
             DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
             Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-whole-document",
@@ -53,130 +50,6 @@ class SourceRewriteContextTest(unittest.TestCase):
             self.assertLess(marker_index, image_index)
             self.assertLess(image_index, caption_index)
             self.assertIn('caption="Energy picture."', packet.content_markdown)
-
-    def test_rewrite_interleaves_content_linked_images_in_prompt(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            outputs, client = rewrite_fixture_with_recording_client(Path(workspace))
-
-            self.assertEqual(outputs.failed_page_count, 0)
-            self.assertEqual(client.preflight_count, 1)
-            messages = client.calls[0][1]
-            image_messages = [message for message in messages if message.images]
-            joined_prompt = "\n\n".join(message.content for message in messages)
-            self.assertEqual(len(image_messages), 1)
-            self.assertIn('<img src="assets/fig1.png"', image_messages[0].content)
-            self.assertEqual(image_messages[0].images, (base64.b64encode(b"fig1").decode("ascii"),))
-            text_before_index = next(
-                index
-                for index, message in enumerate(messages)
-                if "The machine shows energy." in message.content
-            )
-            image_index = next(index for index, message in enumerate(messages) if message.images)
-            text_after_index = next(
-                index
-                for index, message in enumerate(messages)
-                if "The final sentence stays after the caption." in message.content
-            )
-            self.assertLess(text_before_index, image_index)
-            self.assertLess(image_index, text_after_index)
-            self.assertNotIn("asset_id=fig1", joined_prompt)
-            self.assertNotIn("asset_id=page-0001", joined_prompt)
-            self.assertNotIn("# Source Context Packet", joined_prompt)
-            self.assertNotIn("## Attached Assets", joined_prompt)
-            self.assertNotIn("[[asset", joined_prompt)
-
-    def test_rewrite_attempt_records_content_linked_asset_ids(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            outputs, _client = rewrite_fixture_with_recording_client(Path(workspace))
-
-            attempts = read_jsonl(outputs.output_dir / "attempts.jsonl")
-            self.assertEqual(attempts[0]["attached_asset_ids"], ["fig1"])
-            prompt_image_rows = [
-                row for row in attempts[0]["prompt_messages"] if row["attached_asset_ids"]
-            ]
-            self.assertEqual(prompt_image_rows[0]["attached_asset_ids"], ["fig1"])
-
-    def test_missing_content_linked_image_fails_before_rewrite(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            bundle_dir = write_parsed_fixture(root / "parsed")
-            (bundle_dir / "assets" / "fig1.png").unlink()
-
-            with self.assertRaises(SourceRewriteError) as error:
-                rewrite_source_material(
-                    bundle_dir,
-                    output_root=root / "rewritten",
-                    client=RecordingRewriteClient(),
-                    model="fake-vision",
-                )
-
-            self.assertIn("Missing asset file for rewrite prompt", str(error.exception))
-
-    def test_unsupported_image_model_fails_before_rewrite(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            bundle_dir = write_parsed_fixture(Path(workspace) / "parsed")
-
-            with self.assertRaises(LLMConfigurationError):
-                rewrite_source_material(
-                    bundle_dir,
-                    output_root=Path(workspace) / "rewritten",
-                    client=UnsupportedVisionClient(),
-                    model="text-only",
-                )
-
-    def test_every_page_request_receives_full_document_context(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            bundle_dir = write_parsed_fixture(
-                Path(workspace) / "parsed",
-                pages=[
-                    page_one_text(),
-                    "# Later page\n\nSecond page source explains the ending.",
-                ],
-            )
-            client = RecordingRewriteClient()
-
-            rewrite_source_material(
-                bundle_dir,
-                output_root=Path(workspace) / "rewritten",
-                client=client,
-                model="fake-vision",
-            )
-
-            first_page_prompt = joined_message_content(client.calls[0][1])
-            second_page_prompt = joined_message_content(client.calls[1][1])
-            self.assertIn("Second page source explains the ending.", first_page_prompt)
-            self.assertIn("The machine shows energy.", second_page_prompt)
-            self.assertIn("current_page: 1", first_page_prompt)
-            self.assertIn("current_page: 2", second_page_prompt)
-            self.assertEqual(first_page_prompt.count("The machine shows energy."), 1)
-
-    def test_rewritten_markdown_preserves_page_markers_and_asset_links(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            bundle_dir = write_parsed_fixture(
-                root / "parsed",
-                pages=[
-                    page_one_text(),
-                    "# Later page\n\nSecond page source explains the ending.",
-                ],
-            )
-
-            outputs = rewrite_source_material(
-                bundle_dir,
-                output_root=root / "rewritten",
-                client=RecordingRewriteClient(),
-                model="fake-vision",
-            )
-
-            content = (outputs.output_dir / "content.md").read_text(encoding="utf-8")
-            self.assertIn("<!-- page:1 -->", content)
-            self.assertIn("<!-- page:2 -->", content)
-            self.assertIn('<img src="assets/fig1.png"', content)
-            self.assertIn("어린이가 읽기 쉬운 첫 쪽입니다.", content)
-            self.assertIn("---", content)
-            chunks = json.loads((outputs.output_dir / "chunks.json").read_text(encoding="utf-8"))
-            self.assertEqual(chunks[0]["status"], "rewritten")
-            self.assertEqual(chunks[1]["status"], "rewritten")
 
 
 class WholeDocumentRewriteTest(unittest.TestCase):
@@ -476,32 +349,16 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
 
 
 class SourceRewriteCliTest(unittest.TestCase):
-    def test_cli_rewrites_all_parsed_source_materials(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace:
-            root = Path(workspace)
-            parsed_root = root / "parsed"
-            output_root = root / "rewritten"
-            write_parsed_fixture(parsed_root)
-            write_skipped_fixture(parsed_root / "sample")
-            client = RecordingRewriteClient()
+    def test_cli_rejects_removed_page_rewrite_commands(self) -> None:
+        for flag in ("--rewrite-source-material", "--rewrite-source-materials"):
+            with self.subTest(flag=flag):
+                stderr = io.StringIO()
+                with patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as error:
+                        main([flag, "classroom-printout-studio/class-source-materials/parsed"])
 
-            with patch("wordbyword.cli.app.ollama_client", return_value=client):
-                with patch("sys.stdout", io.StringIO()):
-                    exit_code = main(
-                        [
-                            "--rewrite-source-materials",
-                            str(parsed_root),
-                            "--rewrite-output-root",
-                            str(output_root),
-                            "--ollama-model",
-                            "fake-vision",
-                        ]
-                    )
-
-            self.assertEqual(exit_code, 0)
-            self.assertTrue((output_root / "lesson" / "content.md").is_file())
-            self.assertTrue((output_root / "lesson" / "context_packet.md").is_file())
-            self.assertTrue((output_root / "lesson" / "assets" / "fig1.png").is_file())
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(f"unrecognized arguments: {flag}", stderr.getvalue())
 
     def test_cli_rewrites_all_parsed_source_materials_as_whole_documents(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -621,7 +478,7 @@ class SourceRewriteCliTest(unittest.TestCase):
             with self.assertRaises(SystemExit) as error:
                 main(
                     [
-                        "--rewrite-source-materials",
+                        "--rewrite-whole-source-materials",
                         "classroom-printout-studio/class-source-materials/parsed",
                         "--rewrite-vocabulary-guided-source-materials",
                         "classroom-printout-studio/class-source-materials/parsed",
@@ -630,57 +487,6 @@ class SourceRewriteCliTest(unittest.TestCase):
 
         self.assertEqual(error.exception.code, 2)
         self.assertIn("parse/rewrite/print source-material commands cannot be combined", stderr.getvalue())
-
-
-class RecordingRewriteClient:
-    def __init__(self) -> None:
-        self.preflight_count = 0
-        self.calls: list[tuple[dict[str, object], list[ChatMessage]]] = []
-
-    def assert_supports_images(self) -> None:
-        self.preflight_count += 1
-
-    def complete(
-        self,
-        messages: list[ChatMessage],
-        *,
-        temperature: float | None = None,
-        max_output_tokens: int | None = None,
-        json_mode: bool = False,
-    ) -> CompletionResult:
-        self.calls.append(
-            (
-                {
-                    "temperature": temperature,
-                    "max_output_tokens": max_output_tokens,
-                    "json_mode": json_mode,
-                },
-                messages,
-            )
-        )
-        joined_prompt = joined_message_content(messages)
-        page = 1 if "current_page: 1" in joined_prompt else 2
-        image_block = (
-            '\n\n<div><img src="assets/fig1.png" alt="Figure" /></div>\n\n'
-            if page == 1
-            else "\n\n"
-        )
-        rewritten = (
-            f"# 쉬운 과학 이야기\n\n어린이가 읽기 쉬운 {'첫' if page == 1 else '둘째'} 쪽입니다."
-            f"{image_block}그림도 함께 봅니다."
-        )
-        return CompletionResult(
-            provider="ollama",
-            model="fake-vision",
-            content=json.dumps(
-                {
-                    "source_id": "lesson",
-                    "page": page,
-                    "rewritten_markdown": rewritten,
-                },
-                ensure_ascii=False,
-            ),
-        )
 
 
 class RecordingWholeRewriteClient:
@@ -795,7 +601,7 @@ class RecordingVocabularyGuidedRewriteClient:
         )
 
 
-class UnsupportedVisionClient(RecordingRewriteClient):
+class UnsupportedVisionClient:
     def assert_supports_images(self) -> None:
         raise LLMConfigurationError("no vision")
 
@@ -817,18 +623,6 @@ def write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
         encoding="utf-8",
     )
-
-
-def rewrite_fixture_with_recording_client(root: Path):
-    bundle_dir = write_parsed_fixture(root / "parsed")
-    client = RecordingRewriteClient()
-    outputs = rewrite_source_material(
-        bundle_dir,
-        output_root=root / "rewritten",
-        client=client,
-        model="fake-vision",
-    )
-    return outputs, client
 
 
 def minimal_context_packet() -> object:

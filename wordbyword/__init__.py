@@ -15,8 +15,6 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     build_context_packet,
-    rewrite_source_material,
-    rewrite_source_materials,
     rewrite_whole_source_material,
     rewrite_whole_source_materials,
 )
@@ -36,8 +34,6 @@ __all__ = [
     "openai_client",
     "rewrite_sentence",
     "build_context_packet",
-    "rewrite_source_material",
-    "rewrite_source_materials",
     "rewrite_whole_source_material",
     "rewrite_whole_source_materials",
 ]

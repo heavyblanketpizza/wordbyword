@@ -6,7 +6,6 @@ from pathlib import Path
 
 from wordbyword.classroom_printout_studio.class_printing.printable import DEFAULT_PRINT_OUTPUT_ROOT
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
-    DEFAULT_REWRITE_OUTPUT_ROOT,
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
@@ -317,28 +316,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional stable id/folder name for --parse-source-material.",
     )
     parser.add_argument(
-        "--rewrite-source-material",
-        type=Path,
-        default=None,
-        metavar="PARSED_BUNDLE_DIR",
-        help=(
-            "Rewrite one parsed source-material bundle for Korean 1학년 readers. "
-            "The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
-        ),
-    )
-    parser.add_argument(
-        "--rewrite-source-materials",
-        type=Path,
-        nargs="?",
-        const=DEFAULT_PARSED_SOURCE_ROOT,
-        default=None,
-        metavar="PARSED_ROOT",
-        help=(
-            "Rewrite every parsed source-material bundle under a parsed root for Korean 1학년 readers. "
-            "Defaults to classroom-printout-studio/class-source-materials/parsed when no root is supplied."
-        ),
-    )
-    parser.add_argument(
         "--rewrite-whole-source-material",
         type=Path,
         default=None,
@@ -398,7 +375,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Root folder for rewritten source-material outputs. Defaults to "
-            f"{DEFAULT_REWRITE_OUTPUT_ROOT} for page rewrites and "
             f"{DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT} for whole-document rewrites, and "
             f"{DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT} for vocabulary-guided rewrites."
         ),
@@ -548,8 +524,6 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     immediate_commands = [
         args.parse_source_material is not None,
         args.parse_source_materials is not None,
-        args.rewrite_source_material is not None,
-        args.rewrite_source_materials is not None,
         args.rewrite_whole_source_material is not None,
         args.rewrite_whole_source_materials is not None,
         args.rewrite_vocabulary_guided_source_material is not None,
@@ -577,9 +551,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
         )
     if (
-        args.rewrite_source_material is not None
-        or args.rewrite_source_materials is not None
-        or args.rewrite_whole_source_material is not None
+        args.rewrite_whole_source_material is not None
         or args.rewrite_whole_source_materials is not None
         or args.rewrite_vocabulary_guided_source_material is not None
         or args.rewrite_vocabulary_guided_source_materials is not None
