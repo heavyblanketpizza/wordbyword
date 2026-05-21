@@ -8,6 +8,10 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from wordbyword.after_class_reports import (
+    AfterClassReportError,
+    generate_after_class_reading_report,
+)
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.dictionary_build.llm import (
@@ -209,6 +213,14 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
             body_font_size=args.print_body_font_size,
+        )
+    if args.generate_after_class_reading_report is not None:
+        return generate_after_class_reading_report_cli(
+            printout_path=args.generate_after_class_reading_report,
+            output_root=args.after_class_report_output_root,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            font_path=args.after_class_report_font_path,
         )
     if args.rename_class_session_archive is not None:
         return rename_class_session_archive_cli(
@@ -884,6 +896,52 @@ def print_class_materials_cli(
     return 0 if failed == 0 and written > 0 else 1
 
 
+def generate_after_class_reading_report_cli(
+    *,
+    printout_path: Path,
+    output_root: Path,
+    model: str,
+    base_url: str | None,
+    font_path: Path | None,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=1200.0,
+        max_output_tokens=32768,
+    )
+    try:
+        try:
+            outputs = generate_after_class_reading_report(
+                printout_path,
+                output_root=output_root,
+                client=client,
+                model=model,
+                font_path=font_path,
+                progress=emit_after_class_report_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (AfterClassReportError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "after-class reading report generated\n"
+        f"  source_id: {outputs.source_id}\n"
+        f"  output_dir: {outputs.output_dir}\n"
+        f"  heuristic_analysis_dir: {outputs.heuristic_analysis_dir}\n"
+        f"  selected_vocabulary: {outputs.selected_vocabulary_count}\n"
+        f"  status: {'written' if outputs.accepted else 'failed'}\n"
+    )
+    if outputs.accepted and outputs.docx_path is not None:
+        sys.stdout.write(f"  docx: {outputs.docx_path}\n")
+    else:
+        sys.stdout.write(f"  failure: {outputs.failure_reason}\n")
+    sys.stdout.flush()
+    return 0 if outputs.accepted else 1
+
+
 def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"rewrite source [{source_id}] {detail}\n")
     sys.stdout.flush()
@@ -891,6 +949,11 @@ def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
 
 def emit_printable_progress(source_id: str, detail: str) -> None:
     sys.stdout.write(f"print class [{source_id}] {detail}\n")
+    sys.stdout.flush()
+
+
+def emit_after_class_report_progress(source_id: str, detail: str) -> None:
+    sys.stdout.write(f"after-class report [{source_id}] {detail}\n")
     sys.stdout.flush()
 
 

@@ -3,6 +3,7 @@
 from wordbyword.cli.app import (
     add_reference_meanings,
     build_usage_signals_cli,
+    generate_after_class_reading_report_cli,
     generate_missing_meanings,
     link_cleaned_examples,
     load_dictionary_candidates,
@@ -34,6 +35,7 @@ __all__ = [
     "add_reference_meanings",
     "build_usage_signals_cli",
     "build_parser",
+    "generate_after_class_reading_report_cli",
     "generate_missing_meanings",
     "link_cleaned_examples",
     "load_dictionary_candidates",

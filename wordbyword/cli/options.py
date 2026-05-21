@@ -4,12 +4,13 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+from wordbyword.after_class_reports import DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT
 from wordbyword.classroom_printout_studio.class_printing.printable import DEFAULT_PRINT_OUTPUT_ROOT
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
 )
-from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
+from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT, is_managed_archive_name
 from wordbyword.class_archive.live_lexicon import (
     DEFAULT_CANONICAL_DICTIONARY_PATH,
     DEFAULT_LIVE_LEXICON_PATH,
@@ -167,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "Parse one class source material into a source-specific workspace. "
-            "PDFs are converted to Markdown-first heuristic parse artifacts."
+            "PDFs are parsed with PaddleOCR-VL by default."
         ),
     )
     parser.add_argument(
@@ -185,16 +186,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-pdf-parse",
         action="store_true",
-        help="Only prepare source-material workspaces; do not run the heuristic PDF parser.",
+        help="Only prepare source-material workspaces; do not run the PDF parser.",
     )
     parser.add_argument(
         "--pdf-parser",
         choices=("heuristic", "paddleocr-vl"),
-        default="heuristic",
+        default="paddleocr-vl",
         help=(
-            "PDF parser to use for source materials. Defaults to heuristic "
-            "PyMuPDF4LLM parsing; paddleocr-vl renders each PDF page to PNG and "
-            "runs PaddleOCR-VL-1.5."
+            "PDF parser to use for source materials. Defaults to paddleocr-vl, which renders "
+            "each PDF page to PNG and runs PaddleOCR-VL-1.5. Use heuristic for PyMuPDF4LLM parsing."
         ),
     )
     parser.add_argument(
@@ -391,10 +391,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--print-class-materials",
         type=Path,
+        nargs="?",
+        const=DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
         default=None,
         metavar="REWRITTEN_ROOT",
         help=(
-            "Create editable A4 DOCX printable reading materials for every rewritten bundle under a root."
+            "Create editable A4 DOCX printable reading materials for every rewritten bundle under a root. "
+            f"Defaults to {DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT} when no root is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--build-class-printouts",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_SOURCE_MATERIAL_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Parse class source materials, rewrite them with vocabulary guidance, and write DOCX printouts. "
+            f"Defaults to {DEFAULT_SOURCE_MATERIAL_ROOT} when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -417,6 +432,31 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional printable body font size override from 11 to 15 points.",
+    )
+    parser.add_argument(
+        "--generate-after-class-reading-report",
+        type=Path,
+        default=None,
+        metavar="CLASS_PRINTOUT",
+        help=(
+            "Create one adult-facing after-class Korean reading report from one managed archived .docx/.pdf "
+            "class printout."
+        ),
+    )
+    parser.add_argument(
+        "--after-class-report-output-root",
+        type=Path,
+        default=DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT,
+        help=(
+            "Root folder for after-class reading report outputs. "
+            f"Defaults to {DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT}."
+        ),
+    )
+    parser.add_argument(
+        "--after-class-report-font-path",
+        type=Path,
+        default=None,
+        help="Optional Korean-capable font file for after-class DOCX report rendering.",
     )
     parser.add_argument(
         "--rename-class-session-archive",
@@ -530,6 +570,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.rewrite_vocabulary_guided_source_materials is not None,
         args.print_class_material is not None,
         args.print_class_materials is not None,
+        args.build_class_printouts is not None,
+        args.generate_after_class_reading_report is not None,
         args.rename_class_session_archive is not None,
         args.build_usage_signals,
         args.update_live_lexicon,
@@ -538,7 +580,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.exit(
             2,
             "wordbyword: error: parse/rewrite/print source-material commands cannot be combined "
-            "with each other or archive commands.\n",
+            "with each other, archive commands, or after-class report generation.\n",
         )
     if args.apply_archive_renames and args.rename_class_session_archive is None:
         parser.exit(
@@ -557,11 +599,19 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         or args.rewrite_vocabulary_guided_source_materials is not None
         or args.print_class_material is not None
         or args.print_class_materials is not None
+        or args.build_class_printouts is not None
     ) and args.source_id:
         parser.exit(
             2,
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
         )
+    if args.generate_after_class_reading_report is not None and args.source_id:
+        parser.exit(
+            2,
+            "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
+        )
+    if args.generate_after_class_reading_report is not None:
+        validate_after_class_report_cli_input(parser, args.generate_after_class_reading_report)
     if args.print_body_font_size is not None and not 11 <= args.print_body_font_size <= 15:
         parser.exit(
             2,
@@ -574,4 +624,27 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             2,
             "wordbyword: error: --retry-generated-examples cannot be combined with "
             "--clean-example-sentences, --clean-dictionary-candidates, or --generate-missing-examples.\n",
+        )
+
+
+def validate_after_class_report_cli_input(parser: argparse.ArgumentParser, path: Path) -> None:
+    if not path.exists():
+        parser.exit(2, f"wordbyword: error: after-class report input does not exist: {path}\n")
+    if path.is_dir():
+        parser.exit(
+            2,
+            f"wordbyword: error: --generate-after-class-reading-report expects one exact .docx or .pdf file, not a directory: {path}\n",
+        )
+    if path.name.startswith("~$"):
+        parser.exit(2, f"wordbyword: error: after-class report input is a temporary Office file: {path}\n")
+    if path.suffix.lower() not in {".docx", ".pdf"}:
+        parser.exit(
+            2,
+            f"wordbyword: error: after-class report input must be a .docx or .pdf file: {path}\n",
+        )
+    if not is_managed_archive_name(path.stem):
+        parser.exit(
+            2,
+            "wordbyword: error: after-class report input must use the managed class-session archive filename pattern.\n"
+            "  hint: run --rename-class-session-archive first, then pass the renamed file.\n",
         )
