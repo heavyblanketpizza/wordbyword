@@ -13,6 +13,7 @@ from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult, LLMCo
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+    SourceRewriteProgress,
     SourceRewriteError,
     VocabularyCandidate,
     build_context_packet,
@@ -20,6 +21,7 @@ from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     parse_and_validate_vocabulary_selection_response,
     rewrite_vocabulary_guided_source_material,
     rewrite_whole_source_material,
+    rewrite_whole_source_materials,
 )
 
 
@@ -64,16 +66,24 @@ class WholeDocumentRewriteTest(unittest.TestCase):
                 ],
             )
             client = RecordingWholeRewriteClient()
+            progress_events: list[SourceRewriteProgress] = []
 
             outputs = rewrite_whole_source_material(
                 bundle_dir,
                 output_root=root / "rewritten-whole",
                 client=client,
                 model="fake-vision",
+                progress=progress_events.append,
             )
 
             self.assertEqual(outputs.failed_page_count, 0)
             self.assertEqual(outputs.rewritten_page_count, 2)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "rewrite", "write", "complete"],
+            )
+            self.assertEqual(progress_events[-1].rewritten_pages, 2)
+            self.assertEqual(progress_events[-1].failed_pages, 0)
             self.assertEqual(client.preflight_count, 1)
             self.assertEqual(len(client.calls), 1)
             messages = client.calls[0][1]
@@ -184,6 +194,30 @@ class WholeDocumentRewriteTest(unittest.TestCase):
                     self.assertEqual(len(client.calls), 1)
                     self.assertIn(expected_failure, outputs.failure_rows[0]["failure_reason"])
 
+    def test_whole_document_rewrite_batch_reports_skipped_sources_with_indices(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            parsed_root = root / "parsed"
+            write_parsed_fixture(parsed_root)
+            write_skipped_fixture(parsed_root / "sample")
+            progress_events: list[SourceRewriteProgress] = []
+
+            outputs = rewrite_whole_source_materials(
+                parsed_root,
+                output_root=root / "rewritten-whole",
+                client=RecordingWholeRewriteClient(),
+                model="fake-vision",
+                progress=progress_events.append,
+            )
+
+            self.assertEqual(len(outputs.source_outputs), 1)
+            self.assertEqual(len(outputs.skipped_sources), 1)
+            skip_events = [event for event in progress_events if event.phase == "skip"]
+            self.assertEqual(len(skip_events), 1)
+            self.assertEqual(skip_events[0].source_id, "sample")
+            self.assertEqual(skip_events[0].source_index, 2)
+            self.assertEqual(skip_events[0].total_sources, 2)
+
 
 class VocabularyGuidedRewriteTest(unittest.TestCase):
     def test_dictionary_candidates_rank_by_roi_or_quality_and_cap_at_top_250(self) -> None:
@@ -286,6 +320,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             dictionary_path = root / "15_final_dictionary.jsonl"
             write_dictionary_fixture(dictionary_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient()
+            progress_events: list[SourceRewriteProgress] = []
 
             outputs = rewrite_vocabulary_guided_source_material(
                 bundle_dir,
@@ -293,10 +328,17 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                 output_root=root / "rewritten-vocabulary",
                 client=client,
                 model="fake-vision",
+                progress=progress_events.append,
             )
 
             self.assertEqual(outputs.failed_page_count, 0)
             self.assertEqual(outputs.rewritten_page_count, 2)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "load", "select", "rewrite", "write", "complete"],
+            )
+            self.assertEqual(progress_events[-1].selected_vocabulary, 20)
+            self.assertEqual(progress_events[-1].rewritten_pages, 2)
             self.assertEqual(client.preflight_count, 1)
             self.assertEqual(len(client.calls), 2)
             selection_prompt = joined_message_content(client.calls[0][1])
@@ -331,6 +373,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                 "source_id": "lesson",
                 "selected_vocabulary": ["unknown"],
             })
+            progress_events: list[SourceRewriteProgress] = []
 
             outputs = rewrite_vocabulary_guided_source_material(
                 bundle_dir,
@@ -338,11 +381,16 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                 output_root=root / "rewritten-vocabulary",
                 client=client,
                 model="fake-vision",
+                progress=progress_events.append,
             )
 
             self.assertEqual(len(client.calls), 1)
             self.assertEqual(outputs.rewritten_page_count, 0)
             self.assertEqual(outputs.failed_page_count, 1)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "load", "select", "write", "complete"],
+            )
             self.assertIn("Vocabulary selection failed", outputs.failure_rows[0]["failure_reason"])
             selection_attempts = read_jsonl(outputs.output_dir / "selection_attempts.jsonl")
             self.assertFalse(selection_attempts[0]["accepted"])

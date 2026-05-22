@@ -169,8 +169,10 @@ uv --no-cache run python -m wordbyword --update-live-lexicon
 After a used handout has a managed archive filename, make one adult-facing report:
 
 ```bash
-uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
 ```
+
+Bare filenames are read from `wbw-vocabulary-intelligence/class-session-archive/`. You can still pass an explicit path for unusual/manual workflows.
 
 The report is written under:
 

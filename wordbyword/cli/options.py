@@ -427,7 +427,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CLASS_PRINTOUT",
         help=(
             "Create one adult-facing after-class Korean reading report from one managed archived .docx/.pdf "
-            "class printout."
+            "class printout. Bare filenames are resolved inside wbw-vocabulary-intelligence/class-session-archive; "
+            "paths are used exactly as supplied."
         ),
     )
     parser.add_argument(
@@ -622,7 +623,10 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "wordbyword: error: --source-id can only be used with --parse-source-material.\n",
         )
     if args.generate_after_class_reading_report is not None:
-        validate_after_class_report_cli_input(parser, args.generate_after_class_reading_report)
+        args.generate_after_class_reading_report = validate_after_class_report_cli_input(
+            parser,
+            args.generate_after_class_reading_report,
+        )
     if args.print_body_font_size is not None and not 11 <= args.print_body_font_size <= 15:
         parser.exit(
             2,
@@ -638,24 +642,33 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         )
 
 
-def validate_after_class_report_cli_input(parser: argparse.ArgumentParser, path: Path) -> None:
-    if not path.exists():
-        parser.exit(2, f"wordbyword: error: after-class report input does not exist: {path}\n")
-    if path.is_dir():
+def resolve_after_class_report_cli_input(path: Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute() or candidate.parent != Path("."):
+        return candidate
+    return DEFAULT_CLASS_SESSION_ARCHIVE_ROOT / candidate
+
+
+def validate_after_class_report_cli_input(parser: argparse.ArgumentParser, path: Path) -> Path:
+    resolved_path = resolve_after_class_report_cli_input(path)
+    if not resolved_path.exists():
+        parser.exit(2, f"wordbyword: error: after-class report input does not exist: {resolved_path}\n")
+    if resolved_path.is_dir():
         parser.exit(
             2,
-            f"wordbyword: error: --generate-after-class-reading-report expects one exact .docx or .pdf file, not a directory: {path}\n",
+            f"wordbyword: error: --generate-after-class-reading-report expects one exact .docx or .pdf file, not a directory: {resolved_path}\n",
         )
-    if path.name.startswith("~$"):
-        parser.exit(2, f"wordbyword: error: after-class report input is a temporary Office file: {path}\n")
-    if path.suffix.lower() not in {".docx", ".pdf"}:
+    if resolved_path.name.startswith("~$"):
+        parser.exit(2, f"wordbyword: error: after-class report input is a temporary Office file: {resolved_path}\n")
+    if resolved_path.suffix.lower() not in {".docx", ".pdf"}:
         parser.exit(
             2,
-            f"wordbyword: error: after-class report input must be a .docx or .pdf file: {path}\n",
+            f"wordbyword: error: after-class report input must be a .docx or .pdf file: {resolved_path}\n",
         )
-    if not is_managed_archive_name(path.stem):
+    if not is_managed_archive_name(resolved_path.stem):
         parser.exit(
             2,
             "wordbyword: error: after-class report input must use the managed class-session archive filename pattern.\n"
             "  hint: run --rename-class-session-archive first, then pass the renamed file.\n",
         )
+    return resolved_path

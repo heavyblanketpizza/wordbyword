@@ -30,8 +30,14 @@ from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationError
 from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
+
+
+class TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class ParserDefaultsTest(unittest.TestCase):
@@ -378,6 +384,50 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         print_material.assert_not_called()
+
+    def test_interactive_source_rewrite_output_uses_styled_terminal_ui(self) -> None:
+        stdout = TtyStringIO()
+
+        def rewrite_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
+            progress = kwargs["progress"]
+            assert callable(progress)
+            progress(
+                SourceRewriteProgress(
+                    phase="rewrite",
+                    source_id="lesson",
+                    detail="rewriting whole document with selected vocabulary",
+                    rewrite_mode="vocabulary_guided",
+                )
+            )
+            return SimpleNamespace(
+                source_id="lesson",
+                output_dir=Path("/tmp/rewritten/lesson"),
+                failed_page_count=0,
+                rewritten_page_count=2,
+                selected_vocabulary=[{"canonical_key": "물"}],
+            )
+
+        with (
+            patch.dict("os.environ", {"TERM": "xterm-256color"}),
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material", side_effect=rewrite_side_effect),
+            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(
+                [
+                    "--rewrite-vocabulary-guided-source-material",
+                    "/tmp/parsed/lesson",
+                    "--rewrite-dictionary",
+                    "build-dictionary/15_final_dictionary.jsonl",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("SOURCE REWRITE // VOCABULARY GUIDED", rendered)
+        self.assertIn("REWRITE", rendered)
+        self.assertNotIn("rewrite source [", rendered)
 
 
 class BuildDictionaryCliTest(unittest.TestCase):

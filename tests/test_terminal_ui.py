@@ -5,6 +5,7 @@ from pathlib import Path
 
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 from wordbyword.cli.terminal_ui import (
     render_artifact_drop,
@@ -13,6 +14,8 @@ from wordbyword.cli.terminal_ui import (
     render_completion_screen,
     render_dictionary_distribution,
     render_source_material_progress,
+    render_source_rewrite_progress,
+    render_source_rewrite_summary,
     render_stage_update,
 )
 
@@ -59,6 +62,69 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn(" 50.0%", rendered)
         self.assertIn("█", rendered)
         self.assertIn("░", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_source_rewrite_progress_plain_is_scan_friendly(self) -> None:
+        progress = SourceRewriteProgress(
+            phase="rewrite",
+            source_id="lesson",
+            detail="rewriting whole document with selected vocabulary",
+            source_index=2,
+            total_sources=3,
+            rewrite_mode="vocabulary_guided",
+        )
+
+        rendered = render_source_rewrite_progress(progress, color=False, width=120)
+
+        self.assertIn("REWRITE", rendered)
+        self.assertIn("2/3 lesson", rendered)
+        self.assertIn("rewriting whole document with selected vocabulary", rendered)
+        self.assertNotIn("█", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_source_rewrite_progress_color_includes_ansi(self) -> None:
+        progress = SourceRewriteProgress(
+            phase="select",
+            source_id="lesson",
+            detail="selecting vocabulary guidance",
+        )
+
+        rendered = render_source_rewrite_progress(progress, color=True, width=120)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("SELECT", rendered)
+        self.assertIn("lesson", rendered)
+
+    def test_render_source_rewrite_summary_includes_vocabulary_guided_counts(self) -> None:
+        rendered = render_source_rewrite_summary(
+            title="vocabulary guided",
+            summary=(
+                ("status", "written"),
+                ("dictionary", "build-dictionary/15_final_dictionary.jsonl"),
+                ("selected", "20 vocabulary"),
+                ("rewritten", "2 pages"),
+                ("failed", "0 pages"),
+                ("content", "rewritten/lesson/content.md"),
+            ),
+            source_rows=(
+                {
+                    "source_id": "lesson",
+                    "output_dir": "rewritten/lesson",
+                    "status": "written",
+                    "selected_vocabulary": 20,
+                    "rewritten_pages": 2,
+                    "failed_pages": 0,
+                },
+            ),
+            color=False,
+            width=120,
+        )
+
+        self.assertIn("SOURCE REWRITE // VOCABULARY GUIDED", rendered)
+        self.assertIn("build-dictionary/15_final_dictionary.jsonl", rendered)
+        self.assertIn("20 vocabulary", rendered)
+        self.assertIn("rewritten/lesson/content.md", rendered)
+        self.assertIn("lesson", rendered)
         self.assertNotIn("\x1b[", rendered)
 
     def test_render_completion_screen_plain_mode_keeps_run_stats(self) -> None:

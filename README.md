@@ -265,10 +265,10 @@ uv --no-cache run python -m wordbyword --update-live-lexicon
 Generate one adult-facing Korean report from one managed archived class printout:
 
 ```bash
-uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
 ```
 
-The input must be one `.docx` or `.pdf` file whose filename already matches the managed archive pattern. If it does not, run the archive rename dry run and apply step first.
+The input must be one `.docx` or `.pdf` file whose filename already matches the managed archive pattern. Bare filenames are resolved inside `wbw-vocabulary-intelligence/class-session-archive/`; explicit paths are still supported for unusual/manual workflows. If the filename does not match the managed archive pattern, run the archive rename dry run and apply step first.
 
 Report outputs are written under `wbw-vocabulary-intelligence/after-class-reports/grade1-ko-a4-ollama/<source-id>/`:
 
@@ -284,8 +284,8 @@ Report outputs are written under `wbw-vocabulary-intelligence/after-class-report
 Useful overrides:
 
 ```bash
-uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --after-class-report-output-root wbw-vocabulary-intelligence/after-class-reports/grade1-ko-a4-ollama
-uv --no-cache run python -m wordbyword --generate-after-class-reading-report wbw-vocabulary-intelligence/class-session-archive/2026-05-10_grade1-reading-apples.docx --after-class-report-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --after-class-report-output-root wbw-vocabulary-intelligence/after-class-reports/grade1-ko-a4-ollama
+uv --no-cache run python -m wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --after-class-report-font-path /System/Library/Fonts/AppleSDGothicNeo.ttc
 ```
 
 ## LLM Providers

@@ -69,6 +69,8 @@ from wordbyword.cli.terminal_ui import (
     emit_cleanup_progress,
     emit_completion_screen,
     emit_source_material_progress,
+    emit_source_rewrite_progress,
+    emit_source_rewrite_summary,
     emit_stage_update,
     render_artifact_drop,
 )
@@ -684,6 +686,21 @@ def parse_source_materials_cli(
     return 0
 
 
+def rewrite_output_summary_row(output: object) -> dict[str, object]:
+    failed_pages = int(getattr(output, "failed_page_count"))
+    row: dict[str, object] = {
+        "source_id": str(getattr(output, "source_id")),
+        "output_dir": str(getattr(output, "output_dir")),
+        "status": "written" if failed_pages == 0 else "failed",
+        "rewritten_pages": int(getattr(output, "rewritten_page_count")),
+        "failed_pages": failed_pages,
+    }
+    selected_vocabulary = getattr(output, "selected_vocabulary", None)
+    if selected_vocabulary is not None:
+        row["selected_vocabulary"] = len(selected_vocabulary)
+    return row
+
+
 def rewrite_whole_source_material_cli(
     *,
     parsed_bundle_dir: Path,
@@ -711,6 +728,20 @@ def rewrite_whole_source_material_cli(
     except (SourceRewriteError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
+
+    if emit_source_rewrite_summary(
+        title="whole document",
+        summary=(
+            ("status", "written" if outputs.failed_page_count == 0 else "failed"),
+            ("source_id", outputs.source_id),
+            ("output", str(outputs.output_dir)),
+            ("rewritten", f"{outputs.rewritten_page_count:,} pages"),
+            ("failed", f"{outputs.failed_page_count:,} pages"),
+            ("content", str(outputs.output_dir / "content.md")),
+        ),
+        source_rows=(rewrite_output_summary_row(outputs),),
+    ):
+        return 0 if outputs.failed_page_count == 0 else 1
 
     sys.stdout.write(
         "source material rewritten as whole document\n"
@@ -754,6 +785,22 @@ def rewrite_whole_source_materials_cli(
 
     failed_pages = sum(output.failed_page_count for output in outputs.source_outputs)
     rewritten_pages = sum(output.rewritten_page_count for output in outputs.source_outputs)
+    if emit_source_rewrite_summary(
+        title="whole document batch",
+        summary=(
+            ("status", "written" if failed_pages == 0 and outputs.source_outputs else "failed"),
+            ("parsed", str(outputs.parsed_root)),
+            ("output", str(outputs.output_root)),
+            ("sources", f"{len(outputs.source_outputs):,}"),
+            ("skipped", f"{len(outputs.skipped_sources):,}"),
+            ("rewritten", f"{rewritten_pages:,} pages"),
+            ("failed", f"{failed_pages:,} pages"),
+        ),
+        source_rows=tuple(rewrite_output_summary_row(output) for output in outputs.source_outputs),
+        skipped_rows=tuple(outputs.skipped_sources),
+    ):
+        return 0 if failed_pages == 0 and outputs.source_outputs else 1
+
     sys.stdout.write(
         "source materials rewritten as whole documents\n"
         f"  parsed_root: {outputs.parsed_root}\n"
@@ -804,6 +851,22 @@ def rewrite_vocabulary_guided_source_material_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
+    if emit_source_rewrite_summary(
+        title="vocabulary guided",
+        summary=(
+            ("status", "written" if outputs.failed_page_count == 0 else "failed"),
+            ("source_id", outputs.source_id),
+            ("output", str(outputs.output_dir)),
+            ("dictionary", str(dictionary_path)),
+            ("selected", f"{len(outputs.selected_vocabulary):,} vocabulary"),
+            ("rewritten", f"{outputs.rewritten_page_count:,} pages"),
+            ("failed", f"{outputs.failed_page_count:,} pages"),
+            ("content", str(outputs.output_dir / "content.md")),
+        ),
+        source_rows=(rewrite_output_summary_row(outputs),),
+    ):
+        return 0 if outputs.failed_page_count == 0 else 1
+
     sys.stdout.write(
         "source material rewritten with vocabulary guidance\n"
         f"  source_id: {outputs.source_id}\n"
@@ -851,6 +914,24 @@ def rewrite_vocabulary_guided_source_materials_cli(
     failed_pages = sum(output.failed_page_count for output in outputs.source_outputs)
     rewritten_pages = sum(output.rewritten_page_count for output in outputs.source_outputs)
     selected_vocabulary_count = sum(len(output.selected_vocabulary) for output in outputs.source_outputs)
+    if emit_source_rewrite_summary(
+        title="vocabulary guided batch",
+        summary=(
+            ("status", "written" if failed_pages == 0 and outputs.source_outputs else "failed"),
+            ("parsed", str(outputs.parsed_root)),
+            ("output", str(outputs.output_root)),
+            ("dictionary", str(dictionary_path)),
+            ("sources", f"{len(outputs.source_outputs):,}"),
+            ("skipped", f"{len(outputs.skipped_sources):,}"),
+            ("selected", f"{selected_vocabulary_count:,} vocabulary"),
+            ("rewritten", f"{rewritten_pages:,} pages"),
+            ("failed", f"{failed_pages:,} pages"),
+        ),
+        source_rows=tuple(rewrite_output_summary_row(output) for output in outputs.source_outputs),
+        skipped_rows=tuple(outputs.skipped_sources),
+    ):
+        return 0 if failed_pages == 0 and outputs.source_outputs else 1
+
     sys.stdout.write(
         "source materials rewritten with vocabulary guidance\n"
         f"  parsed_root: {outputs.parsed_root}\n"
@@ -1020,7 +1101,7 @@ def build_class_printouts_cli(
     rewrite_outputs = []
     try:
         try:
-            for bundle in parsed.bundles:
+            for source_index, bundle in enumerate(parsed.bundles, start=1):
                 rewrite_outputs.append(
                     rewrite_vocabulary_guided_parsed_source_material(
                         bundle.output_dir,
@@ -1029,6 +1110,8 @@ def build_class_printouts_cli(
                         client=rewrite_client,
                         model=model,
                         progress=emit_source_rewrite_progress,
+                        source_index=source_index,
+                        total_sources=len(parsed.bundles),
                     )
                 )
         finally:
@@ -1142,11 +1225,6 @@ def generate_after_class_reading_report_cli(
         sys.stdout.write(f"  failure: {outputs.failure_reason}\n")
     sys.stdout.flush()
     return 0 if outputs.accepted else 1
-
-
-def emit_source_rewrite_progress(source_id: str, detail: str) -> None:
-    sys.stdout.write(f"rewrite source [{source_id}] {detail}\n")
-    sys.stdout.flush()
 
 
 def emit_printable_progress(source_id: str, detail: str) -> None:

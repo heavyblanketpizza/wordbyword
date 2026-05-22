@@ -20,7 +20,7 @@ from wordbyword.after_class_reports import (
     validate_after_class_report_input,
 )
 from wordbyword.after_class_reports.report import resolve_after_class_report_font
-from wordbyword.cli import build_parser, main
+from wordbyword.cli import build_parser, main, validate_args
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
 
 
@@ -215,6 +215,39 @@ class AfterClassReportCliTest(unittest.TestCase):
         self.assertEqual(args.after_class_report_output_root, DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT)
         self.assertIsNone(args.after_class_report_font_path)
 
+    def test_validate_resolves_bare_after_class_report_filename_to_default_archive_root(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            archive.mkdir()
+            source = archive / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(source, korean_fixture_text())
+            parser = build_parser()
+            args = parser.parse_args(["--generate-after-class-reading-report", source.name])
+
+            with patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive):
+                validate_args(parser, args)
+
+            self.assertEqual(args.generate_after_class_reading_report, source)
+
+    def test_validate_reports_resolved_default_archive_path_for_missing_bare_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            parser = build_parser()
+            filename = "2026-05-10_grade1-reading-apples.docx"
+            args = parser.parse_args(["--generate-after-class-reading-report", filename])
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stderr", stderr),
+                patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive),
+                self.assertRaises(SystemExit) as error,
+            ):
+                validate_args(parser, args)
+
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn(str(archive / filename), stderr.getvalue())
+
     def test_cli_generates_report_without_running_pipeline_or_live_lexicon(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
@@ -248,6 +281,42 @@ class AfterClassReportCliTest(unittest.TestCase):
             mock_generate.assert_called_once()
             self.assertIn("after-class reading report generated", stdout.getvalue())
             self.assertIn("selected_vocabulary: 15", stdout.getvalue())
+
+    def test_cli_resolves_bare_after_class_report_filename_before_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            archive.mkdir()
+            source = archive / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(source, korean_fixture_text())
+            output_root = root / "reports"
+            fake_outputs = FakeAfterClassReportOutputs(source.stem, output_root / source.stem)
+            stdout = io.StringIO()
+            with (
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive),
+                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+                patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
+                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
+            ):
+                exit_code = main(
+                    [
+                        "--generate-after-class-reading-report",
+                        source.name,
+                        "--after-class-report-output-root",
+                        str(output_root),
+                        "--ollama-model",
+                        "fake-ollama",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            mock_update_live_lexicon.assert_not_called()
+            mock_generate.assert_called_once()
+            self.assertEqual(mock_generate.call_args.args[0], source)
 
     def test_cli_rejects_after_class_report_combined_with_live_lexicon(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

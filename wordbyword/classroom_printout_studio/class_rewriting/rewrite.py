@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from wordbyword._json_io import read_json_list as read_json_list_file
 from wordbyword._json_io import read_json_object as read_json_object_file
@@ -79,7 +79,24 @@ class SupportsImagePreflight(Protocol):
     def assert_supports_images(self) -> None: ...
 
 
-ProgressCallback = Callable[[str, str], None]
+SourceRewriteProgressPhase = Literal["start", "load", "select", "rewrite", "write", "complete", "skip"]
+
+
+@dataclass(frozen=True)
+class SourceRewriteProgress:
+    phase: SourceRewriteProgressPhase
+    source_id: str
+    detail: str
+    source_index: int = 1
+    total_sources: int = 1
+    rewrite_mode: str = ""
+    output_dir: Path | None = None
+    rewritten_pages: int = 0
+    failed_pages: int = 0
+    selected_vocabulary: int = 0
+
+
+ProgressCallback = Callable[[SourceRewriteProgress], None]
 
 
 @dataclass(frozen=True)
@@ -238,13 +255,24 @@ def rewrite_whole_source_material(
     target_profile: str = DEFAULT_TARGET_PROFILE,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
 ) -> SourceWholeRewriteOutputs:
     context = build_context_packet(parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
 
     output_dir = output_root / context.source_id
-    _report(progress, context.source_id, f"preparing whole-document rewrite output at {output_dir}")
+    _report(
+        progress,
+        phase="start",
+        source_id=context.source_id,
+        detail=f"preparing whole-document rewrite output at {output_dir}",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
+        output_dir=output_dir,
+    )
     prepare_output_dir(output_dir)
     copy_assets(parsed_bundle_dir, output_dir)
     (output_dir / "context_packet.md").write_text(context.content_markdown, encoding="utf-8")
@@ -270,7 +298,16 @@ def rewrite_whole_source_material(
     except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
         preflight_error = str(exc)
 
-    _report(progress, context.source_id, "rewriting whole document")
+    _report(
+        progress,
+        phase="rewrite",
+        source_id=context.source_id,
+        detail="rewriting whole document",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
+        output_dir=output_dir,
+    )
     attempt = (
         failed_whole_document_attempt(
             context=context,
@@ -299,6 +336,16 @@ def rewrite_whole_source_material(
             failure_reason=str(attempt["failure_reason"]),
         )
     )
+    _report(
+        progress,
+        phase="write",
+        source_id=context.source_id,
+        detail="writing whole-document rewrite bundle",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
+        output_dir=output_dir,
+    )
     append_jsonl(attempts_path, attempt_rows)
     write_jsonl(failures_path, failure_rows)
     write_rewrite_artifacts(
@@ -316,6 +363,18 @@ def rewrite_whole_source_material(
 
     rewritten_page_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
     failed_page_count = sum(1 for row in page_rows if row.get("status") == "failed")
+    _report(
+        progress,
+        phase="complete",
+        source_id=context.source_id,
+        detail=f"rewritten pages {rewritten_page_count}; failed pages {failed_page_count}",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
+        output_dir=output_dir,
+        rewritten_pages=rewritten_page_count,
+        failed_pages=failed_page_count,
+    )
     return SourceWholeRewriteOutputs(
         source_id=context.source_id,
         output_dir=output_dir,
@@ -339,11 +398,21 @@ def rewrite_whole_source_materials(
 ) -> SourceWholeRewriteBatchOutputs:
     source_outputs: list[SourceWholeRewriteOutputs] = []
     skipped_sources: list[dict[str, object]] = []
-    for bundle_dir in discover_parsed_bundles(parsed_root):
+    bundle_dirs = discover_parsed_bundles(parsed_root)
+    total_sources = len(bundle_dirs)
+    for source_index, bundle_dir in enumerate(bundle_dirs, start=1):
         skip_reason = skip_reason_for_bundle(bundle_dir)
         if skip_reason:
             skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
-            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
+            _report(
+                progress,
+                phase="skip",
+                source_id=bundle_dir.name,
+                detail=f"skipping: {skip_reason}",
+                source_index=source_index,
+                total_sources=total_sources,
+                rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
+            )
             continue
         source_outputs.append(
             rewrite_whole_source_material(
@@ -354,6 +423,8 @@ def rewrite_whole_source_materials(
                 target_profile=target_profile,
                 require_images=require_images,
                 progress=progress,
+                source_index=source_index,
+                total_sources=total_sources,
             )
         )
     return SourceWholeRewriteBatchOutputs(
@@ -374,14 +445,35 @@ def rewrite_vocabulary_guided_source_material(
     target_profile: str = DEFAULT_TARGET_PROFILE,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
 ) -> SourceVocabularyGuidedRewriteOutputs:
     context = build_context_packet(parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
 
-    candidate_pool = load_vocabulary_guided_candidates(dictionary_path)
     output_dir = output_root / context.source_id
-    _report(progress, context.source_id, f"preparing vocabulary-guided rewrite output at {output_dir}")
+    _report(
+        progress,
+        phase="start",
+        source_id=context.source_id,
+        detail=f"preparing vocabulary-guided rewrite output at {output_dir}",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+        output_dir=output_dir,
+    )
+    _report(
+        progress,
+        phase="load",
+        source_id=context.source_id,
+        detail=f"loading vocabulary guidance from {dictionary_path}",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+        output_dir=output_dir,
+    )
+    candidate_pool = load_vocabulary_guided_candidates(dictionary_path)
     prepare_output_dir(output_dir)
     copy_assets(parsed_bundle_dir, output_dir)
     (output_dir / "context_packet.md").write_text(context.content_markdown, encoding="utf-8")
@@ -409,6 +501,16 @@ def rewrite_vocabulary_guided_source_material(
     except (LLMConfigurationError, LLMRequestError, LLMResponseError, SourceRewriteError) as exc:
         preflight_error = str(exc)
 
+    _report(
+        progress,
+        phase="select",
+        source_id=context.source_id,
+        detail="selecting vocabulary guidance",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+        output_dir=output_dir,
+    )
     if preflight_error:
         selection_attempt, selected = failed_vocabulary_selection_attempt(
             context=context,
@@ -426,7 +528,6 @@ def rewrite_vocabulary_guided_source_material(
             failure_reason=f"No eligible vocabulary rows found in {dictionary_path}.",
         )
     else:
-        _report(progress, context.source_id, "selecting vocabulary guidance")
         selection_attempt, selected = select_vocabulary_for_rewrite(
             client,
             context=context,
@@ -448,7 +549,17 @@ def rewrite_vocabulary_guided_source_material(
     )
 
     if bool(selection_attempt["accepted"]):
-        _report(progress, context.source_id, "rewriting whole document with selected vocabulary")
+        _report(
+            progress,
+            phase="rewrite",
+            source_id=context.source_id,
+            detail="rewriting whole document with selected vocabulary",
+            source_index=source_index,
+            total_sources=total_sources,
+            rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+            output_dir=output_dir,
+            selected_vocabulary=len(selected_vocabulary_rows),
+        )
         attempt = rewrite_vocabulary_guided_document_with_full_context(
             client,
             context=context,
@@ -476,6 +587,17 @@ def rewrite_vocabulary_guided_source_material(
             failure_reason=str(attempt["failure_reason"]),
         )
     )
+    _report(
+        progress,
+        phase="write",
+        source_id=context.source_id,
+        detail="writing vocabulary-guided rewrite bundle",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+        output_dir=output_dir,
+        selected_vocabulary=len(selected_vocabulary_rows),
+    )
     append_jsonl(attempts_path, attempt_rows)
     write_jsonl(failures_path, failure_rows)
     write_rewrite_artifacts(
@@ -498,6 +620,19 @@ def rewrite_vocabulary_guided_source_material(
 
     rewritten_page_count = sum(1 for row in page_rows if row.get("status") == "rewritten")
     failed_page_count = sum(1 for row in page_rows if row.get("status") == "failed")
+    _report(
+        progress,
+        phase="complete",
+        source_id=context.source_id,
+        detail=f"selected vocabulary {len(selected_vocabulary_rows)}; rewritten pages {rewritten_page_count}; failed pages {failed_page_count}",
+        source_index=source_index,
+        total_sources=total_sources,
+        rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+        output_dir=output_dir,
+        rewritten_pages=rewritten_page_count,
+        failed_pages=failed_page_count,
+        selected_vocabulary=len(selected_vocabulary_rows),
+    )
     return SourceVocabularyGuidedRewriteOutputs(
         source_id=context.source_id,
         output_dir=output_dir,
@@ -524,11 +659,21 @@ def rewrite_vocabulary_guided_source_materials(
 ) -> SourceVocabularyGuidedRewriteBatchOutputs:
     source_outputs: list[SourceVocabularyGuidedRewriteOutputs] = []
     skipped_sources: list[dict[str, object]] = []
-    for bundle_dir in discover_parsed_bundles(parsed_root):
+    bundle_dirs = discover_parsed_bundles(parsed_root)
+    total_sources = len(bundle_dirs)
+    for source_index, bundle_dir in enumerate(bundle_dirs, start=1):
         skip_reason = skip_reason_for_bundle(bundle_dir)
         if skip_reason:
             skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
-            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
+            _report(
+                progress,
+                phase="skip",
+                source_id=bundle_dir.name,
+                detail=f"skipping: {skip_reason}",
+                source_index=source_index,
+                total_sources=total_sources,
+                rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
+            )
             continue
         source_outputs.append(
             rewrite_vocabulary_guided_source_material(
@@ -540,6 +685,8 @@ def rewrite_vocabulary_guided_source_materials(
                 target_profile=target_profile,
                 require_images=require_images,
                 progress=progress,
+                source_index=source_index,
+                total_sources=total_sources,
             )
         )
     return SourceVocabularyGuidedRewriteBatchOutputs(
@@ -1980,6 +2127,32 @@ def int_or_none(value: object) -> int | None:
         return None
 
 
-def _report(progress: ProgressCallback | None, source_id: str, detail: str) -> None:
+def _report(
+    progress: ProgressCallback | None,
+    *,
+    phase: SourceRewriteProgressPhase,
+    source_id: str,
+    detail: str,
+    source_index: int = 1,
+    total_sources: int = 1,
+    rewrite_mode: str = "",
+    output_dir: Path | None = None,
+    rewritten_pages: int = 0,
+    failed_pages: int = 0,
+    selected_vocabulary: int = 0,
+) -> None:
     if progress is not None:
-        progress(source_id, detail)
+        progress(
+            SourceRewriteProgress(
+                phase=phase,
+                source_id=source_id,
+                detail=detail,
+                source_index=source_index,
+                total_sources=total_sources,
+                rewrite_mode=rewrite_mode,
+                output_dir=output_dir,
+                rewritten_pages=rewritten_pages,
+                failed_pages=failed_pages,
+                selected_vocabulary=selected_vocabulary,
+            )
+        )
