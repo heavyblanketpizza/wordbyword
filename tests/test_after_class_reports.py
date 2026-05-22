@@ -152,8 +152,10 @@ class AfterClassReportValidationTest(unittest.TestCase):
             self.assertNotIn(old_headers, header_rows)
 
             document_xml = docx_xml(path)
-            for color in ("C2415B", "FCE7EC", "946200", "FFF1D6", "315FBD", "EAF1FF"):
+            for color in ("9ECE6A", "F1F8E8", "7DCFFF", "ECF9FF", "BB9AF7", "F6F1FF", "7AA2F7", "E0AF68"):
                 self.assertIn(color, document_xml)
+            for old_color in ("C2415B", "FCE7EC", "946200", "FFF1D6", "315FBD", "EAF1FF", "1F6F78"):
+                self.assertNotIn(old_color, document_xml)
 
 
 class AfterClassReportGenerationTest(unittest.TestCase):

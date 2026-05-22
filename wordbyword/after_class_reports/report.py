@@ -84,12 +84,19 @@ TRUNCATED_TEXT_TAIL_CHARS = 10000
 AFTER_CLASS_REPORT_MAX_OUTPUT_TOKENS = 32768
 KOREAN_PATTERN = re.compile(r"[가-힣]")
 MARKDOWN_FENCE = "```"
+TOKYO_NIGHT_DOCX_COLORS = {
+    "blue": "7AA2F7",
+    "cyan": "7DCFFF",
+    "green": "9ECE6A",
+    "purple": "BB9AF7",
+    "yellow": "E0AF68",
+}
 CARD_WIDTH_DXA = 10200
 CARD_COLUMNS_DXA = (2160, 8040)
 LEGEND_COLUMNS_DXA = (3400, 3400, 3400)
 AFTER_CLASS_NEUTRAL_BORDER = "D8DEE9"
 AFTER_CLASS_NEUTRAL_FILL = "F8FAFC"
-AFTER_CLASS_SECTION_ACCENT = "1F6F78"
+AFTER_CLASS_SECTION_ACCENT = TOKYO_NIGHT_DOCX_COLORS["blue"]
 PRIMARY_WORKSHEET_PATTERN = re.compile(
     r"(?:worksheet|student worksheet|quiz|answer key|test|exam|워크시트|문제지|퀴즈|정답지|시험지|학생용\s*활동지)",
     re.IGNORECASE,
@@ -109,22 +116,22 @@ PRIORITY_VISUAL_STYLES = {
     "core": PriorityVisualStyle(
         label="핵심",
         heading="핵심 어휘",
-        accent="C2415B",
-        fill="FCE7EC",
+        accent=TOKYO_NIGHT_DOCX_COLORS["green"],
+        fill="F1F8E8",
         purpose="먼저 붙잡고 말하게 할 낱말",
     ),
     "practice": PriorityVisualStyle(
         label="연습",
         heading="연습 어휘",
-        accent="946200",
-        fill="FFF1D6",
+        accent=TOKYO_NIGHT_DOCX_COLORS["cyan"],
+        fill="ECF9FF",
         purpose="본문 설명을 넓히는 낱말",
     ),
     "enrichment": PriorityVisualStyle(
         label="확장",
         heading="확장 어휘",
-        accent="315FBD",
-        fill="EAF1FF",
+        accent=TOKYO_NIGHT_DOCX_COLORS["purple"],
+        fill="F6F1FF",
         purpose="어려운 주제를 조심스럽게 만지는 낱말",
     ),
 }
@@ -1076,7 +1083,14 @@ def add_vocabulary_card(
     add_cell_labeled_line(right_cell, "본문", item.source_sentence, font_name=font_name, accent=style.accent)
     add_cell_labeled_line(right_cell, "연습", item.practice_sentence, font_name=font_name, accent=style.accent)
     add_cell_labeled_line(right_cell, "왜 중요한가", item.why_it_matters, font_name=font_name, accent=style.accent)
-    add_cell_labeled_line(right_cell, "주의", item.caution, font_name=font_name, accent=style.accent)
+    add_cell_labeled_line(
+        right_cell,
+        "주의",
+        item.caution,
+        font_name=font_name,
+        accent=style.accent,
+        label_color=TOKYO_NIGHT_DOCX_COLORS["yellow"],
+    )
     add_spacer_paragraph(doc, before=0, after=3)
 
 
@@ -1221,11 +1235,12 @@ def add_cell_labeled_line(
     *,
     font_name: str,
     accent: str,
+    label_color: str | None = None,
 ) -> None:
     paragraph = next_cell_paragraph(cell)
     set_paragraph_spacing(paragraph, after=2)
     label_run = paragraph.add_run(f"{label}: ")
-    format_run(label_run, font_name=font_name, size=9.5, bold=True, color=accent)
+    format_run(label_run, font_name=font_name, size=9.5, bold=True, color=label_color or accent)
     value_run = paragraph.add_run(text)
     format_run(value_run, font_name=font_name, size=9.5, color="111827")
 
