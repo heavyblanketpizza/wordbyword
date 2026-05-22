@@ -65,6 +65,8 @@ from wordbyword.class_archive.usage_signals import (
 )
 from wordbyword.cli.terminal_ui import (
     emit_artifact_drop,
+    emit_after_class_report_progress,
+    emit_after_class_report_summary,
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
@@ -725,6 +727,21 @@ def printable_output_summary_row(output: object) -> dict[str, object]:
     return row
 
 
+def after_class_report_summary_row(output: object) -> dict[str, object]:
+    accepted = bool(getattr(output, "accepted"))
+    row: dict[str, object] = {
+        "source_id": str(getattr(output, "source_id")),
+        "output_dir": str(getattr(output, "output_dir")),
+        "status": "written" if accepted else "failed",
+        "selected_vocabulary_count": int(getattr(output, "selected_vocabulary_count", 0)),
+        "failure_reason": str(getattr(output, "failure_reason", "") or ""),
+    }
+    docx_path = getattr(output, "docx_path", None)
+    if accepted and docx_path is not None:
+        row["docx"] = str(docx_path)
+    return row
+
+
 def rewrite_whole_source_material_cli(
     *,
     parsed_bundle_dir: Path,
@@ -1304,6 +1321,25 @@ def generate_after_class_reading_report_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
+    summary_row = after_class_report_summary_row(outputs)
+    summary = [
+        ("status", "written" if outputs.accepted else "failed"),
+        ("source_id", outputs.source_id),
+        ("output", str(outputs.output_dir)),
+        ("heuristic analysis", str(outputs.heuristic_analysis_dir)),
+        ("selected vocabulary", f"{outputs.selected_vocabulary_count}"),
+    ]
+    if outputs.accepted and outputs.docx_path is not None:
+        summary.append(("docx", str(outputs.docx_path)))
+    else:
+        summary.append(("failure", outputs.failure_reason))
+    if emit_after_class_report_summary(
+        title="reading report",
+        summary=tuple(summary),
+        source_rows=(summary_row,),
+    ):
+        return 0 if outputs.accepted else 1
+
     sys.stdout.write(
         "after-class reading report generated\n"
         f"  source_id: {outputs.source_id}\n"
@@ -1318,11 +1354,6 @@ def generate_after_class_reading_report_cli(
         sys.stdout.write(f"  failure: {outputs.failure_reason}\n")
     sys.stdout.flush()
     return 0 if outputs.accepted else 1
-
-
-def emit_after_class_report_progress(source_id: str, detail: str) -> None:
-    sys.stdout.write(f"after-class report [{source_id}] {detail}\n")
-    sys.stdout.flush()
 
 
 def build_usage_signals_cli(

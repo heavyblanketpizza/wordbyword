@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from wordbyword.after_class_reports import AfterClassReportProgress
 from wordbyword.cli import (
     DEFAULT_INPUT_DIR,
     DEFAULT_REFERENCE_DICTIONARY_PATH,
@@ -554,6 +555,58 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertIn("PRINTABLE CLASS // WORKFLOW COMPLETE", rendered)
         self.assertIn("PLAN", rendered)
         self.assertNotIn("print class [", rendered)
+
+    def test_interactive_after_class_report_output_uses_styled_terminal_ui(self) -> None:
+        stdout = TtyStringIO()
+        source = Path("/tmp/2026-05-10_grade1-reading-apples.docx")
+        outputs = SimpleNamespace(
+            source_id=source.stem,
+            output_dir=Path("/tmp/reports") / source.stem,
+            heuristic_analysis_dir=Path("/tmp/reports") / source.stem / "heuristic-analysis",
+            accepted=True,
+            failure_reason="",
+            selected_vocabulary_count=15,
+            docx_path=Path("/tmp/reports") / source.stem / "after_class_report.docx",
+            attempt_rows=[],
+            failure_rows=[],
+        )
+
+        def generate_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
+            progress = kwargs["progress"]
+            assert callable(progress)
+            progress(
+                AfterClassReportProgress(
+                    phase="plan",
+                    source_id=source.stem,
+                    detail="generating adult-facing Korean report plan with Ollama",
+                    output_dir=outputs.output_dir,
+                    heuristic_analysis_dir=outputs.heuristic_analysis_dir,
+                )
+            )
+            return outputs
+
+        with tempfile.TemporaryDirectory() as workspace:
+            source = Path(workspace) / source.name
+            source.write_text("placeholder", encoding="utf-8")
+            outputs.source_id = source.stem
+            outputs.output_dir = Path(workspace) / "reports" / source.stem
+            outputs.heuristic_analysis_dir = outputs.output_dir / "heuristic-analysis"
+            outputs.docx_path = outputs.output_dir / "after_class_report.docx"
+            with (
+                patch.dict("os.environ", {"TERM": "xterm-256color"}),
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.app.generate_after_class_reading_report", side_effect=generate_side_effect),
+                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(["--generate-after-class-reading-report", str(source)])
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("AFTER-CLASS REPORT // READING REPORT", rendered)
+        self.assertIn("PLAN", rendered)
+        self.assertIn("after_class_report.docx", rendered)
+        self.assertNotIn("after-class report [", rendered)
 
 
 class BuildDictionaryCliTest(unittest.TestCase):

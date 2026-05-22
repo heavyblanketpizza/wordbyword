@@ -13,6 +13,7 @@ from wordbyword.after_class_reports import (
     DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT,
     AfterClassReportDocument,
     AfterClassReportError,
+    AfterClassReportProgress,
     build_after_class_report_context,
     build_after_class_report_prompt,
     build_isolated_heuristic_analysis,
@@ -22,6 +23,11 @@ from wordbyword.after_class_reports import (
 from wordbyword.after_class_reports.report import resolve_after_class_report_font
 from wordbyword.cli import build_parser, main, validate_args
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
+
+
+class TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class AfterClassReportInputTest(unittest.TestCase):
@@ -111,6 +117,7 @@ class AfterClassReportGenerationTest(unittest.TestCase):
             write_docx(source, korean_fixture_text())
             output_root = root / "after-class-reports"
             client = RecordingAfterClassReportClient()
+            progress_events: list[AfterClassReportProgress] = []
 
             outputs = generate_after_class_reading_report(
                 source,
@@ -118,9 +125,17 @@ class AfterClassReportGenerationTest(unittest.TestCase):
                 client=client,
                 model="fake-ollama",
                 font_path=font_path,
+                progress=progress_events.append,
             )
 
             self.assertTrue(outputs.accepted)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "analyze", "plan", "write", "complete"],
+            )
+            self.assertTrue(progress_events[-1].accepted)
+            self.assertEqual(progress_events[-1].selected_vocabulary_count, 15)
+            self.assertEqual(progress_events[-1].docx_path, output_root / source.stem / "after_class_report.docx")
             output_dir = output_root / source.stem
             for filename in (
                 "report_plan.json",
@@ -160,16 +175,24 @@ class AfterClassReportGenerationTest(unittest.TestCase):
             source = archive / "2026-05-10_grade1-reading-apples.docx"
             write_docx(source, korean_fixture_text())
             output_root = root / "after-class-reports"
+            progress_events: list[AfterClassReportProgress] = []
 
             outputs = generate_after_class_reading_report(
                 source,
                 output_root=output_root,
                 client=RecordingAfterClassReportClient(response="{not json"),
                 model="fake-ollama",
+                progress=progress_events.append,
             )
 
             output_dir = output_root / source.stem
             self.assertFalse(outputs.accepted)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "analyze", "plan", "write", "complete"],
+            )
+            self.assertFalse(progress_events[-1].accepted)
+            self.assertIn("JSON", progress_events[-1].failure_reason)
             self.assertFalse((output_dir / "after_class_report.docx").exists())
             self.assertFalse((output_dir / "report_plan.json").exists())
             self.assertTrue((output_dir / "attempts.jsonl").is_file())
@@ -317,6 +340,62 @@ class AfterClassReportCliTest(unittest.TestCase):
             mock_update_live_lexicon.assert_not_called()
             mock_generate.assert_called_once()
             self.assertEqual(mock_generate.call_args.args[0], source)
+
+    def test_interactive_cli_uses_styled_after_class_report_terminal_ui(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source = root / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(source, korean_fixture_text())
+            output_root = root / "reports"
+            fake_outputs = FakeAfterClassReportOutputs(source.stem, output_root / source.stem)
+            stdout = TtyStringIO()
+
+            def generate_side_effect(*args: object, **kwargs: object) -> FakeAfterClassReportOutputs:
+                progress = kwargs["progress"]
+                assert callable(progress)
+                progress(
+                    AfterClassReportProgress(
+                        phase="plan",
+                        source_id=source.stem,
+                        detail="generating adult-facing Korean report plan with Ollama",
+                        output_dir=fake_outputs.output_dir,
+                        heuristic_analysis_dir=fake_outputs.heuristic_analysis_dir,
+                    )
+                )
+                return fake_outputs
+
+            with (
+                patch.dict("os.environ", {"TERM": "xterm-256color"}),
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+                patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
+                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch(
+                    "wordbyword.cli.app.generate_after_class_reading_report",
+                    side_effect=generate_side_effect,
+                ) as mock_generate,
+            ):
+                exit_code = main(
+                    [
+                        "--generate-after-class-reading-report",
+                        str(source),
+                        "--after-class-report-output-root",
+                        str(output_root),
+                        "--ollama-model",
+                        "fake-ollama",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            mock_pipeline.assert_not_called()
+            mock_update_live_lexicon.assert_not_called()
+            mock_generate.assert_called_once()
+            rendered = stdout.getvalue()
+            self.assertIn("AFTER-CLASS REPORT // READING REPORT", rendered)
+            self.assertIn("PLAN", rendered)
+            self.assertIn("after_class_report.docx", rendered)
+            self.assertNotIn("after-class report [", rendered)
 
     def test_cli_rejects_after_class_report_combined_with_live_lexicon(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

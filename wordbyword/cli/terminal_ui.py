@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO, cast
 
 if TYPE_CHECKING:
+    from wordbyword.after_class_reports.report import AfterClassReportProgress
     from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
     from wordbyword.dictionary_build.pipeline import PipelineResult
     from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
@@ -178,6 +179,25 @@ def emit_printable_progress(
         return
     stream.write(
         render_printable_progress(
+            progress,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+
+
+def emit_after_class_report_progress(
+    progress: "AfterClassReportProgress",
+    *,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    stream.write(
+        render_after_class_report_progress(
             progress,
             color=_supports_color(stream),
             width=_terminal_width(),
@@ -365,6 +385,31 @@ def render_source_material_progress(
 
     detail = progress.detail or progress.parser
     message = f"{source_label} :: {detail}"
+    return f"{tag} {arrow} {_paint(message, fg=TOKYO_NIGHT['fg'], color=color)}"
+
+
+def render_after_class_report_progress(
+    progress: "AfterClassReportProgress",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    phase_color = PHASE_COLORS.get(progress.phase, TOKYO_NIGHT["blue"])
+    tag_text = f" {progress.phase.upper()[:10]:<10} "
+    tag = _paint(
+        tag_text,
+        fg=TOKYO_NIGHT["bg"],
+        bg=phase_color,
+        bold=True,
+        color=color,
+    )
+    arrow_glyph = "▣" if progress.phase == "complete" else "▶"
+    arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
+    source_label = _shorten_text(
+        progress.source_id,
+        max_width=max(16, min(36, width // 3)),
+    )
+    message = f"{source_label} :: {progress.detail}"
     return f"{tag} {arrow} {_paint(message, fg=TOKYO_NIGHT['fg'], color=color)}"
 
 
@@ -557,6 +602,85 @@ def emit_printable_summary(
     stream.write("\n")
     stream.flush()
     return True
+
+
+def emit_after_class_report_summary(
+    *,
+    title: str,
+    summary: Sequence[tuple[str, str]],
+    source_rows: Sequence[Mapping[str, object]] = (),
+    stream: TextIO | None = None,
+) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(
+        render_after_class_report_summary(
+            title=title,
+            summary=summary,
+            source_rows=source_rows,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_after_class_report_summary(
+    *,
+    title: str,
+    summary: Sequence[tuple[str, str]],
+    source_rows: Sequence[Mapping[str, object]] = (),
+    color: bool,
+    width: int = 100,
+) -> str:
+    accent = TOKYO_NIGHT["purple"]
+    banner = _paint(
+        f"  ░▒▓█  AFTER-CLASS REPORT // {title.upper()}  █▓▒░  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=accent,
+        bold=True,
+        color=color,
+    )
+    rule = _paint(
+        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
+        fg=TOKYO_NIGHT["comment"],
+        color=color,
+    )
+    lines = [
+        banner,
+        _paint("  ▟▙ adult-facing reading report signal written ▟▙", fg=TOKYO_NIGHT["cyan"], bold=True, color=color),
+        rule,
+    ]
+    lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
+    if source_rows:
+        lines.append(rule)
+        lines.append(_paint("┃ report bundle", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
+        for row in source_rows:
+            lines.append(_after_class_report_summary_row(row, color=color, width=width))
+    lines.append(rule)
+    return "\n".join(lines)
+
+
+def _after_class_report_summary_row(row: Mapping[str, object], *, color: bool, width: int) -> str:
+    source_id = _shorten_text(str(row.get("source_id", "")), max_width=max(12, min(28, width // 3)))
+    output_dir = _shorten_text(str(row.get("output_dir", "")), max_width=max(24, min(48, width // 2)))
+    details = []
+    selected = row.get("selected_vocabulary_count")
+    if selected is not None:
+        details.append(f"vocab {selected}")
+    docx = str(row.get("docx", "") or "")
+    if docx:
+        details.append(f"docx {_shorten_path_end(docx, max_width=max(18, min(38, width // 3)))}")
+    failure = str(row.get("failure_reason", "") or "")
+    if failure:
+        details.append(f"failure {_shorten_text(failure, max_width=max(18, min(38, width // 3)))}")
+    status = str(row.get("status", "")).strip()
+    suffix = " // ".join(part for part in [status, ", ".join(details)] if part)
+    suffix_text = f" ({suffix})" if suffix else ""
+    return _paint(f"  - {source_id}: {output_dir}{suffix_text}", fg=TOKYO_NIGHT["fg"], color=color)
 
 
 def render_printable_summary(

@@ -95,7 +95,23 @@ Create exactly 5 deep_teaching_cards, one for each core vocabulary item.
 Keep every meaning, example, prompt, caution, and watch point concrete and useful for Grade 1 reading adults.
 Return only the requested JSON object."""
 
-ProgressCallback = Callable[[str, str], None]
+AfterClassReportProgressPhase = Literal["start", "analyze", "plan", "write", "complete"]
+
+
+@dataclass(frozen=True)
+class AfterClassReportProgress:
+    phase: AfterClassReportProgressPhase
+    source_id: str
+    detail: str
+    output_dir: Path | None = None
+    heuristic_analysis_dir: Path | None = None
+    accepted: bool | None = None
+    selected_vocabulary_count: int = 0
+    docx_path: Path | None = None
+    failure_reason: str = ""
+
+
+ProgressCallback = Callable[[AfterClassReportProgress], None]
 Priority = Literal["core", "practice", "enrichment"]
 
 
@@ -344,7 +360,14 @@ def generate_after_class_reading_report(
     prevent_input_overwrite(source_path, output_dir)
     prevent_reserved_maintenance_output(output_dir)
 
-    _report(progress, source_id, f"preparing after-class report output at {output_dir}")
+    _report(
+        progress,
+        phase="start",
+        source_id=source_id,
+        detail=f"preparing after-class report output at {output_dir}",
+        output_dir=output_dir,
+        heuristic_analysis_dir=heuristic_analysis_dir,
+    )
     prepare_output_dir(output_dir)
     attempts_path = output_dir / ATTEMPTS_FILENAME
     failures_path = output_dir / FAILURES_FILENAME
@@ -359,7 +382,14 @@ def generate_after_class_reading_report(
     resolved_font_name = ""
 
     try:
-        _report(progress, source_id, f"building isolated 00-09 heuristic analysis at {heuristic_analysis_dir}")
+        _report(
+            progress,
+            phase="analyze",
+            source_id=source_id,
+            detail=f"building isolated 00-09 heuristic analysis at {heuristic_analysis_dir}",
+            output_dir=output_dir,
+            heuristic_analysis_dir=heuristic_analysis_dir,
+        )
         build_isolated_heuristic_analysis(
             source_path,
             heuristic_analysis_dir=heuristic_analysis_dir,
@@ -373,7 +403,14 @@ def generate_after_class_reading_report(
         )
         prompt = build_after_class_report_prompt(context)
 
-        _report(progress, source_id, "generating adult-facing Korean report plan with Ollama")
+        _report(
+            progress,
+            phase="plan",
+            source_id=source_id,
+            detail="generating adult-facing Korean report plan with Ollama",
+            output_dir=output_dir,
+            heuristic_analysis_dir=heuristic_analysis_dir,
+        )
         result = client.complete(
             list(prompt.messages),
             temperature=0.2,
@@ -382,6 +419,16 @@ def generate_after_class_reading_report(
         )
         document = parse_and_validate_after_class_report_response(result, context=context)
         resolved_font_path, resolved_font_name = resolve_after_class_report_font(font_path)
+        _report(
+            progress,
+            phase="write",
+            source_id=source_id,
+            detail="writing after-class report DOCX bundle",
+            output_dir=output_dir,
+            heuristic_analysis_dir=heuristic_analysis_dir,
+            selected_vocabulary_count=len(document.vocabulary_overview),
+            docx_path=output_dir / DOCX_FILENAME,
+        )
         write_after_class_report_artifacts(
             output_dir,
             context=context,
@@ -425,6 +472,16 @@ def generate_after_class_reading_report(
             failure_reason=failure_reason,
         )
         failure_rows = [attempt]
+        _report(
+            progress,
+            phase="write",
+            source_id=source_id,
+            detail="writing failed after-class report audit bundle",
+            output_dir=output_dir,
+            heuristic_analysis_dir=heuristic_analysis_dir,
+            accepted=False,
+            failure_reason=failure_reason,
+        )
         write_failed_after_class_report_artifacts(
             output_dir,
             source_id=source_id,
@@ -441,14 +498,29 @@ def generate_after_class_reading_report(
     append_jsonl(attempts_path, attempt_rows)
     write_jsonl(failures_path, failure_rows)
     accepted = not failure_rows
+    failure_reason = str(attempt.get("failure_reason") or "")
+    selected_vocabulary_count = len(document.vocabulary_overview) if accepted and document else 0
+    docx_path = output_dir / DOCX_FILENAME if accepted else None
+    _report(
+        progress,
+        phase="complete",
+        source_id=source_id,
+        detail="after-class report DOCX written" if accepted else f"after-class report failed: {failure_reason}",
+        output_dir=output_dir,
+        heuristic_analysis_dir=heuristic_analysis_dir,
+        accepted=accepted,
+        selected_vocabulary_count=selected_vocabulary_count,
+        docx_path=docx_path,
+        failure_reason=failure_reason,
+    )
     return AfterClassReportOutputs(
         source_id=source_id,
         output_dir=output_dir,
         heuristic_analysis_dir=heuristic_analysis_dir,
         accepted=accepted,
-        failure_reason=str(attempt.get("failure_reason") or ""),
-        selected_vocabulary_count=len(document.vocabulary_overview) if accepted and document else 0,
-        docx_path=output_dir / DOCX_FILENAME if accepted else None,
+        failure_reason=failure_reason,
+        selected_vocabulary_count=selected_vocabulary_count,
+        docx_path=docx_path,
         attempt_rows=attempt_rows,
         failure_rows=failure_rows,
     )
@@ -1260,6 +1332,30 @@ def optional_float(value: object) -> float | None:
         return None
 
 
-def _report(progress: ProgressCallback | None, source_id: str, detail: str) -> None:
+def _report(
+    progress: ProgressCallback | None,
+    *,
+    phase: AfterClassReportProgressPhase,
+    source_id: str,
+    detail: str,
+    output_dir: Path | None = None,
+    heuristic_analysis_dir: Path | None = None,
+    accepted: bool | None = None,
+    selected_vocabulary_count: int = 0,
+    docx_path: Path | None = None,
+    failure_reason: str = "",
+) -> None:
     if progress is not None:
-        progress(source_id, detail)
+        progress(
+            AfterClassReportProgress(
+                phase=phase,
+                source_id=source_id,
+                detail=detail,
+                output_dir=output_dir,
+                heuristic_analysis_dir=heuristic_analysis_dir,
+                accepted=accepted,
+                selected_vocabulary_count=selected_vocabulary_count,
+                docx_path=docx_path,
+                failure_reason=failure_reason,
+            )
+        )

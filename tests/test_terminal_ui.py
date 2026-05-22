@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from wordbyword.after_class_reports import AfterClassReportProgress
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.pipeline import PipelineResult
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
@@ -10,6 +11,8 @@ from wordbyword.classroom_printout_studio.class_printing.printable import Printa
 from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 from wordbyword.cli.terminal_ui import (
     render_artifact_drop,
+    render_after_class_report_progress,
+    render_after_class_report_summary,
     render_boot_screen,
     render_cleanup_progress,
     render_completion_screen,
@@ -188,6 +191,68 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("written", rendered)
         self.assertIn("images 1", rendered)
         self.assertIn("font 13pt", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_after_class_report_progress_plain_is_scan_friendly(self) -> None:
+        progress = AfterClassReportProgress(
+            phase="analyze",
+            source_id="2026-05-22_grade6-quantum-physics-macroscopic-quantum-tunneling",
+            detail="building isolated 00-09 heuristic analysis at reports/lesson/heuristic-analysis",
+        )
+
+        rendered = render_after_class_report_progress(progress, color=False, width=120)
+
+        self.assertIn("ANALYZE", rendered)
+        self.assertIn("2026-05-22_grade6-quantum", rendered)
+        self.assertIn("building isolated 00-09 heuristic analysis", rendered)
+        self.assertNotIn("█", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_after_class_report_progress_color_includes_ansi(self) -> None:
+        progress = AfterClassReportProgress(
+            phase="plan",
+            source_id="2026-05-22_grade6-quantum-physics",
+            detail="generating adult-facing Korean report plan with Ollama",
+        )
+
+        rendered = render_after_class_report_progress(progress, color=True, width=120)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("PLAN", rendered)
+        self.assertIn("2026-05-22_grade6-quantum", rendered)
+
+    def test_render_after_class_report_summary_includes_docx_vocabulary_and_status(self) -> None:
+        rendered = render_after_class_report_summary(
+            title="reading report",
+            summary=(
+                ("status", "written"),
+                ("source_id", "2026-05-22_grade6-quantum-physics"),
+                ("output", "after-class-reports/2026-05-22_grade6-quantum-physics"),
+                (
+                    "heuristic analysis",
+                    "after-class-reports/2026-05-22_grade6-quantum-physics/heuristic-analysis",
+                ),
+                ("selected vocabulary", "15"),
+                ("docx", "after-class-reports/2026-05-22_grade6-quantum-physics/after_class_report.docx"),
+            ),
+            source_rows=(
+                {
+                    "source_id": "2026-05-22_grade6-quantum-physics",
+                    "output_dir": "after-class-reports/2026-05-22_grade6-quantum-physics",
+                    "status": "written",
+                    "selected_vocabulary_count": 15,
+                    "docx": "after-class-reports/2026-05-22_grade6-quantum-physics/after_class_report.docx",
+                },
+            ),
+            color=False,
+            width=120,
+        )
+
+        self.assertIn("AFTER-CLASS REPORT // READING REPORT", rendered)
+        self.assertIn("after_class_report.docx", rendered)
+        self.assertIn("heuristic-analysis", rendered)
+        self.assertIn("vocab 15", rendered)
+        self.assertIn("written", rendered)
         self.assertNotIn("\x1b[", rendered)
 
     def test_render_completion_screen_plain_mode_keeps_run_stats(self) -> None:
