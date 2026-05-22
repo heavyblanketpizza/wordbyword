@@ -6,6 +6,7 @@ from pathlib import Path
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.pipeline import PipelineResult
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
+from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 from wordbyword.cli.terminal_ui import (
     render_artifact_drop,
@@ -13,6 +14,8 @@ from wordbyword.cli.terminal_ui import (
     render_cleanup_progress,
     render_completion_screen,
     render_dictionary_distribution,
+    render_printable_progress,
+    render_printable_summary,
     render_source_material_progress,
     render_source_rewrite_progress,
     render_source_rewrite_summary,
@@ -125,6 +128,66 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("20 vocabulary", rendered)
         self.assertIn("rewritten/lesson/content.md", rendered)
         self.assertIn("lesson", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_printable_progress_plain_is_scan_friendly(self) -> None:
+        progress = PrintableProgress(
+            phase="plan",
+            source_id="popular-medicineprize2025",
+            detail="planning printable reading material",
+            source_index=2,
+            total_sources=3,
+        )
+
+        rendered = render_printable_progress(progress, color=False, width=120)
+
+        self.assertIn("PLAN", rendered)
+        self.assertIn("2/3 popular-medicineprize2025", rendered)
+        self.assertIn("planning printable reading material", rendered)
+        self.assertNotIn("█", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_printable_progress_color_includes_ansi(self) -> None:
+        progress = PrintableProgress(
+            phase="write",
+            source_id="lesson",
+            detail="writing printable DOCX bundle",
+        )
+
+        rendered = render_printable_progress(progress, color=True, width=120)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("WRITE", rendered)
+        self.assertIn("lesson", rendered)
+
+    def test_render_printable_summary_includes_docx_counts_and_font(self) -> None:
+        rendered = render_printable_summary(
+            title="DOCX materials",
+            summary=(
+                ("status", "written"),
+                ("output", "classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama"),
+                ("written", "3"),
+                ("failed", "0"),
+            ),
+            source_rows=(
+                {
+                    "source_id": "popular-medicineprize2025",
+                    "output_dir": "printable/popular-medicineprize2025",
+                    "status": "written",
+                    "docx": "printable/popular-medicineprize2025/material.docx",
+                    "selected_image_count": 1,
+                    "body_font_size_pt": 13,
+                },
+            ),
+            color=False,
+            width=120,
+        )
+
+        self.assertIn("PRINTABLE CLASS // DOCX MATERIALS", rendered)
+        self.assertIn("material.docx", rendered)
+        self.assertIn("written", rendered)
+        self.assertIn("images 1", rendered)
+        self.assertIn("font 13pt", rendered)
         self.assertNotIn("\x1b[", rendered)
 
     def test_render_completion_screen_plain_mode_keeps_run_stats(self) -> None:

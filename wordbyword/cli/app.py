@@ -68,6 +68,8 @@ from wordbyword.cli.terminal_ui import (
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
+    emit_printable_progress,
+    emit_printable_summary,
     emit_source_material_progress,
     emit_source_rewrite_progress,
     emit_source_rewrite_summary,
@@ -701,6 +703,28 @@ def rewrite_output_summary_row(output: object) -> dict[str, object]:
     return row
 
 
+def printable_output_summary_row(output: object) -> dict[str, object]:
+    accepted = bool(getattr(output, "accepted"))
+    output_dir = getattr(output, "output_dir")
+    attempt_rows = getattr(output, "attempt_rows", []) or []
+    attempt = attempt_rows[-1] if attempt_rows and isinstance(attempt_rows[-1], Mapping) else {}
+    selected_asset_ids = attempt.get("selected_asset_ids", [])
+    selected_image_count = len(selected_asset_ids) if isinstance(selected_asset_ids, Sequence) and not isinstance(selected_asset_ids, str) else 0
+    body_font_size_pt = attempt.get("body_font_size_pt")
+    row: dict[str, object] = {
+        "source_id": str(getattr(output, "source_id")),
+        "output_dir": str(output_dir),
+        "status": "written" if accepted else "failed",
+        "selected_image_count": selected_image_count,
+        "failure_reason": str(getattr(output, "failure_reason", "") or ""),
+    }
+    if body_font_size_pt is not None:
+        row["body_font_size_pt"] = body_font_size_pt
+    if accepted:
+        row["docx"] = str(Path(output_dir) / "material.docx")
+    return row
+
+
 def rewrite_whole_source_material_cli(
     *,
     parsed_bundle_dir: Path,
@@ -987,6 +1011,27 @@ def print_class_material_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
+    summary_row = printable_output_summary_row(outputs)
+    summary = [
+        ("status", "written" if outputs.accepted else "failed"),
+        ("source_id", outputs.source_id),
+        ("output", str(outputs.output_dir)),
+    ]
+    if outputs.accepted:
+        summary.append(("docx", str(outputs.output_dir / "material.docx")))
+    else:
+        summary.append(("failure", outputs.failure_reason))
+    if "selected_image_count" in summary_row:
+        summary.append(("selected", f"{summary_row['selected_image_count']} images"))
+    if "body_font_size_pt" in summary_row:
+        summary.append(("body font", f"{summary_row['body_font_size_pt']}pt"))
+    if emit_printable_summary(
+        title="DOCX material",
+        summary=tuple(summary),
+        source_rows=(summary_row,),
+    ):
+        return 0 if outputs.accepted else 1
+
     sys.stdout.write(
         "printable class material written\n"
         f"  source_id: {outputs.source_id}\n"
@@ -1037,6 +1082,22 @@ def print_class_materials_cli(
 
     failed = sum(1 for output in outputs.source_outputs if not output.accepted)
     written = sum(1 for output in outputs.source_outputs if output.accepted)
+    if emit_printable_summary(
+        title="DOCX materials",
+        summary=(
+            ("status", "written" if failed == 0 and written > 0 else "failed"),
+            ("rewritten", str(outputs.rewritten_root)),
+            ("output", str(outputs.output_root)),
+            ("sources", f"{len(outputs.source_outputs):,}"),
+            ("skipped", f"{len(outputs.skipped_sources):,}"),
+            ("written", f"{written:,}"),
+            ("failed", f"{failed:,}"),
+        ),
+        source_rows=tuple(printable_output_summary_row(output) for output in outputs.source_outputs),
+        skipped_rows=tuple(outputs.skipped_sources),
+    ):
+        return 0 if failed == 0 and written > 0 else 1
+
     sys.stdout.write(
         "printable class materials written\n"
         f"  rewritten_root: {outputs.rewritten_root}\n"
@@ -1123,6 +1184,18 @@ def build_class_printouts_cli(
     successful_rewrites = [output for output in rewrite_outputs if output.failed_page_count == 0]
     failed_rewrites = len(rewrite_outputs) - len(successful_rewrites)
     if not successful_rewrites:
+        if emit_printable_summary(
+            title="workflow stopped",
+            summary=(
+                ("status", "stopped after rewrite"),
+                ("source_dir", str(parsed.source_dir)),
+                ("parsed", f"{len(parsed.bundles):,}"),
+                ("rewritten", "0"),
+                ("failed rewrites", f"{failed_rewrites:,}"),
+            ),
+        ):
+            return 1
+
         sys.stdout.write(
             "class printout workflow stopped after rewrite\n"
             f"  source_dir: {parsed.source_dir}\n"
@@ -1142,7 +1215,7 @@ def build_class_printouts_cli(
     print_outputs = []
     try:
         try:
-            for rewrite_output in successful_rewrites:
+            for source_index, rewrite_output in enumerate(successful_rewrites, start=1):
                 print_outputs.append(
                     print_class_material(
                         rewrite_output.output_dir,
@@ -1152,6 +1225,8 @@ def build_class_printouts_cli(
                         font_path=font_path,
                         body_font_size=body_font_size,
                         progress=emit_printable_progress,
+                        source_index=source_index,
+                        total_sources=len(successful_rewrites),
                     )
                 )
         finally:
@@ -1162,6 +1237,24 @@ def build_class_printouts_cli(
 
     written = sum(1 for output in print_outputs if output.accepted)
     failed_prints = sum(1 for output in print_outputs if not output.accepted)
+    if emit_printable_summary(
+        title="workflow complete",
+        summary=(
+            ("status", "written" if failed_rewrites == 0 and failed_prints == 0 and written > 0 else "failed"),
+            ("source_dir", str(parsed.source_dir)),
+            ("parsed", str(parsed.output_root)),
+            ("rewrite", str(rewrite_output_root)),
+            ("print", str(print_output_root)),
+            ("parsed sources", f"{len(parsed.bundles):,}"),
+            ("rewritten", f"{len(successful_rewrites):,}"),
+            ("failed rewrites", f"{failed_rewrites:,}"),
+            ("docx written", f"{written:,}"),
+            ("failed prints", f"{failed_prints:,}"),
+        ),
+        source_rows=tuple(printable_output_summary_row(output) for output in print_outputs),
+    ):
+        return 0 if failed_rewrites == 0 and failed_prints == 0 and written > 0 else 1
+
     sys.stdout.write(
         "class printout workflow complete\n"
         f"  source_dir: {parsed.source_dir}\n"
@@ -1225,11 +1318,6 @@ def generate_after_class_reading_report_cli(
         sys.stdout.write(f"  failure: {outputs.failure_reason}\n")
     sys.stdout.flush()
     return 0 if outputs.accepted else 1
-
-
-def emit_printable_progress(source_id: str, detail: str) -> None:
-    sys.stdout.write(f"print class [{source_id}] {detail}\n")
-    sys.stdout.flush()
 
 
 def emit_after_class_report_progress(source_id: str, detail: str) -> None:

@@ -31,6 +31,7 @@ from wordbyword.dictionary_build.example_generation import GeneratedExampleAttem
 from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationError
 from wordbyword.dictionary_build.pipeline import PipelineResult
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
+from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
@@ -428,6 +429,131 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertIn("SOURCE REWRITE // VOCABULARY GUIDED", rendered)
         self.assertIn("REWRITE", rendered)
         self.assertNotIn("rewrite source [", rendered)
+
+    def test_interactive_print_class_material_output_uses_styled_terminal_ui(self) -> None:
+        stdout = TtyStringIO()
+
+        def print_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
+            progress = kwargs["progress"]
+            assert callable(progress)
+            progress(
+                PrintableProgress(
+                    phase="plan",
+                    source_id="lesson",
+                    detail="planning printable reading material",
+                )
+            )
+            return SimpleNamespace(
+                source_id="lesson",
+                output_dir=Path("/tmp/print/lesson"),
+                accepted=True,
+                failure_reason="",
+                attempt_rows=[{"selected_asset_ids": ["fig1"], "body_font_size_pt": 13}],
+                failure_rows=[],
+            )
+
+        with (
+            patch.dict("os.environ", {"TERM": "xterm-256color"}),
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
+            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(["--print-class-material", "/tmp/rewritten/lesson"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("PRINTABLE CLASS // DOCX MATERIAL", rendered)
+        self.assertIn("PLAN", rendered)
+        self.assertIn("material.docx", rendered)
+        self.assertNotIn("print class [", rendered)
+
+    def test_interactive_print_class_materials_output_renders_styled_summary(self) -> None:
+        stdout = TtyStringIO()
+        outputs = SimpleNamespace(
+            rewritten_root=Path("/tmp/rewritten"),
+            output_root=Path("/tmp/print"),
+            source_outputs=[
+                SimpleNamespace(
+                    source_id="lesson",
+                    output_dir=Path("/tmp/print/lesson"),
+                    accepted=True,
+                    failure_reason="",
+                    attempt_rows=[{"selected_asset_ids": ["fig1"], "body_font_size_pt": 13}],
+                    failure_rows=[],
+                )
+            ],
+            skipped_sources=[],
+        )
+
+        with (
+            patch.dict("os.environ", {"TERM": "xterm-256color"}),
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.print_class_materials", return_value=outputs),
+            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(["--print-class-materials", "/tmp/rewritten"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("PRINTABLE CLASS // DOCX MATERIALS", rendered)
+        self.assertIn("written", rendered)
+        self.assertNotIn("print class [", rendered)
+
+    def test_interactive_build_class_printouts_print_phase_uses_styled_terminal_ui(self) -> None:
+        stdout = TtyStringIO()
+        parsed_result = SimpleNamespace(
+            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
+            output_root=Path("/tmp/parsed"),
+            bundles=[SimpleNamespace(source_id="lesson", output_dir=Path("/tmp/parsed/lesson"))],
+        )
+        rewrite_output = SimpleNamespace(
+            source_id="lesson",
+            output_dir=Path("/tmp/rewritten/lesson"),
+            failed_page_count=0,
+            rewritten_page_count=2,
+            selected_vocabulary=[{"canonical_key": "물"}],
+        )
+
+        def print_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
+            progress = kwargs["progress"]
+            assert callable(progress)
+            progress(
+                PrintableProgress(
+                    phase="plan",
+                    source_id="lesson",
+                    detail="planning printable reading material",
+                    source_index=1,
+                    total_sources=1,
+                )
+            )
+            return SimpleNamespace(
+                source_id="lesson",
+                output_dir=Path("/tmp/print/lesson"),
+                accepted=True,
+                failure_reason="",
+                attempt_rows=[{"selected_asset_ids": ["fig1"], "body_font_size_pt": 13}],
+                failure_rows=[],
+            )
+
+        with (
+            patch.dict("os.environ", {"TERM": "xterm-256color"}),
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
+            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result),
+            patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material", return_value=rewrite_output),
+            patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
+            patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+        ):
+            exit_code = main(["--build-class-printouts"])
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("PRINTABLE CLASS // WORKFLOW COMPLETE", rendered)
+        self.assertIn("PLAN", rendered)
+        self.assertNotIn("print class [", rendered)
 
 
 class BuildDictionaryCliTest(unittest.TestCase):

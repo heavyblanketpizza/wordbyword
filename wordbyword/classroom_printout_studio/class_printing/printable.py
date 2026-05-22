@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import fitz
 from docx import Document
@@ -80,7 +80,24 @@ class PrintableMaterialError(RuntimeError):
     """Raised when printable class material cannot be generated safely."""
 
 
-ProgressCallback = Callable[[str, str], None]
+PrintableProgressPhase = Literal["start", "plan", "write", "complete", "skip"]
+
+
+@dataclass(frozen=True)
+class PrintableProgress:
+    phase: PrintableProgressPhase
+    source_id: str
+    detail: str
+    source_index: int = 1
+    total_sources: int = 1
+    output_dir: Path | None = None
+    accepted: bool | None = None
+    selected_image_count: int = 0
+    body_font_size_pt: int | None = None
+    failure_reason: str = ""
+
+
+ProgressCallback = Callable[[PrintableProgress], None]
 
 
 class PrintableImageSelection(BaseModel):
@@ -198,13 +215,23 @@ def print_class_material(
     font_path: Path | None = None,
     body_font_size: int | None = None,
     progress: ProgressCallback | None = None,
+    source_index: int = 1,
+    total_sources: int = 1,
 ) -> PrintableMaterialOutputs:
     context = build_printable_context(rewritten_bundle_dir)
     validate_body_font_size_override(body_font_size)
     output_dir = output_root / context.source_id
     prevent_input_overwrite(context.rewritten_bundle_dir, output_dir)
 
-    _report(progress, context.source_id, f"preparing printable output at {output_dir}")
+    _report(
+        progress,
+        phase="start",
+        source_id=context.source_id,
+        detail=f"preparing printable output at {output_dir}",
+        source_index=source_index,
+        total_sources=total_sources,
+        output_dir=output_dir,
+    )
     prepare_output_dir(output_dir)
     copy_assets(context.rewritten_bundle_dir, output_dir)
 
@@ -215,8 +242,17 @@ def print_class_material(
 
     prompt = build_printable_prompt(context, body_font_size=body_font_size)
     result: CompletionResult | None = None
+    document: PrintableDocument | None = None
     try:
-        _report(progress, context.source_id, "planning printable reading material")
+        _report(
+            progress,
+            phase="plan",
+            source_id=context.source_id,
+            detail="planning printable reading material",
+            source_index=source_index,
+            total_sources=total_sources,
+            output_dir=output_dir,
+        )
         if prompt.attached_assets:
             assert_client_supports_printable_images(client)
         result = client.complete(
@@ -232,6 +268,17 @@ def print_class_material(
             body_font_size_override=body_font_size,
         )
         resolved_font_path, resolved_font_name = resolve_korean_font(font_path)
+        _report(
+            progress,
+            phase="write",
+            source_id=context.source_id,
+            detail="writing printable DOCX bundle",
+            source_index=source_index,
+            total_sources=total_sources,
+            output_dir=output_dir,
+            selected_image_count=len(document.selected_images),
+            body_font_size_pt=document.body_font_size_pt,
+        )
         write_printable_artifacts(
             output_dir,
             context=context,
@@ -261,6 +308,7 @@ def print_class_material(
         OSError,
         ValueError,
     ) as exc:
+        failure_reason = str(exc)
         attempt = printable_attempt_row(
             context=context,
             prompt=prompt,
@@ -268,26 +316,54 @@ def print_class_material(
             response=result.content if result is not None else "",
             document=None,
             accepted=False,
-            failure_reason=str(exc),
+            failure_reason=failure_reason,
         )
         failure_rows = [attempt]
+        _report(
+            progress,
+            phase="write",
+            source_id=context.source_id,
+            detail="writing failed printable audit bundle",
+            source_index=source_index,
+            total_sources=total_sources,
+            output_dir=output_dir,
+            accepted=False,
+            failure_reason=failure_reason,
+        )
         write_failed_printable_artifacts(
             output_dir,
             context=context,
             prompt=prompt,
             model=model,
             target_profile=target_profile,
-            failure_reason=str(exc),
+            failure_reason=failure_reason,
         )
 
     attempt_rows = [attempt]
     append_jsonl(attempts_path, attempt_rows)
     write_jsonl(failures_path, failure_rows)
+    accepted = not failure_rows
+    selected_image_count = len(document.selected_images) if document is not None else 0
+    body_font_size_pt = document.body_font_size_pt if document is not None else None
+    failure_reason = str(attempt.get("failure_reason") or "")
+    _report(
+        progress,
+        phase="complete",
+        source_id=context.source_id,
+        detail="printable DOCX written" if accepted else f"printable DOCX failed: {failure_reason}",
+        source_index=source_index,
+        total_sources=total_sources,
+        output_dir=output_dir,
+        accepted=accepted,
+        selected_image_count=selected_image_count,
+        body_font_size_pt=body_font_size_pt,
+        failure_reason=failure_reason,
+    )
     return PrintableMaterialOutputs(
         source_id=context.source_id,
         output_dir=output_dir,
-        accepted=not failure_rows,
-        failure_reason=str(attempt.get("failure_reason") or ""),
+        accepted=accepted,
+        failure_reason=failure_reason,
         attempt_rows=attempt_rows,
         failure_rows=failure_rows,
     )
@@ -306,11 +382,20 @@ def print_class_materials(
 ) -> PrintableMaterialBatchOutputs:
     source_outputs: list[PrintableMaterialOutputs] = []
     skipped_sources: list[dict[str, object]] = []
-    for bundle_dir in discover_rewritten_bundles(rewritten_root):
+    bundle_dirs = discover_rewritten_bundles(rewritten_root)
+    total_sources = len(bundle_dirs)
+    for source_index, bundle_dir in enumerate(bundle_dirs, start=1):
         skip_reason = skip_reason_for_rewritten_bundle(bundle_dir)
         if skip_reason:
             skipped_sources.append({"source_dir": str(bundle_dir), "reason": skip_reason})
-            _report(progress, bundle_dir.name, f"skipping: {skip_reason}")
+            _report(
+                progress,
+                phase="skip",
+                source_id=bundle_dir.name,
+                detail=f"skipping: {skip_reason}",
+                source_index=source_index,
+                total_sources=total_sources,
+            )
             continue
         source_outputs.append(
             print_class_material(
@@ -322,6 +407,8 @@ def print_class_materials(
                 font_path=font_path,
                 body_font_size=body_font_size,
                 progress=progress,
+                source_index=source_index,
+                total_sources=total_sources,
             )
         )
     return PrintableMaterialBatchOutputs(
@@ -1209,6 +1296,32 @@ def int_or_none(value: object) -> int | None:
         return None
 
 
-def _report(progress: ProgressCallback | None, source_id: str, detail: str) -> None:
+def _report(
+    progress: ProgressCallback | None,
+    *,
+    phase: PrintableProgressPhase,
+    source_id: str,
+    detail: str,
+    source_index: int = 1,
+    total_sources: int = 1,
+    output_dir: Path | None = None,
+    accepted: bool | None = None,
+    selected_image_count: int = 0,
+    body_font_size_pt: int | None = None,
+    failure_reason: str = "",
+) -> None:
     if progress is not None:
-        progress(source_id, detail)
+        progress(
+            PrintableProgress(
+                phase=phase,
+                source_id=source_id,
+                detail=detail,
+                source_index=source_index,
+                total_sources=total_sources,
+                output_dir=output_dir,
+                accepted=accepted,
+                selected_image_count=selected_image_count,
+                body_font_size_pt=body_font_size_pt,
+                failure_reason=failure_reason,
+            )
+        )

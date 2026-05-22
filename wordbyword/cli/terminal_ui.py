@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
     from wordbyword.dictionary_build.pipeline import PipelineResult
     from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
+    from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
     from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialProgress
 
 TOKYO_NIGHT = {
@@ -37,6 +38,7 @@ PHASE_COLORS = {
     "render": TOKYO_NIGHT["cyan"],
     "load": TOKYO_NIGHT["purple"],
     "ocr": TOKYO_NIGHT["green"],
+    "plan": TOKYO_NIGHT["purple"],
     "select": TOKYO_NIGHT["green"],
     "rewrite": TOKYO_NIGHT["cyan"],
     "write": TOKYO_NIGHT["orange"],
@@ -157,6 +159,25 @@ def emit_source_rewrite_progress(
         return
     stream.write(
         render_source_rewrite_progress(
+            progress,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+
+
+def emit_printable_progress(
+    progress: "PrintableProgress",
+    *,
+    stream: TextIO | None = None,
+) -> None:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return
+    stream.write(
+        render_printable_progress(
             progress,
             color=_supports_color(stream),
             width=_terminal_width(),
@@ -347,6 +368,36 @@ def render_source_material_progress(
     return f"{tag} {arrow} {_paint(message, fg=TOKYO_NIGHT['fg'], color=color)}"
 
 
+def render_printable_progress(
+    progress: "PrintableProgress",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    phase_color = PHASE_COLORS.get(progress.phase, TOKYO_NIGHT["blue"])
+    tag_text = f" {progress.phase.upper()[:10]:<10} "
+    tag = _paint(
+        tag_text,
+        fg=TOKYO_NIGHT["bg"],
+        bg=phase_color,
+        bold=True,
+        color=color,
+    )
+    arrow_glyph = "▣" if progress.phase == "complete" else "▶"
+    arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
+    source_prefix = (
+        f"{progress.source_index}/{progress.total_sources} "
+        if progress.total_sources > 1
+        else ""
+    )
+    source_label = _shorten_text(
+        f"{source_prefix}{progress.source_id}",
+        max_width=max(16, min(36, width // 3)),
+    )
+    message = f"{source_label} :: {progress.detail}"
+    return f"{tag} {arrow} {_paint(message, fg=TOKYO_NIGHT['fg'], color=color)}"
+
+
 def render_source_rewrite_progress(
     progress: "SourceRewriteProgress",
     *,
@@ -480,6 +531,98 @@ def render_completion_screen(
         composed,
     ]
     return "\n".join(lines)
+
+
+def emit_printable_summary(
+    *,
+    title: str,
+    summary: Sequence[tuple[str, str]],
+    source_rows: Sequence[Mapping[str, object]] = (),
+    skipped_rows: Sequence[Mapping[str, object]] = (),
+    stream: TextIO | None = None,
+) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(
+        render_printable_summary(
+            title=title,
+            summary=summary,
+            source_rows=source_rows,
+            skipped_rows=skipped_rows,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_printable_summary(
+    *,
+    title: str,
+    summary: Sequence[tuple[str, str]],
+    source_rows: Sequence[Mapping[str, object]] = (),
+    skipped_rows: Sequence[Mapping[str, object]] = (),
+    color: bool,
+    width: int = 100,
+) -> str:
+    accent = TOKYO_NIGHT["orange"]
+    banner = _paint(
+        f"  ░▒▓█  PRINTABLE CLASS // {title.upper()}  █▓▒░  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=accent,
+        bold=True,
+        color=color,
+    )
+    rule = _paint(
+        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
+        fg=TOKYO_NIGHT["comment"],
+        color=color,
+    )
+    lines = [
+        banner,
+        _paint("  ▟▙ editable DOCX signal written for class use ▟▙", fg=TOKYO_NIGHT["purple"], bold=True, color=color),
+        rule,
+    ]
+    lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
+    if source_rows:
+        lines.append(rule)
+        lines.append(_paint("┃ DOCX bundles", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
+        for row in source_rows:
+            lines.append(_printable_summary_row(row, color=color, width=width))
+    if skipped_rows:
+        lines.append(rule)
+        lines.append(_paint("┃ skipped bundles", fg=TOKYO_NIGHT["yellow"], bold=True, color=color))
+        for row in skipped_rows:
+            source = _shorten_text(str(row.get("source_dir", "")), max_width=max(18, min(42, width // 2)))
+            reason = str(row.get("reason", ""))
+            lines.append(_paint(f"  - skipped {source}: {reason}", fg=TOKYO_NIGHT["fg"], color=color))
+    lines.append(rule)
+    return "\n".join(lines)
+
+
+def _printable_summary_row(row: Mapping[str, object], *, color: bool, width: int) -> str:
+    source_id = _shorten_text(str(row.get("source_id", "")), max_width=max(12, min(24, width // 4)))
+    output_dir = _shorten_text(str(row.get("output_dir", "")), max_width=max(24, min(48, width // 2)))
+    details = []
+    selected_images = row.get("selected_image_count")
+    if selected_images is not None:
+        details.append(f"images {selected_images}")
+    body_font_size = row.get("body_font_size_pt")
+    if body_font_size is not None:
+        details.append(f"font {body_font_size}pt")
+    docx = str(row.get("docx", "") or "")
+    if docx:
+        details.append(f"docx {_shorten_path_end(docx, max_width=max(18, min(38, width // 3)))}")
+    failure = str(row.get("failure_reason", "") or "")
+    if failure:
+        details.append(f"failure {_shorten_text(failure, max_width=max(18, min(38, width // 3)))}")
+    status = str(row.get("status", "")).strip()
+    suffix = " // ".join(part for part in [status, ", ".join(details)] if part)
+    suffix_text = f" ({suffix})" if suffix else ""
+    return _paint(f"  - {source_id}: {output_dir}{suffix_text}", fg=TOKYO_NIGHT["fg"], color=color)
 
 
 def emit_source_rewrite_summary(
@@ -1078,6 +1221,15 @@ def _shorten_text(text: str, *, max_width: int) -> str:
     if max_width <= 3:
         return text[:max_width]
     return f"{text[: max_width - 3]}..."
+
+
+def _shorten_path_end(text: str, *, max_width: int) -> str:
+    if len(text) <= max_width:
+        return text
+    name = Path(text).name
+    if not name or len(name) + 4 > max_width:
+        return _shorten_text(text, max_width=max_width)
+    return f".../{name}"
 
 
 def _is_interactive(stream: TextIO) -> bool:

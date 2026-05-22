@@ -14,10 +14,12 @@ from PIL import Image
 from wordbyword.classroom_printout_studio.class_printing.printable import (
     DEFAULT_PRINT_OUTPUT_ROOT,
     PrintableMaterialError,
+    PrintableProgress,
     build_printable_context,
     build_printable_prompt,
     parse_and_validate_print_plan_response,
     print_class_material,
+    print_class_materials,
 )
 from wordbyword.cli import main
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
@@ -76,6 +78,7 @@ class PrintableMaterialTest(unittest.TestCase):
             bundle_dir = write_rewritten_fixture(root / "rewritten")
             output_root = root / "printable"
             client = RecordingPrintableClient()
+            progress_events: list[PrintableProgress] = []
 
             outputs = print_class_material(
                 bundle_dir,
@@ -83,9 +86,17 @@ class PrintableMaterialTest(unittest.TestCase):
                 client=client,
                 model="fake-ollama",
                 font_path=font_path,
+                progress=progress_events.append,
             )
 
             self.assertTrue(outputs.accepted)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "plan", "write", "complete"],
+            )
+            self.assertTrue(progress_events[-1].accepted)
+            self.assertEqual(progress_events[-1].selected_image_count, 1)
+            self.assertEqual(progress_events[-1].body_font_size_pt, 13)
             self.assertEqual(client.preflight_count, 1)
             output_dir = output_root / "lesson"
             for filename in (
@@ -154,6 +165,7 @@ class PrintableMaterialTest(unittest.TestCase):
                     ],
                 }
             )
+            progress_events: list[PrintableProgress] = []
 
             outputs = print_class_material(
                 bundle_dir,
@@ -161,9 +173,16 @@ class PrintableMaterialTest(unittest.TestCase):
                 client=client,
                 model="fake-ollama",
                 font_path=font_path,
+                progress=progress_events.append,
             )
 
             self.assertFalse(outputs.accepted)
+            self.assertEqual(
+                [event.phase for event in progress_events],
+                ["start", "plan", "write", "complete"],
+            )
+            self.assertFalse(progress_events[-1].accepted)
+            self.assertIn("unknown asset_id", progress_events[-1].failure_reason)
             output_dir = output_root / "lesson"
             self.assertFalse((output_dir / "material.pdf").exists())
             self.assertFalse((output_dir / "material.docx").exists())
@@ -173,6 +192,32 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertEqual(quality["status"], "failed")
             self.assertEqual(quality["output_formats"], [])
             self.assertFalse(quality["requires_human_revision"])
+
+    def test_print_class_materials_reports_skipped_sources_with_indices(self) -> None:
+        font_path = korean_font_or_skip(self)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            rewritten_root = root / "rewritten"
+            write_rewritten_fixture(rewritten_root, source_id="lesson")
+            (rewritten_root / "missing-manifest").mkdir(parents=True)
+            progress_events: list[PrintableProgress] = []
+
+            outputs = print_class_materials(
+                rewritten_root,
+                output_root=root / "printable",
+                client=RecordingPrintableClient(),
+                model="fake-ollama",
+                font_path=font_path,
+                progress=progress_events.append,
+            )
+
+            self.assertEqual(len(outputs.source_outputs), 1)
+            self.assertEqual(len(outputs.skipped_sources), 1)
+            skip_events = [event for event in progress_events if event.phase == "skip"]
+            self.assertEqual(len(skip_events), 1)
+            self.assertEqual(skip_events[0].source_id, "missing-manifest")
+            self.assertEqual(skip_events[0].source_index, 2)
+            self.assertEqual(skip_events[0].total_sources, 2)
 
     def test_print_class_material_fails_when_visual_candidates_need_non_vision_client(self) -> None:
         font_path = korean_font_or_skip(self)
