@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,7 +21,13 @@ from wordbyword.after_class_reports import (
     generate_after_class_reading_report,
     validate_after_class_report_input,
 )
-from wordbyword.after_class_reports.report import resolve_after_class_report_font
+from wordbyword.after_class_reports.report import (
+    after_class_grade_label,
+    after_class_grade_level,
+    after_class_prompt_target_profile,
+    render_after_class_report_docx,
+    resolve_after_class_report_font,
+)
 from wordbyword.cli import build_parser, main, validate_args
 from wordbyword.dictionary_build.llm import ChatMessage, CompletionResult
 
@@ -52,6 +59,14 @@ class AfterClassReportInputTest(unittest.TestCase):
                     with self.assertRaises(AfterClassReportError) as error:
                         validate_after_class_report_input(path)
                     self.assertIn(expected, str(error.exception))
+
+    def test_grade_helpers_derive_label_and_prompt_profile_from_managed_source_id(self) -> None:
+        self.assertEqual(after_class_grade_level("2026-05-10_grade6-quantum-reading"), "grade6")
+        self.assertEqual(after_class_grade_label("grade6"), "6학년")
+        self.assertEqual(after_class_prompt_target_profile("grade6"), "grade6-ko-a4-adult-report")
+        self.assertEqual(after_class_grade_level("2026-05-10_grade-unknown-topic"), "grade-unknown")
+        self.assertEqual(after_class_grade_label("grade-unknown"), "초등학생")
+        self.assertEqual(after_class_prompt_target_profile("grade-unknown"), "elementary-ko-a4-adult-report")
 
 
 class AfterClassHeuristicAnalysisTest(unittest.TestCase):
@@ -104,6 +119,41 @@ class AfterClassReportValidationTest(unittest.TestCase):
         bad_cards["deep_teaching_cards"][0]["canonical_key"] = "다른단어"
         with self.assertRaises(ValueError):
             AfterClassReportDocument.model_validate(bad_cards)
+
+    def test_docx_uses_grouped_color_coded_vocabulary_cards(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "after_class_report.docx"
+            keys = [f"단어{i}" for i in range(1, 16)]
+            document = AfterClassReportDocument.model_validate(
+                valid_report_payload("2026-05-10_grade1-reading-apples", keys)
+            )
+
+            render_after_class_report_docx(path, document=document, font_name="Arial")
+
+            docx = Document(str(path))
+            text = docx_full_text(docx)
+            self.assertIn("어휘 중요도 안내", text)
+            self.assertIn("핵심 어휘 5개", text)
+            self.assertIn("연습 어휘 5개", text)
+            self.assertIn("확장 어휘 5개", text)
+            self.assertIn("본문에서 찾기 → 자기 말로 말하기 → 생활/실험/비유로 연결하기", text)
+            self.assertIn("먼저 붙잡고 말하게 할 낱말", text)
+            self.assertIn("본문 설명을 넓히는 낱말", text)
+            self.assertIn("어려운 주제를 조심스럽게 만지는 낱말", text)
+            for key in keys:
+                self.assertIn(key, text)
+
+            old_headers = ["우선순위", "어휘", "뜻", "본문 문장", "연습 문장", "주의점"]
+            header_rows = [
+                [cell.text.strip() for cell in row.cells]
+                for table in docx.tables
+                for row in table.rows
+            ]
+            self.assertNotIn(old_headers, header_rows)
+
+            document_xml = docx_xml(path)
+            for color in ("C2415B", "FCE7EC", "946200", "FFF1D6", "315FBD", "EAF1FF"):
+                self.assertIn(color, document_xml)
 
 
 class AfterClassReportGenerationTest(unittest.TestCase):
@@ -226,6 +276,55 @@ class AfterClassReportGenerationTest(unittest.TestCase):
             self.assertIn("사과", prompt.user_prompt)
             self.assertIn("top_vocabulary_candidates", prompt.user_prompt)
             self.assertIn("required_json_shape", prompt.user_prompt)
+
+    def test_prompt_is_grade_aware_and_korean_language_first_for_ordinary_adults(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            archive.mkdir()
+            source = archive / "2026-05-10_grade6-quantum-reading.docx"
+            write_docx(source, korean_fixture_text())
+            heuristic_dir = root / "reports" / source.stem / "heuristic-analysis"
+            build_isolated_heuristic_analysis(source, heuristic_analysis_dir=heuristic_dir)
+
+            context = build_after_class_report_context(
+                source,
+                output_dir=heuristic_dir.parent,
+                heuristic_analysis_dir=heuristic_dir,
+            )
+            prompt = build_after_class_report_prompt(context)
+            system_prompt = prompt.messages[0].content
+            packet = prompt_packet_from_message(prompt.user_prompt)
+            contract = packet["report_contract"]
+            required_metadata = packet["required_json_shape"]["metadata"]
+
+            self.assertEqual(context.grade_level, "grade6")
+            self.assertEqual(context.grade_label, "6학년")
+            self.assertEqual(context.prompt_target_profile, "grade6-ko-a4-adult-report")
+            self.assertEqual(packet["grade_level"], "grade6")
+            self.assertEqual(packet["grade_label"], "6학년")
+            self.assertEqual(required_metadata["grade_level"], "grade6")
+            self.assertEqual(required_metadata["grade_label"], "6학년")
+            self.assertEqual(required_metadata["target_profile"], "grade6-ko-a4-adult-report")
+
+            combined_prompt = f"{system_prompt}\n{prompt.user_prompt}"
+            self.assertIn("ordinary teachers and parents", combined_prompt)
+            self.assertIn("not specialists", combined_prompt)
+            self.assertIn("Korean reading comprehension", combined_prompt)
+            self.assertIn("vocabulary use, speaking, explanation, and thinking", combined_prompt)
+            self.assertIn("6학년", combined_prompt)
+            self.assertNotIn("Grade 1", combined_prompt)
+            self.assertIn("adult-guided conversation prompts", contract["allowed_guidance"])
+            self.assertIn("short student activities adults can run after class", contract["allowed_guidance"])
+            self.assertIn("quiz as the primary output", contract["not_allowed"])
+            self.assertIn("answer key", contract["not_allowed"])
+            self.assertIn("standalone student worksheet", contract["not_allowed"])
+            self.assertNotIn("student worksheet as the primary document", contract["not_allowed"])
+            self.assertIn("English glosses such as How vs Why", contract["not_allowed"])
+            self.assertIn("unnecessary Hanja character breakdowns", contract["not_allowed"])
+            self.assertIn("LaTeX or math markup", contract["not_allowed"])
+            self.assertIn("specialist subject-mastery framing", contract["not_allowed"])
+            self.assertIn("본문에서 찾기 → 자기 말로 말하기 → 생활/실험/비유로 연결하기", combined_prompt)
 
 
 class AfterClassReportCliTest(unittest.TestCase):
@@ -549,6 +648,20 @@ def write_docx(path: Path, text: str) -> None:
 
 def read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def docx_full_text(document: Document) -> str:
+    parts = [paragraph.text for paragraph in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                parts.extend(paragraph.text for paragraph in cell.paragraphs)
+    return "\n".join(part for part in parts if part)
+
+
+def docx_xml(path: Path) -> str:
+    with zipfile.ZipFile(path) as archive:
+        return archive.read("word/document.xml").decode("utf-8")
 
 
 def korean_font_or_skip(test_case: unittest.TestCase) -> Path:

@@ -14,8 +14,9 @@ from docx import Document
 from docx.enum.section import WD_SECTION_START
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Mm, Pt
+from docx.shared import Mm, Pt, RGBColor
 from kiwipiepy import Kiwi
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -68,7 +69,13 @@ ATTEMPTS_FILENAME = "attempts.jsonl"
 FAILURES_FILENAME = "failures.jsonl"
 QUALITY_REPORT_FILENAME = "quality_report.json"
 MANIFEST_FILENAME = "manifest.json"
-DEFAULT_TARGET_PROFILE = "grade1-ko-a4-adult-report"
+DEFAULT_TARGET_PROFILE = "elementary-ko-a4-adult-report"
+UNKNOWN_GRADE_LEVEL = "grade-unknown"
+UNKNOWN_GRADE_LABEL = "초등학생"
+AFTER_CLASS_INSTRUCTIONAL_GOAL = (
+    "학생이 본문을 읽고 핵심 낱말을 사용해 자기 말로 설명하고 질문에 답하며 "
+    "생활·실험·비유로 생각을 넓히는 한국어 이해·표현 능력 강화"
+)
 VOCABULARY_CONTEXT_LIMIT = 60
 EXAMPLE_CONTEXT_LIMIT = 40
 FULL_TEXT_CHAR_LIMIT = 60000
@@ -77,22 +84,66 @@ TRUNCATED_TEXT_TAIL_CHARS = 10000
 AFTER_CLASS_REPORT_MAX_OUTPUT_TOKENS = 32768
 KOREAN_PATTERN = re.compile(r"[가-힣]")
 MARKDOWN_FENCE = "```"
+CARD_WIDTH_DXA = 10200
+CARD_COLUMNS_DXA = (2160, 8040)
+LEGEND_COLUMNS_DXA = (3400, 3400, 3400)
+AFTER_CLASS_NEUTRAL_BORDER = "D8DEE9"
+AFTER_CLASS_NEUTRAL_FILL = "F8FAFC"
+AFTER_CLASS_SECTION_ACCENT = "1F6F78"
 PRIMARY_WORKSHEET_PATTERN = re.compile(
     r"(?:worksheet|student worksheet|quiz|answer key|test|exam|워크시트|문제지|퀴즈|정답지|시험지|학생용\s*활동지)",
     re.IGNORECASE,
 )
 
-AFTER_CLASS_REPORT_SYSTEM_PROMPT = """You write adult-facing Korean after-class reading reports for teachers and parents.
+
+@dataclass(frozen=True)
+class PriorityVisualStyle:
+    label: str
+    heading: str
+    accent: str
+    fill: str
+    purpose: str
+
+
+PRIORITY_VISUAL_STYLES = {
+    "core": PriorityVisualStyle(
+        label="핵심",
+        heading="핵심 어휘",
+        accent="C2415B",
+        fill="FCE7EC",
+        purpose="먼저 붙잡고 말하게 할 낱말",
+    ),
+    "practice": PriorityVisualStyle(
+        label="연습",
+        heading="연습 어휘",
+        accent="946200",
+        fill="FFF1D6",
+        purpose="본문 설명을 넓히는 낱말",
+    ),
+    "enrichment": PriorityVisualStyle(
+        label="확장",
+        heading="확장 어휘",
+        accent="315FBD",
+        fill="EAF1FF",
+        purpose="어려운 주제를 조심스럽게 만지는 낱말",
+    ),
+}
+
+AFTER_CLASS_REPORT_SYSTEM_PROMPT = """You write Korean after-class reading guidance for ordinary teachers and parents.
+The adults may not be specialists in the class topic. Help them guide young students after class without needing expert knowledge.
+The class goal is Korean reading comprehension, vocabulary use, speaking, explanation, and thinking, not specialist subject mastery.
 Use only the supplied class printout text and deterministic vocabulary analysis.
-The report is for adults who will teach, discuss, and review the reading after class.
+If the material is niche or technical, turn it into plain Korean discussion handles, everyday analogies, and safe mini activities.
 Write Korean only, except stable technical field names and source_id values.
-Do not write a student worksheet, quiz, answer key, or student-facing primary activity sheet.
+Do not make the primary output a quiz, answer key, graded test, or standalone student worksheet.
+Do include adult-guided conversation prompts and short student activities that adults can say or run immediately.
 Choose exactly 15 vocabulary items from the supplied candidate list:
-- exactly 5 priority="core"
-- exactly 5 priority="practice"
-- exactly 5 priority="enrichment"
+- exactly 5 priority="core" for general comprehension and Korean output
+- exactly 5 priority="practice" for discussing the text in Korean
+- exactly 5 priority="enrichment" for topic-specific extension without expert depth
 Create exactly 5 deep_teaching_cards, one for each core vocabulary item.
-Keep every meaning, example, prompt, caution, and watch point concrete and useful for Grade 1 reading adults.
+Keep every meaning, example, prompt, caution, and watch point concrete, plain, and usable by normal adults.
+Avoid English glosses, unnecessary Hanja breakdowns, LaTeX/math markup, and specialist framing.
 Return only the requested JSON object."""
 
 AfterClassReportProgressPhase = Literal["start", "analyze", "plan", "write", "complete"]
@@ -291,6 +342,9 @@ class AfterClassReportContext:
     source_id: str
     source_path: Path
     source_filename: str
+    grade_level: str
+    grade_label: str
+    prompt_target_profile: str
     output_dir: Path
     heuristic_analysis_dir: Path
     summary: Mapping[str, Any]
@@ -601,10 +655,14 @@ def build_after_class_report_context(
     vocabulary_candidates = merge_candidate_rows(candidate_rows, dictionary_rows)
     top_vocabulary = tuple(sorted(vocabulary_candidates, key=vocabulary_candidate_sort_key)[:VOCABULARY_CONTEXT_LIMIT])
     top_examples = tuple(sorted(example_rows, key=example_sentence_sort_key)[:EXAMPLE_CONTEXT_LIMIT])
+    grade_level = after_class_grade_level(source_id)
     return AfterClassReportContext(
         source_id=source_id,
         source_path=source_path,
         source_filename=source_path.name,
+        grade_level=grade_level,
+        grade_label=after_class_grade_label(grade_level),
+        prompt_target_profile=after_class_prompt_target_profile(grade_level),
         output_dir=output_dir,
         heuristic_analysis_dir=heuristic_analysis_dir,
         summary=summary,
@@ -625,7 +683,10 @@ def build_after_class_report_prompt(context: AfterClassReportContext) -> AfterCl
             "source_filename": context.source_filename,
             "audience": "교사와 학부모",
             "language": "ko",
-            "target_profile": DEFAULT_TARGET_PROFILE,
+            "grade_level": context.grade_level,
+            "grade_label": context.grade_label,
+            "target_profile": context.prompt_target_profile,
+            "instructional_goal": AFTER_CLASS_INSTRUCTIONAL_GOAL,
         },
         "lesson_summary": "...",
         "core_teaching_points": ["...", "...", "..."],
@@ -661,6 +722,9 @@ def build_after_class_report_prompt(context: AfterClassReportContext) -> AfterCl
     prompt_packet = {
         "source_id": context.source_id,
         "source_filename": context.source_filename,
+        "grade_level": context.grade_level,
+        "grade_label": context.grade_label,
+        "instructional_goal": AFTER_CLASS_INSTRUCTIONAL_GOAL,
         "heuristic_summary": context.summary,
         "sentence_count": context.sentence_count,
         "printout_text_was_truncated": context.printout_text_was_truncated,
@@ -669,15 +733,36 @@ def build_after_class_report_prompt(context: AfterClassReportContext) -> AfterCl
         "top_example_sentences": [prompt_example_row(row) for row in context.top_example_sentences],
         "report_contract": {
             "language": "Korean only",
-            "audience": "adult-facing for teachers first and parents near the end",
+            "audience": (
+                f"ordinary teachers and parents guiding {context.grade_label} students after class; "
+                "assume adults are not specialists in the source topic"
+            ),
+            "primary_goal": "Korean reading comprehension, vocabulary use, speaking, explanation, and thinking",
+            "allowed_guidance": [
+                "adult-guided conversation prompts",
+                "ready-to-say questions for students",
+                "short student activities adults can run after class",
+                "simple everyday analogies grounded in the source text",
+            ],
             "not_allowed": [
-                "student worksheet as the primary document",
-                "quiz",
+                "quiz as the primary output",
                 "answer key",
+                "graded test",
+                "standalone student worksheet",
                 "invented vocabulary not present in candidate list",
+                "specialist subject-mastery framing",
+                "English glosses such as How vs Why",
+                "unnecessary Hanja character breakdowns",
+                "LaTeX or math markup",
             ],
             "vocabulary_count": 15,
             "priority_split": {"core": 5, "practice": 5, "enrichment": 5},
+            "priority_purpose": {
+                "core": "general comprehension and Korean output",
+                "practice": "discussing the text in Korean",
+                "enrichment": "topic-specific extension without expert depth",
+            },
+            "guidance_flow": "본문에서 찾기 → 자기 말로 말하기 → 생활/실험/비유로 연결하기",
             "deep_teaching_cards": "exactly 5 and canonical_key must match the 5 core vocabulary items",
         },
         "required_json_shape": required_shape,
@@ -685,11 +770,15 @@ def build_after_class_report_prompt(context: AfterClassReportContext) -> AfterCl
     user_prompt = "\n".join(
         [
             "After-class reading report request:",
-            "Build a structured Korean report plan for one class printout.",
+            f"Build a structured Korean after-class guidance plan for ordinary adults helping {context.grade_label} students.",
+            "Optimize for Korean comprehension and expression, not specialist subject mastery.",
             "Select vocabulary only from top_vocabulary_candidates. Use canonical_key values exactly.",
-            "Prefer high quality, high ROI, useful meaning-making words over proper names and layout debris.",
+            "Prefer useful Korean words for meaning-making and student output over niche proper nouns, specialist terms, and layout debris.",
             "Use source_sentence values grounded in the supplied printout or high-signal example sentences.",
+            "When the source is technical, simplify it into plain Korean handles adults can use without expert knowledge.",
+            "Make prompts follow: 본문에서 찾기 → 자기 말로 말하기 → 생활/실험/비유로 연결하기.",
             "Keep teacher guidance first; include the parent companion section near the end.",
+            "Do not use English glosses, unnecessary Hanja breakdowns, LaTeX/math markup, or subject-mastery lecture framing.",
             "Return JSON exactly in the required shape with all required keys.",
             "",
             json.dumps(prompt_packet, ensure_ascii=False, indent=2),
@@ -866,20 +955,16 @@ def render_after_class_report_docx(
     add_docx_paragraph(doc, document.title, font_name=font_name, size=18, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
     add_docx_paragraph(doc, "교사용 지도 안내 및 학부모 동반 활동", font_name=font_name, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
     add_docx_paragraph(doc, f"자료 ID: {document.source_id}", font_name=font_name, size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+    add_guidance_strip(doc, font_name=font_name)
 
     add_docx_heading(doc, "수업 요약", font_name=font_name)
     add_docx_paragraph(doc, document.lesson_summary, font_name=font_name, size=10)
     add_docx_bullets(doc, "핵심 지도 포인트", document.core_teaching_points, font_name=font_name)
-    add_vocabulary_table(doc, document.vocabulary_overview, font_name=font_name)
+    add_vocabulary_guide(doc, document.vocabulary_overview, font_name=font_name)
 
     add_docx_heading(doc, "깊이 지도 카드", font_name=font_name)
     for card in document.deep_teaching_cards:
-        add_docx_paragraph(doc, card.canonical_key, font_name=font_name, size=11, bold=True)
-        add_docx_bullet(doc, f"낱말 살피기: {card.word_part_note}", font_name=font_name)
-        add_docx_bullet(doc, f"비슷하지만 다른 점: {card.similar_but_different}", font_name=font_name)
-        add_docx_bullet(doc, f"어른 질문: {card.adult_prompt}", font_name=font_name)
-        add_docx_bullet(doc, f"좋은 반응: {card.good_response}", font_name=font_name)
-        add_docx_bullet(doc, f"살펴볼 점: {card.watch_for}", font_name=font_name)
+        add_deep_teaching_card(doc, card, font_name=font_name)
 
     doc.add_section(WD_SECTION_START.CONTINUOUS)
     add_docx_bullets(doc, "토의 질문", document.discussion_questions, font_name=font_name)
@@ -890,28 +975,129 @@ def render_after_class_report_docx(
     doc.save(path)
 
 
-def add_vocabulary_table(
+def add_guidance_strip(doc: Document, *, font_name: str) -> None:
+    table = doc.add_table(rows=1, cols=1)
+    configure_card_table(table, column_widths=(CARD_WIDTH_DXA,), border_color=AFTER_CLASS_SECTION_ACCENT)
+    cell = table.rows[0].cells[0]
+    set_cell_shading(cell, "EDF7F9")
+    set_cell_margins(cell, top=120, bottom=120, start=180, end=180)
+    paragraph = cell.paragraphs[0]
+    set_paragraph_spacing(paragraph, after=0)
+    run = paragraph.add_run("본문에서 찾기 → 자기 말로 말하기 → 생활/실험/비유로 연결하기")
+    run.bold = True
+    run.font.name = font_name
+    run.font.size = Pt(10)
+    run.font.color.rgb = rgb_color(AFTER_CLASS_SECTION_ACCENT)
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
+    add_spacer_paragraph(doc, before=0, after=6)
+
+
+def add_vocabulary_guide(
     doc: Document,
     vocabulary: Sequence[AfterClassVocabularyItem],
     *,
     font_name: str,
 ) -> None:
     add_docx_heading(doc, "어휘 지도 개요", font_name=font_name)
-    table = doc.add_table(rows=1, cols=6)
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    table.style = "Table Grid"
-    headers = ["우선순위", "어휘", "뜻", "본문 문장", "연습 문장", "주의점"]
-    for index, header in enumerate(headers):
-        set_cell_text(table.rows[0].cells[index], header, font_name=font_name, bold=True)
-    priority_labels = {"core": "핵심", "practice": "연습", "enrichment": "확장"}
+    add_priority_legend(doc, font_name=font_name)
+    grouped: dict[Priority, list[AfterClassVocabularyItem]] = {
+        "core": [],
+        "practice": [],
+        "enrichment": [],
+    }
     for item in vocabulary:
-        cells = table.add_row().cells
-        set_cell_text(cells[0], priority_labels[item.priority], font_name=font_name)
-        set_cell_text(cells[1], f"{item.display}\n({item.in_text_form})", font_name=font_name)
-        set_cell_text(cells[2], item.student_friendly_meaning, font_name=font_name)
-        set_cell_text(cells[3], item.source_sentence, font_name=font_name)
-        set_cell_text(cells[4], item.practice_sentence, font_name=font_name)
-        set_cell_text(cells[5], item.caution, font_name=font_name)
+        grouped[item.priority].append(item)
+    for priority in ("core", "practice", "enrichment"):
+        style = PRIORITY_VISUAL_STYLES[priority]
+        add_priority_group_heading(
+            doc,
+            f"{style.heading} {len(grouped[priority])}개",
+            style=style,
+            font_name=font_name,
+        )
+        for item in grouped[priority]:
+            add_vocabulary_card(doc, item, style=style, font_name=font_name)
+
+
+def add_priority_legend(doc: Document, *, font_name: str) -> None:
+    add_docx_paragraph(doc, "어휘 중요도 안내", font_name=font_name, size=10, bold=True)
+    table = doc.add_table(rows=1, cols=3)
+    configure_card_table(table, column_widths=LEGEND_COLUMNS_DXA, border_color=AFTER_CLASS_NEUTRAL_BORDER)
+    for index, priority in enumerate(("core", "practice", "enrichment")):
+        style = PRIORITY_VISUAL_STYLES[priority]
+        cell = table.rows[0].cells[index]
+        set_cell_shading(cell, style.fill)
+        set_cell_margins(cell, top=110, bottom=110, start=130, end=130)
+        add_cell_heading(cell, f"{style.label} · {style.heading}", font_name=font_name, color=style.accent, size=9.5)
+        add_cell_text_line(cell, style.purpose, font_name=font_name, size=8.5)
+    add_spacer_paragraph(doc, before=0, after=4)
+
+
+def add_priority_group_heading(
+    doc: Document,
+    text: str,
+    *,
+    style: PriorityVisualStyle,
+    font_name: str,
+) -> None:
+    table = doc.add_table(rows=1, cols=1)
+    configure_card_table(table, column_widths=(CARD_WIDTH_DXA,), border_color=style.accent)
+    cell = table.rows[0].cells[0]
+    set_cell_shading(cell, style.fill)
+    set_cell_margins(cell, top=95, bottom=95, start=150, end=150)
+    paragraph = cell.paragraphs[0]
+    set_paragraph_spacing(paragraph, after=0)
+    run = paragraph.add_run(f"{text} · {style.purpose}")
+    run.bold = True
+    run.font.name = font_name
+    run.font.size = Pt(10)
+    run.font.color.rgb = rgb_color(style.accent)
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
+
+
+def add_vocabulary_card(
+    doc: Document,
+    item: AfterClassVocabularyItem,
+    *,
+    style: PriorityVisualStyle,
+    font_name: str,
+) -> None:
+    table = doc.add_table(rows=1, cols=2)
+    configure_card_table(table, column_widths=CARD_COLUMNS_DXA, border_color=style.accent)
+    left_cell, right_cell = table.rows[0].cells
+    set_cell_shading(left_cell, style.fill)
+    set_cell_margins(left_cell, top=125, bottom=125, start=130, end=130)
+    set_cell_margins(right_cell, top=125, bottom=125, start=150, end=150)
+    add_cell_heading(left_cell, style.label, font_name=font_name, color=style.accent, size=9)
+    add_cell_heading(left_cell, item.display, font_name=font_name, color="111827", size=12)
+    add_cell_text_line(left_cell, f"본문: {item.in_text_form}", font_name=font_name, size=9)
+    add_cell_text_line(left_cell, style.purpose, font_name=font_name, size=8.5)
+    add_cell_labeled_line(right_cell, "뜻", item.student_friendly_meaning, font_name=font_name, accent=style.accent)
+    add_cell_labeled_line(right_cell, "본문", item.source_sentence, font_name=font_name, accent=style.accent)
+    add_cell_labeled_line(right_cell, "연습", item.practice_sentence, font_name=font_name, accent=style.accent)
+    add_cell_labeled_line(right_cell, "왜 중요한가", item.why_it_matters, font_name=font_name, accent=style.accent)
+    add_cell_labeled_line(right_cell, "주의", item.caution, font_name=font_name, accent=style.accent)
+    add_spacer_paragraph(doc, before=0, after=3)
+
+
+def add_deep_teaching_card(
+    doc: Document,
+    card: AfterClassDeepTeachingCard,
+    *,
+    font_name: str,
+) -> None:
+    table = doc.add_table(rows=1, cols=1)
+    configure_card_table(table, column_widths=(CARD_WIDTH_DXA,), border_color=AFTER_CLASS_NEUTRAL_BORDER)
+    cell = table.rows[0].cells[0]
+    set_cell_shading(cell, AFTER_CLASS_NEUTRAL_FILL)
+    set_cell_margins(cell, top=130, bottom=130, start=160, end=160)
+    add_cell_heading(cell, card.canonical_key, font_name=font_name, color=AFTER_CLASS_SECTION_ACCENT, size=11)
+    add_cell_labeled_line(cell, "낱말 살피기", card.word_part_note, font_name=font_name, accent=AFTER_CLASS_SECTION_ACCENT)
+    add_cell_labeled_line(cell, "비슷하지만 다른 점", card.similar_but_different, font_name=font_name, accent=AFTER_CLASS_SECTION_ACCENT)
+    add_cell_labeled_line(cell, "질문", card.adult_prompt, font_name=font_name, accent=AFTER_CLASS_SECTION_ACCENT)
+    add_cell_labeled_line(cell, "좋은 반응", card.good_response, font_name=font_name, accent=AFTER_CLASS_SECTION_ACCENT)
+    add_cell_labeled_line(cell, "살펴볼 점", card.watch_for, font_name=font_name, accent=AFTER_CLASS_SECTION_ACCENT)
+    add_spacer_paragraph(doc, before=0, after=3)
 
 
 def configure_table_styles(doc: Document, *, font_name: str) -> None:
@@ -920,6 +1106,167 @@ def configure_table_styles(doc: Document, *, font_name: str) -> None:
         style.font.name = font_name
         style.font.size = Pt(8)
         set_docx_east_asia_font(style, font_name)
+
+
+def configure_card_table(
+    table: Any,
+    *,
+    column_widths: Sequence[int],
+    border_color: str,
+) -> None:
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = False
+    set_table_width(table, sum(column_widths))
+    for row in table.rows:
+        for index, cell in enumerate(row.cells):
+            set_cell_width(cell, column_widths[index])
+            set_cell_border(cell, color=border_color)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+
+
+def set_table_width(table: Any, width_dxa: int) -> None:
+    tbl_pr = table._tbl.tblPr
+    tbl_width = tbl_pr.find(qn("w:tblW"))
+    if tbl_width is None:
+        tbl_width = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_width)
+    tbl_width.set(qn("w:type"), "dxa")
+    tbl_width.set(qn("w:w"), str(width_dxa))
+
+
+def set_cell_width(cell: Any, width_dxa: int) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_width = tc_pr.find(qn("w:tcW"))
+    if tc_width is None:
+        tc_width = OxmlElement("w:tcW")
+        tc_pr.append(tc_width)
+    tc_width.set(qn("w:type"), "dxa")
+    tc_width.set(qn("w:w"), str(width_dxa))
+
+
+def set_cell_shading(cell: Any, fill: str) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shading = tc_pr.find(qn("w:shd"))
+    if shading is None:
+        shading = OxmlElement("w:shd")
+        tc_pr.append(shading)
+    shading.set(qn("w:fill"), fill)
+
+
+def set_cell_border(cell: Any, *, color: str, size: int = 8) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    for edge in ("top", "left", "bottom", "right"):
+        tag = f"w:{edge}"
+        element = borders.find(qn(tag))
+        if element is None:
+            element = OxmlElement(tag)
+            borders.append(element)
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), str(size))
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), color)
+
+
+def set_cell_margins(
+    cell: Any,
+    *,
+    top: int,
+    bottom: int,
+    start: int,
+    end: int,
+) -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    margins = tc_pr.find(qn("w:tcMar"))
+    if margins is None:
+        margins = OxmlElement("w:tcMar")
+        tc_pr.append(margins)
+    for edge, value in {"top": top, "bottom": bottom, "start": start, "end": end}.items():
+        element = margins.find(qn(f"w:{edge}"))
+        if element is None:
+            element = OxmlElement(f"w:{edge}")
+            margins.append(element)
+        element.set(qn("w:w"), str(value))
+        element.set(qn("w:type"), "dxa")
+
+
+def add_cell_heading(
+    cell: Any,
+    text: str,
+    *,
+    font_name: str,
+    color: str,
+    size: float,
+) -> None:
+    paragraph = next_cell_paragraph(cell)
+    set_paragraph_spacing(paragraph, after=2)
+    run = paragraph.add_run(text)
+    format_run(run, font_name=font_name, size=size, bold=True, color=color)
+
+
+def add_cell_text_line(cell: Any, text: str, *, font_name: str, size: float) -> None:
+    paragraph = next_cell_paragraph(cell)
+    set_paragraph_spacing(paragraph, after=2)
+    run = paragraph.add_run(text)
+    format_run(run, font_name=font_name, size=size, color="374151")
+
+
+def add_cell_labeled_line(
+    cell: Any,
+    label: str,
+    text: str,
+    *,
+    font_name: str,
+    accent: str,
+) -> None:
+    paragraph = next_cell_paragraph(cell)
+    set_paragraph_spacing(paragraph, after=2)
+    label_run = paragraph.add_run(f"{label}: ")
+    format_run(label_run, font_name=font_name, size=9.5, bold=True, color=accent)
+    value_run = paragraph.add_run(text)
+    format_run(value_run, font_name=font_name, size=9.5, color="111827")
+
+
+def next_cell_paragraph(cell: Any) -> Any:
+    first = cell.paragraphs[0]
+    if len(cell.paragraphs) == 1 and not first.text.strip():
+        return first
+    return cell.add_paragraph()
+
+
+def add_spacer_paragraph(doc: Document, *, before: float, after: float) -> None:
+    paragraph = doc.add_paragraph()
+    set_paragraph_spacing(paragraph, before=before, after=after)
+
+
+def set_paragraph_spacing(paragraph: Any, *, before: float = 0, after: float = 0) -> None:
+    paragraph.paragraph_format.space_before = Pt(before)
+    paragraph.paragraph_format.space_after = Pt(after)
+    paragraph.paragraph_format.line_spacing = 1.08
+
+
+def format_run(
+    run: Any,
+    *,
+    font_name: str,
+    size: float,
+    bold: bool = False,
+    color: str | None = None,
+) -> None:
+    run.bold = bold
+    run.font.name = font_name
+    run.font.size = Pt(size)
+    if color is not None:
+        run.font.color.rgb = rgb_color(color)
+    run._element.rPr.rFonts.set(qn("w:eastAsia"), font_name)
+
+
+def rgb_color(hex_color: str) -> RGBColor:
+    color = hex_color.strip().lstrip("#")
+    return RGBColor(int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
 
 
 def set_cell_text(cell: Any, text: str, *, font_name: str, bold: bool = False) -> None:
@@ -1330,6 +1677,29 @@ def optional_float(value: object) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def after_class_grade_level(source_id: str) -> str:
+    match = re.search(r"(?:^|_)grade(?P<grade>[1-6]|-unknown)(?:-|$)", source_id)
+    if match is None:
+        return UNKNOWN_GRADE_LEVEL
+    grade = match.group("grade")
+    if grade == "-unknown":
+        return UNKNOWN_GRADE_LEVEL
+    return f"grade{grade}"
+
+
+def after_class_grade_label(grade_level: str) -> str:
+    match = re.fullmatch(r"grade([1-6])", grade_level)
+    if match is None:
+        return UNKNOWN_GRADE_LABEL
+    return f"{match.group(1)}학년"
+
+
+def after_class_prompt_target_profile(grade_level: str) -> str:
+    if grade_level == UNKNOWN_GRADE_LEVEL:
+        return "elementary-ko-a4-adult-report"
+    return f"{grade_level}-ko-a4-adult-report"
 
 
 def _report(
