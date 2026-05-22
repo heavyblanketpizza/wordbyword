@@ -250,12 +250,57 @@ class AfterClassReportGenerationTest(unittest.TestCase):
             self.assertTrue((output_dir / "attempts.jsonl").is_file())
             self.assertTrue((output_dir / "failures.jsonl").is_file())
             self.assertTrue((output_dir / "quality_report.json").is_file())
+            attempts = read_jsonl(output_dir / "attempts.jsonl")
             failures = read_jsonl(output_dir / "failures.jsonl")
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertFalse(attempts[0]["accepted"])
             self.assertFalse(failures[0]["accepted"])
+            self.assertEqual(attempts[0]["failure_reason"], failures[0]["failure_reason"])
+            self.assertIn("{not json", attempts[0]["response"])
             self.assertIn("JSON", failures[0]["failure_reason"])
             quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["status"], "failed")
             self.assertEqual(quality["output_formats"], [])
+
+    def test_schema_failure_writes_audit_rows_before_secondary_failure_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            archive.mkdir()
+            source = archive / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(source, korean_fixture_text())
+            output_root = root / "after-class-reports"
+            response = valid_report_payload(source.stem, [f"단어{i}" for i in range(1, 16)])
+            response["vocabulary_overview"][1]["canonical_key"] = response["vocabulary_overview"][0]["canonical_key"]
+            raw_response = json.dumps(response, ensure_ascii=False)
+
+            with (
+                patch(
+                    "wordbyword.after_class_reports.report.write_failed_after_class_report_artifacts",
+                    side_effect=OSError("secondary artifact write failed"),
+                ),
+                self.assertRaises(OSError) as error,
+            ):
+                generate_after_class_reading_report(
+                    source,
+                    output_root=output_root,
+                    client=RecordingAfterClassReportClient(response=raw_response),
+                    model="fake-ollama",
+                )
+
+            self.assertIn("secondary artifact write failed", str(error.exception))
+            output_dir = output_root / source.stem
+            attempts = read_jsonl(output_dir / "attempts.jsonl")
+            failures = read_jsonl(output_dir / "failures.jsonl")
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(len(failures), 1)
+            self.assertFalse(attempts[0]["accepted"])
+            self.assertFalse(failures[0]["accepted"])
+            self.assertIn("vocabulary_overview must contain 15 unique canonical_key values", attempts[0]["failure_reason"])
+            self.assertEqual(attempts[0]["failure_reason"], failures[0]["failure_reason"])
+            self.assertEqual(attempts[0]["response"], raw_response)
+            self.assertFalse((output_dir / "quality_report.json").exists())
 
     def test_prompt_uses_target_printout_and_isolated_heuristic_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

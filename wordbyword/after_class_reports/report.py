@@ -441,6 +441,7 @@ def generate_after_class_reading_report(
     document: AfterClassReportDocument | None = None
     resolved_font_path: Path | None = None
     resolved_font_name = ""
+    audit_rows_written = False
 
     try:
         _report(
@@ -533,6 +534,9 @@ def generate_after_class_reading_report(
             failure_reason=failure_reason,
         )
         failure_rows = [attempt]
+        append_jsonl(attempts_path, [attempt])
+        write_jsonl(failures_path, failure_rows)
+        audit_rows_written = True
         _report(
             progress,
             phase="write",
@@ -556,8 +560,9 @@ def generate_after_class_reading_report(
         )
 
     attempt_rows = [attempt]
-    append_jsonl(attempts_path, attempt_rows)
-    write_jsonl(failures_path, failure_rows)
+    if not audit_rows_written:
+        append_jsonl(attempts_path, attempt_rows)
+        write_jsonl(failures_path, failure_rows)
     accepted = not failure_rows
     failure_reason = str(attempt.get("failure_reason") or "")
     selected_vocabulary_count = len(document.vocabulary_overview) if accepted and document else 0
