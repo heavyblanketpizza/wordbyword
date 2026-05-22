@@ -5,18 +5,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from kiwipiepy import Kiwi
-
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
 from wordbyword.dictionary_build.example_generation import RetryGeneratedExampleCallback
-from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
-from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
-from wordbyword.dictionary_build.readers import discover_documents, document_id_for, read_document
-from wordbyword.dictionary_build.writers import ArtifactCallback, write_cleanup_outputs_from_saved, write_outputs
+from wordbyword.dictionary_build.llm import SupportsCompletion
+from wordbyword.dictionary_build.recovery import (
+    ArtifactCallback,
+    run_saved_dictionary_cleanup,
+)
 
 ProgressCallback = Callable[[str, str], None]
-
 DEFAULT_SHARED_CLEANUP_TIMEOUT_SECONDS = 300.0
 DEFAULT_SHARED_CLEANUP_MAX_OUTPUT_TOKENS = 256
 
@@ -58,6 +56,11 @@ def run_pipeline(
     generated_example_retry_decider: RetryGeneratedExampleCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> PipelineResult:
+    """Deprecated compatibility wrapper.
+
+    Use build_resumable_dictionary(..., target_checkpoint="09") for deterministic
+    prep builds, or write_cleanup_outputs_from_saved() for saved-stage recovery.
+    """
     example_cleanup_requested = clean_example_sentences or sentence_cleanup_client is not None
     dictionary_cleanup_requested = clean_dictionary_candidates or dictionary_cleanup_client is not None
     generated_example_requested = (
@@ -72,105 +75,47 @@ def run_pipeline(
         or generated_example_requested
     )
     if cleanup_requested:
-        shared_cleanup_client = None
-        if (
-            sentence_cleanup_client is None
-            and dictionary_cleanup_client is None
-            and generated_example_client is None
-        ):
-            shared_cleanup_client = ollama_client(
-                model=sentence_cleanup_model,
-                base_url=sentence_cleanup_base_url,
-                timeout_seconds=DEFAULT_SHARED_CLEANUP_TIMEOUT_SECONDS,
-                max_output_tokens=DEFAULT_SHARED_CLEANUP_MAX_OUTPUT_TOKENS,
-            )
-        _report(progress, "cleanup", f"loading saved stage inputs from {output_dir}")
         try:
-            try:
-                write_cleanup_outputs_from_saved(
-                    output_dir,
-                    sentence_cleanup_client=(sentence_cleanup_client or shared_cleanup_client)
-                    if example_cleanup_requested
-                    else None,
-                    sentence_cleanup_progress=cleanup_progress if example_cleanup_requested else None,
-                    dictionary_cleanup_client=(dictionary_cleanup_client or shared_cleanup_client)
-                    if dictionary_cleanup_requested
-                    else None,
-                    dictionary_cleanup_progress=(
-                        dictionary_cleanup_progress or cleanup_progress
-                    )
-                    if dictionary_cleanup_requested
-                    else None,
-                    generated_example_client=(generated_example_client or shared_cleanup_client)
-                    if generated_example_requested
-                    else None,
-                    generated_example_progress=(
-                        generated_example_progress or dictionary_cleanup_progress or cleanup_progress
-                    )
-                    if generated_example_requested
-                    else None,
-                    generated_example_retry_decider=generated_example_retry_decider
-                    if generated_example_requested
-                    else None,
-                    retry_generated_examples_only=retry_generated_example_requested,
-                    artifact_callback=artifact_callback,
-                )
-            finally:
-                if shared_cleanup_client is not None:
-                    try:
-                        unload_model_if_supported(shared_cleanup_client)
-                    except Exception as exc:  # pragma: no cover - defensive cleanup path
-                        _report(progress, "cleanup", f"warning: could not unload Ollama model: {exc}")
+            run_saved_dictionary_cleanup(
+                output_dir=output_dir,
+                clean_example_sentences=clean_example_sentences,
+                clean_dictionary_candidates=clean_dictionary_candidates,
+                generate_missing_examples=generate_missing_examples,
+                retry_generated_examples=retry_generated_example_requested,
+                sentence_cleanup_client=sentence_cleanup_client,
+                dictionary_cleanup_client=dictionary_cleanup_client,
+                generated_example_client=generated_example_client,
+                sentence_cleanup_model=sentence_cleanup_model,
+                sentence_cleanup_base_url=sentence_cleanup_base_url,
+                progress=progress,
+                cleanup_progress=cleanup_progress,
+                dictionary_cleanup_progress=dictionary_cleanup_progress,
+                generated_example_progress=generated_example_progress,
+                generated_example_retry_decider=generated_example_retry_decider,
+                artifact_callback=artifact_callback,
+            )
         except ValueError as exc:
             raise PipelineUsageError(str(exc)) from exc
-        _report(progress, "write", f"writing LLM cleanup bundle to {output_dir}")
         return load_pipeline_result_from_output(output_dir)
 
-    _report(progress, "scan", f"discovering source documents in {input_dir}")
-    documents = discover_documents(input_dir)
-    kiwi = Kiwi()
-    analyzer = KoreanAnalyzer(
+    from wordbyword.dictionary_build.resumable import build_resumable_dictionary
+
+    result = build_resumable_dictionary(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        reference_dictionary_path=output_dir / "references" / "reference-dictionary.jsonl",
         include_punctuation=include_punctuation,
         include_numbers=include_numbers,
-        kiwi=kiwi,
-    )
-
-    _report(progress, "extract", f"reading {len(documents):,} document(s) into page/text units")
-    pages = [
-        page
-        for document in documents
-        for page in read_document(document, document_id_for(document, input_dir))
-    ]
-    _report(progress, "analyze", f"tokenizing {len(pages):,} page/text unit(s)")
-    analysis = analyzer.analyze_pages(pages)
-    _report(progress, "write", f"writing output bundle to {output_dir}")
-    write_outputs(
-        output_dir,
-        pages=pages,
-        sentences=analysis["sentences"],
-        tokens=analysis["tokens"],
-        vocabulary=analysis["vocabulary"],
-        surface_words=analysis["surface_words"],
-        document_totals=analysis["document_totals"],
-        documents=documents,
-        kiwi=kiwi,
+        model=sentence_cleanup_model,
+        base_url=sentence_cleanup_base_url,
+        force=True,
+        progress=progress,
         artifact_callback=artifact_callback,
+        target_checkpoint="09",
     )
-
-    return PipelineResult(
-        documents=len(documents),
-        extracted_pages=len(pages),
-        sentences=len(analysis["sentences"]),
-        token_occurrences=len(analysis["tokens"]),
-        vocabulary_terms=len(analysis["vocabulary"]),
-        surface_words=len(analysis["surface_words"]),
-        output_dir=output_dir,
-    )
-
-
-def _report(progress: ProgressCallback | None, phase: str, detail: str) -> None:
     if progress is not None:
-        progress(phase, detail)
+        progress("write", f"writing output bundle to {output_dir}")
+    return result.pipeline_result
 
 
 def load_pipeline_result_from_output(output_dir: Path) -> PipelineResult:

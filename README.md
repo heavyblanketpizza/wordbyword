@@ -25,7 +25,7 @@ That command resumes from the latest verified checkpoint, runs only the dirty st
 Build only the deterministic base when debugging early artifacts:
 
 ```bash
-uv --no-cache run python -m wordbyword
+uv --no-cache run python -m wordbyword --prep-dictionary
 ```
 
 Build class printouts from source materials:
@@ -85,18 +85,18 @@ uv --no-cache run python -m wordbyword --build-dictionary --force --ollama-model
 
 The full workflow is strict. If `13_generated_example_failures.jsonl` still has unresolved rows, the command returns nonzero and stops before meaning assignment. Repair stage `13` with the recovery commands, then run `--add-reference-meanings` and `--generate-missing-meanings` to finish from the repaired saved artifacts.
 
-The base-only command writes stages `00` through `09` and intentionally does not call Ollama:
+The prep command writes deterministic stages `00` through `09` and intentionally does not call Ollama:
 
 ```bash
-uv --no-cache run python -m wordbyword
+uv --no-cache run python -m wordbyword --prep-dictionary
 ```
 
-Useful base options:
+Useful prep options:
 
 ```bash
-uv --no-cache run python -m wordbyword --input build-dictionary/original --output build-dictionary
-uv --no-cache run python -m wordbyword --include-numbers
-uv --no-cache run python -m wordbyword --include-punctuation
+uv --no-cache run python -m wordbyword --prep-dictionary --input build-dictionary/original --output build-dictionary
+uv --no-cache run python -m wordbyword --prep-dictionary --include-numbers
+uv --no-cache run python -m wordbyword --prep-dictionary --include-punctuation
 ```
 
 Recovery and debugging commands reuse saved artifacts:
@@ -118,7 +118,7 @@ uv --no-cache run python -m wordbyword --show-distribution
 uv --no-cache run python -m wordbyword --show-distribution build-dictionary/15_final_dictionary.jsonl
 ```
 
-Do not rerun the bare base command when you only mean to continue a full dictionary build; it intentionally rebuilds `00` through `09`. Use `--build-dictionary` to resume safely from verified saved artifacts.
+The bare command no longer builds anything. Use `--prep-dictionary` for deterministic stages `00` through `09`, or `--build-dictionary` to resume the full strict workflow from verified saved artifacts.
 
 ## Dictionary Artifacts
 

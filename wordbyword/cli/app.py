@@ -25,7 +25,12 @@ from wordbyword.dictionary_build.llm import (
     unload_model_if_supported,
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.dictionary_build.pipeline import PipelineUsageError, run_pipeline
+from wordbyword.dictionary_build.pipeline import (
+    PipelineUsageError,
+    load_pipeline_result_from_output,
+    run_pipeline as _run_pipeline_compat,
+)
+from wordbyword.dictionary_build.recovery import run_saved_dictionary_cleanup
 from wordbyword.dictionary_build.resumable import (
     CheckpointStatus,
     UnresolvedGeneratedExampleFailures,
@@ -95,6 +100,10 @@ PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
 PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON"
 DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS = (".venv-paddleocr-vl", ".venv-paddleocr")
 
+# Compatibility surface for callers that patch/import wordbyword.cli.app.run_pipeline.
+# The CLI command dispatcher must not call this.
+run_pipeline = _run_pipeline_compat
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
@@ -108,61 +117,20 @@ def main(argv: list[str] | None = None) -> int:
     if immediate_exit_code is not None:
         return immediate_exit_code
 
-    emit_boot_screen(
-        input_dir=args.input,
-        output_dir=args.output,
-        clean_example_sentences=pipeline_cleanup_requested(args),
-        sentence_cleanup_model=args.ollama_model,
+    parser.exit(
+        2,
+        "wordbyword: error: choose an explicit command: --prep-dictionary for stages 00-09 "
+        "or --build-dictionary for the full strict workflow.\n",
     )
-
-    try:
-        result = run_pipeline(
-            input_dir=args.input,
-            output_dir=args.output,
-            include_punctuation=args.include_punctuation,
-            include_numbers=args.include_numbers,
-            clean_example_sentences=args.clean_example_sentences,
-            clean_dictionary_candidates=args.clean_dictionary_candidates,
-            generate_missing_examples=args.generate_missing_examples,
-            retry_generated_examples=args.retry_generated_examples,
-            sentence_cleanup_model=args.ollama_model,
-            sentence_cleanup_base_url=args.ollama_base_url,
-            progress=emit_stage_update,
-            cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
-                label="example",
-                item_label="rows",
-            ),
-            dictionary_cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
-                label="dictionary",
-                item_label="terms",
-            ),
-            generated_example_progress=cleanup_progress_callback(
-                model=args.ollama_model,
-                label="candidate example",
-                item_label="terms",
-            ),
-            generated_example_retry_decider=generated_example_retry_decider(args),
-            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
-        )
-    except PipelineUsageError as exc:
-        parser.exit(2, f"wordbyword: error: {exc}\n")
-
-    emit_completion_screen(
-        result,
-        input_dir=args.input,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
-        clean_example_sentences=pipeline_cleanup_requested(args),
-        sentence_cleanup_model=args.ollama_model,
-    )
-    return 0
 
 
 def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.build_dictionary:
         return build_dictionary_cli(args)
+    if args.prep_dictionary:
+        return prep_dictionary_cli(args)
+    if pipeline_cleanup_requested(args):
+        return dictionary_recovery_cli(args)
     if args.parse_source_material is not None:
         options = source_parse_options_from_args(args)
         return parse_source_material_cli(
@@ -338,6 +306,7 @@ def build_dictionary_cli(args: argparse.Namespace) -> int:
             ),
             artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
             checkpoint_status=emit_dictionary_build_checkpoint_status,
+            target_checkpoint="15",
         )
     except UnresolvedGeneratedExampleFailures as error:
         sys.stderr.write(
@@ -354,6 +323,97 @@ def build_dictionary_cli(args: argparse.Namespace) -> int:
 
     emit_completion_screen(
         result.pipeline_result,
+        input_dir=args.input,
+        include_punctuation=args.include_punctuation,
+        include_numbers=args.include_numbers,
+        clean_example_sentences=True,
+        sentence_cleanup_model=args.ollama_model,
+    )
+    return 0
+
+
+def prep_dictionary_cli(args: argparse.Namespace) -> int:
+    emit_boot_screen(
+        input_dir=args.input,
+        output_dir=args.output,
+        clean_example_sentences=False,
+        sentence_cleanup_model=args.ollama_model,
+    )
+
+    try:
+        result = build_resumable_dictionary(
+            input_dir=args.input,
+            output_dir=args.output,
+            reference_dictionary_path=args.reference_dictionary,
+            include_punctuation=args.include_punctuation,
+            include_numbers=args.include_numbers,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            force=args.force,
+            progress=emit_stage_update,
+            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+            checkpoint_status=emit_dictionary_build_checkpoint_status,
+            target_checkpoint="09",
+        )
+    except (ValueError, PipelineUsageError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    emit_completion_screen(
+        result.pipeline_result,
+        input_dir=args.input,
+        include_punctuation=args.include_punctuation,
+        include_numbers=args.include_numbers,
+        clean_example_sentences=False,
+        sentence_cleanup_model=args.ollama_model,
+    )
+    return 0
+
+
+def dictionary_recovery_cli(args: argparse.Namespace) -> int:
+    emit_boot_screen(
+        input_dir=args.input,
+        output_dir=args.output,
+        clean_example_sentences=True,
+        sentence_cleanup_model=args.ollama_model,
+    )
+
+    try:
+        run_saved_dictionary_cleanup(
+            output_dir=args.output,
+            clean_example_sentences=args.clean_example_sentences,
+            clean_dictionary_candidates=args.clean_dictionary_candidates,
+            generate_missing_examples=args.generate_missing_examples,
+            retry_generated_examples=args.retry_generated_examples,
+            sentence_cleanup_model=args.ollama_model,
+            sentence_cleanup_base_url=args.ollama_base_url,
+            progress=emit_stage_update,
+            cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="example",
+                item_label="rows",
+            ),
+            dictionary_cleanup_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="dictionary",
+                item_label="terms",
+            ),
+            generated_example_progress=cleanup_progress_callback(
+                model=args.ollama_model,
+                label="candidate example",
+                item_label="terms",
+            ),
+            generated_example_retry_decider=generated_example_retry_decider(args),
+            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+        )
+    except ValueError as error:
+        raise PipelineUsageError(str(error)) from error
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    emit_completion_screen(
+        load_pipeline_result_from_output(args.output),
         input_dir=args.input,
         include_punctuation=args.include_punctuation,
         include_numbers=args.include_numbers,

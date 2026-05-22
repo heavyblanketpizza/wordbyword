@@ -103,6 +103,76 @@ class ResumableDictionaryBuildTest(unittest.TestCase):
 
             self.assertEqual(run_keys, list(checkpoint_keys()))
 
+    def test_target_stage_nine_runs_only_deterministic_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            input_dir, output_dir, reference_path = prepare_workspace(Path(workspace))
+            run_keys = []
+
+            def fake_run(checkpoint, **kwargs):
+                run_keys.append(checkpoint.key)
+                write_checkpoint_artifacts(kwargs["output_dir"], checkpoint.key)
+
+            with patch("wordbyword.dictionary_build.resumable.run_checkpoint", side_effect=fake_run):
+                build_resumable_dictionary(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    reference_dictionary_path=reference_path,
+                    include_punctuation=False,
+                    include_numbers=False,
+                    model="gemma4:31b",
+                    target_checkpoint="09",
+                )
+
+            self.assertEqual(run_keys, ["01", "02-05", "06-08", "09"])
+
+    def test_target_stage_nine_removes_downstream_artifacts_and_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            input_dir, output_dir, reference_path = prepare_workspace(Path(workspace))
+            write_all_checkpoint_artifacts(output_dir)
+
+            build_resumable_dictionary(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                reference_dictionary_path=reference_path,
+                include_punctuation=False,
+                include_numbers=False,
+                model="gemma4:31b",
+            )
+
+            build_resumable_dictionary(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                reference_dictionary_path=reference_path,
+                include_punctuation=False,
+                include_numbers=False,
+                model="gemma4:31b",
+                target_checkpoint="09",
+            )
+
+            for key in ("10", "11", "12", "13", "14", "15"):
+                for artifact_id in checkpoint_artifact_ids(key):
+                    self.assertFalse(artifact_path(output_dir, artifact_id).exists())
+
+            summary = json.loads(artifact_path(output_dir, ArtifactId.SUMMARY).read_text(encoding="utf-8"))
+            self.assertEqual(set(summary["build_cache"]["checkpoints"].keys()), {"01", "02-05", "06-08", "09"})
+            self.assertNotIn("10_cleaned_example_sentences.csv", summary["outputs"])
+            self.assertNotIn("10", {stage["stage"] for stage in summary["pipeline_stages"]})
+
+    def test_invalid_target_checkpoint_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            input_dir, output_dir, reference_path = prepare_workspace(Path(workspace))
+
+            with self.assertRaises(ValueError):
+                build_resumable_dictionary(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    reference_dictionary_path=reference_path,
+                    include_punctuation=False,
+                    include_numbers=False,
+                    model="gemma4:31b",
+                    target_checkpoint="99",
+                )
+
     def test_changed_model_invalidates_llm_checkpoints_only(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             input_dir, output_dir, reference_path = prepare_workspace(Path(workspace))
@@ -204,6 +274,26 @@ def prepare_workspace(root: Path) -> tuple[Path, Path, Path]:
 
 def checkpoint_keys() -> tuple[str, ...]:
     return ("01", "02-05", "06-08", "09", "10", "11", "12", "13", "14", "15")
+
+
+def checkpoint_artifact_ids(key: str) -> tuple[ArtifactId, ...]:
+    if key == "10":
+        return (ArtifactId.CLEANED_EXAMPLE_SENTENCES,)
+    if key == "11":
+        return (ArtifactId.CLEANED_DICTIONARY_CANDIDATES,)
+    if key == "12":
+        return (ArtifactId.LINKED_DICTIONARY_CANDIDATES,)
+    if key == "13":
+        return (
+            ArtifactId.GENERATED_EXAMPLE_DICTIONARY,
+            ArtifactId.GENERATED_EXAMPLE_ATTEMPTS,
+            ArtifactId.GENERATED_EXAMPLE_FAILURES,
+        )
+    if key == "14":
+        return (ArtifactId.MEANING_DICTIONARY_CANDIDATES,)
+    if key == "15":
+        return (ArtifactId.FINAL_DICTIONARY,)
+    raise AssertionError(f"unknown checkpoint: {key}")
 
 
 def write_all_checkpoint_artifacts(output_dir: Path) -> None:

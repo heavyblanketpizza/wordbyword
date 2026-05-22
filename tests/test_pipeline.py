@@ -335,7 +335,7 @@ class PipelineTest(unittest.TestCase):
             run_pipeline(input_dir=input_dir, output_dir=output_dir)
             client = UnloadTrackingCleanupClient()
 
-            with patch("wordbyword.dictionary_build.pipeline.ollama_client", return_value=client):
+            with patch("wordbyword.dictionary_build.recovery.ollama_client", return_value=client):
                 run_pipeline(
                     input_dir=input_dir,
                     output_dir=output_dir,

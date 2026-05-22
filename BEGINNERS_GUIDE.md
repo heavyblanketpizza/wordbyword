@@ -72,7 +72,7 @@ build-dictionary/15_final_dictionary.jsonl
 If you are fixing one stage by hand, these recovery commands still exist:
 
 ```bash
-uv --no-cache run python -m wordbyword
+uv --no-cache run python -m wordbyword --prep-dictionary
 uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --clean-dictionary-candidates --ollama-model gemma4:31b
 uv --no-cache run python -m wordbyword --link-cleaned-examples
@@ -82,7 +82,7 @@ uv --no-cache run python -m wordbyword --add-reference-meanings
 uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-model gemma4:31b
 ```
 
-Important: the plain command only rebuilds `00` through `09`. Use `--build-dictionary` when you want the finished `15_final_dictionary.jsonl`.
+Important: `--prep-dictionary` builds deterministic stages `00` through `09`. Use `--build-dictionary` when you want the finished `15_final_dictionary.jsonl`.
 
 ## Make Class Printouts
 

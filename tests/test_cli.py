@@ -49,6 +49,7 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(args.input, DEFAULT_INPUT_DIR)
         self.assertEqual(args.input, Path("build-dictionary/original"))
         self.assertFalse(args.build_dictionary)
+        self.assertFalse(args.prep_dictionary)
         self.assertEqual(args.reference_dictionary, DEFAULT_REFERENCE_DICTIONARY_PATH)
         self.assertEqual(
             args.reference_dictionary,
@@ -85,6 +86,44 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertTrue(args.include_punctuation)
         self.assertTrue(args.include_numbers)
 
+    def test_prep_dictionary_accepts_normal_dictionary_modifiers(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--prep-dictionary",
+                "--force",
+                "--input",
+                "custom-input",
+                "--output",
+                "custom-output",
+                "--ollama-model",
+                "gemma4:31b",
+                "--ollama-base-url",
+                "http://localhost:11434",
+                "--include-punctuation",
+                "--include-numbers",
+            ]
+        )
+
+        self.assertTrue(args.prep_dictionary)
+        self.assertTrue(args.force)
+        self.assertEqual(args.input, Path("custom-input"))
+        self.assertEqual(args.output, Path("custom-output"))
+        self.assertEqual(args.ollama_model, "gemma4:31b")
+        self.assertEqual(args.ollama_base_url, "http://localhost:11434")
+        self.assertTrue(args.include_punctuation)
+        self.assertTrue(args.include_numbers)
+
+    def test_no_command_is_rejected(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args([])
+        stderr = io.StringIO()
+
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+            validate_args(parser, args)
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("choose an explicit command", stderr.getvalue())
+
     def test_build_dictionary_rejects_incompatible_commands(self) -> None:
         incompatible_args = [
             ["--clean-example-sentences"],
@@ -110,7 +149,32 @@ class ParserDefaultsTest(unittest.TestCase):
                 self.assertEqual(error.exception.code, 2)
                 self.assertIn("--build-dictionary cannot be combined", stderr.getvalue())
 
-    def test_force_without_build_dictionary_is_rejected(self) -> None:
+    def test_prep_dictionary_rejects_incompatible_commands(self) -> None:
+        incompatible_args = [
+            ["--clean-example-sentences"],
+            ["--clean-dictionary-candidates"],
+            ["--link-cleaned-examples"],
+            ["--generate-missing-examples"],
+            ["--retry-generated-examples"],
+            ["--add-reference-meanings"],
+            ["--generate-missing-meanings"],
+            ["--show-distribution"],
+            ["--build-class-printouts"],
+            ["--build-usage-signals"],
+        ]
+
+        for extra_args in incompatible_args:
+            with self.subTest(extra_args=extra_args):
+                parser = build_parser()
+                args = parser.parse_args(["--prep-dictionary", *extra_args])
+                stderr = io.StringIO()
+                with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+                    validate_args(parser, args)
+
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--prep-dictionary cannot be combined", stderr.getvalue())
+
+    def test_force_without_dictionary_build_command_is_rejected(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["--force"])
         stderr = io.StringIO()
@@ -119,7 +183,7 @@ class ParserDefaultsTest(unittest.TestCase):
             validate_args(parser, args)
 
         self.assertEqual(error.exception.code, 2)
-        self.assertIn("--force can only be used with --build-dictionary", stderr.getvalue())
+        self.assertIn("--force can only be used with --prep-dictionary or --build-dictionary", stderr.getvalue())
 
     def test_class_printout_commands_have_zero_config_roots(self) -> None:
         parser = build_parser()
@@ -655,7 +719,51 @@ class BuildDictionaryCliTest(unittest.TestCase):
             self.assertEqual(kwargs["model"], "gemma4:31b")
             self.assertEqual(kwargs["base_url"], "http://localhost:11434")
             self.assertTrue(kwargs["force"])
+            self.assertEqual(kwargs["target_checkpoint"], "15")
             self.assertIsNotNone(kwargs["checkpoint_status"])
+
+    def test_main_with_prep_dictionary_uses_resumable_builder_to_stage_nine(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            output_dir = root / "output"
+            output_dir.mkdir()
+            input_dir = root / "input"
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch(
+                    "wordbyword.cli.app.build_resumable_dictionary",
+                    return_value=SimpleNamespace(pipeline_result=pipeline_result(output_dir)),
+                ) as prep_dictionary,
+            ):
+                exit_code = main(
+                    [
+                        "--prep-dictionary",
+                        "--force",
+                        "--input",
+                        str(input_dir),
+                        "--output",
+                        str(output_dir),
+                        "--ollama-model",
+                        "gemma4:31b",
+                        "--ollama-base-url",
+                        "http://localhost:11434",
+                        "--include-punctuation",
+                        "--include-numbers",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            prep_dictionary.assert_called_once()
+            kwargs = prep_dictionary.call_args.kwargs
+            self.assertEqual(kwargs["input_dir"], input_dir)
+            self.assertEqual(kwargs["output_dir"], output_dir)
+            self.assertTrue(kwargs["include_punctuation"])
+            self.assertTrue(kwargs["include_numbers"])
+            self.assertEqual(kwargs["model"], "gemma4:31b")
+            self.assertEqual(kwargs["base_url"], "http://localhost:11434")
+            self.assertTrue(kwargs["force"])
+            self.assertEqual(kwargs["target_checkpoint"], "09")
 
     def test_build_dictionary_reports_resumable_builder_failure(self) -> None:
         stderr = io.StringIO()
@@ -1202,46 +1310,28 @@ class ShowDistributionCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("bad ollama config", stderr.getvalue())
 
-    def test_main_with_generate_missing_examples_uses_pipeline_cleanup_path(self) -> None:
+    def test_main_with_generate_missing_examples_uses_saved_recovery_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = PipelineResult(
-                    documents=0,
-                    extracted_pages=0,
-                    sentences=0,
-                    token_occurrences=0,
-                    vocabulary_terms=0,
-                    surface_words=0,
-                    output_dir=output_dir,
-                )
+            with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
                 exit_code = main(["--generate-missing-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue(mock_pipeline.called)
-            self.assertTrue(mock_pipeline.call_args.kwargs["generate_missing_examples"])
+            recovery.assert_called_once()
+            self.assertTrue(recovery.call_args.kwargs["generate_missing_examples"])
 
-    def test_main_with_retry_generated_examples_uses_pipeline_cleanup_path(self) -> None:
+    def test_main_with_retry_generated_examples_uses_saved_recovery_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
-                mock_pipeline.return_value = PipelineResult(
-                    documents=0,
-                    extracted_pages=0,
-                    sentences=0,
-                    token_occurrences=0,
-                    vocabulary_terms=0,
-                    surface_words=0,
-                    output_dir=output_dir,
-                )
+            with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
                 exit_code = main(["--retry-generated-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
-            self.assertTrue(mock_pipeline.called)
-            self.assertTrue(mock_pipeline.call_args.kwargs["retry_generated_examples"])
-            self.assertFalse(mock_pipeline.call_args.kwargs["generate_missing_examples"])
+            recovery.assert_called_once()
+            self.assertTrue(recovery.call_args.kwargs["retry_generated_examples"])
+            self.assertFalse(recovery.call_args.kwargs["generate_missing_examples"])
 
     def test_main_with_retry_generated_examples_rejects_generate_missing_examples_combo(self) -> None:
         stderr = io.StringIO()

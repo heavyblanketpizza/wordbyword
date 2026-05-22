@@ -74,9 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build dictionary stages 00 through 15 in one strict workflow.",
     )
     parser.add_argument(
+        "--prep-dictionary",
+        action="store_true",
+        help="Build deterministic dictionary preparation stages 00 through 09 without Ollama.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
-        help="With --build-dictionary, ignore saved checkpoints and rebuild every stage.",
+        help="With --prep-dictionary or --build-dictionary, ignore saved checkpoints and rebuild requested stages.",
     )
     parser.add_argument(
         "--clean-example-sentences",
@@ -573,6 +578,31 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.add_reference_meanings,
         args.generate_missing_meanings,
     ]
+    if args.force and not (args.prep_dictionary or args.build_dictionary):
+        parser.exit(
+            2,
+            "wordbyword: error: --force can only be used with --prep-dictionary or --build-dictionary.\n",
+        )
+    command_requested = any(
+        [
+            args.prep_dictionary,
+            args.build_dictionary,
+            *dictionary_stage_commands,
+            *immediate_commands,
+            args.show_distribution is not None,
+        ]
+    )
+    if not command_requested:
+        parser.exit(
+            2,
+            "wordbyword: error: choose an explicit command: --prep-dictionary for stages 00-09 "
+            "or --build-dictionary for the full strict workflow.\n",
+        )
+    if args.prep_dictionary and args.build_dictionary:
+        parser.exit(
+            2,
+            "wordbyword: error: --prep-dictionary cannot be combined with --build-dictionary.\n",
+        )
     if args.build_dictionary and any(
         dictionary_stage_commands + immediate_commands + [args.show_distribution is not None]
     ):
@@ -582,10 +612,28 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "dictionary commands, distribution display, class printout commands, archive/report "
             "commands, or usage-signal commands.\n",
         )
-    if args.force and not args.build_dictionary:
+    if args.prep_dictionary and any(
+        dictionary_stage_commands + immediate_commands + [args.show_distribution is not None]
+    ):
         parser.exit(
             2,
-            "wordbyword: error: --force can only be used with --build-dictionary.\n",
+            "wordbyword: error: --prep-dictionary cannot be combined with stage-specific "
+            "dictionary commands, distribution display, class printout commands, archive/report "
+            "commands, or usage-signal commands.\n",
+        )
+    if any(getattr(args, flag_name) for flag_name in PIPELINE_CLEANUP_FLAGS) and any(
+        [
+            args.link_cleaned_examples,
+            args.add_reference_meanings,
+            args.generate_missing_meanings,
+            *immediate_commands,
+            args.show_distribution is not None,
+        ]
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: cleanup and generated-example recovery commands cannot be combined "
+            "with other commands.\n",
         )
     if sum(1 for requested in immediate_commands if requested) > 1:
         parser.exit(
@@ -612,6 +660,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         or args.print_class_materials is not None
         or args.build_class_printouts is not None
         or args.build_dictionary
+        or args.prep_dictionary
     ) and args.source_id:
         parser.exit(
             2,

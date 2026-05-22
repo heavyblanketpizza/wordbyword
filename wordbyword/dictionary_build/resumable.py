@@ -338,7 +338,12 @@ def build_resumable_dictionary(
     generated_meaning_progress: CleanupProgressCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
     checkpoint_status: CheckpointStatusCallback | None = None,
+    target_checkpoint: str = "15",
 ) -> ResumableDictionaryBuildResult:
+    if target_checkpoint not in CHECKPOINT_BY_KEY:
+        valid_targets = ", ".join(checkpoint.key for checkpoint in CHECKPOINTS)
+        raise ValueError(f"Unknown dictionary build target checkpoint: {target_checkpoint}. Valid targets: {valid_targets}.")
+
     output_dir.mkdir(parents=True, exist_ok=True)
     documents = discover_documents(input_dir)
     source_fingerprints = fingerprint_documents(documents, input_dir)
@@ -384,7 +389,7 @@ def build_resumable_dictionary(
         return generated_meaning_client
 
     try:
-        for checkpoint in CHECKPOINTS:
+        for checkpoint in checkpoints_through(target_checkpoint):
             validation = validate_checkpoint(
                 checkpoint,
                 output_dir=output_dir,
@@ -465,6 +470,8 @@ def build_resumable_dictionary(
         unload_client(shared_cleanup_client)
         unload_client(generated_meaning_client)
 
+    remove_artifacts_after_checkpoint(output_dir, target_checkpoint)
+    remove_checkpoint_cache_after(state, target_checkpoint)
     refresh_base_summary(output_dir, state)
     refresh_saved_output_metadata(output_dir)
     save_build_cache(output_dir, state)
@@ -472,6 +479,24 @@ def build_resumable_dictionary(
         pipeline_result=load_pipeline_result_from_output(output_dir),
         statuses=tuple(statuses),
     )
+
+
+def checkpoints_through(target_checkpoint: str) -> tuple[CheckpointSpec, ...]:
+    target_index = checkpoint_index(target_checkpoint)
+    return CHECKPOINTS[: target_index + 1]
+
+
+def checkpoints_after(target_checkpoint: str) -> tuple[CheckpointSpec, ...]:
+    target_index = checkpoint_index(target_checkpoint)
+    return CHECKPOINTS[target_index + 1 :]
+
+
+def checkpoint_index(target_checkpoint: str) -> int:
+    for index, checkpoint in enumerate(CHECKPOINTS):
+        if checkpoint.key == target_checkpoint:
+            return index
+    valid_targets = ", ".join(checkpoint.key for checkpoint in CHECKPOINTS)
+    raise ValueError(f"Unknown dictionary build target checkpoint: {target_checkpoint}. Valid targets: {valid_targets}.")
 
 
 def run_checkpoint(
@@ -1087,6 +1112,23 @@ def remove_artifacts_from_checkpoint(output_dir: Path, checkpoint_key: str) -> N
             path = output_dir / filename
             if path.is_file():
                 path.unlink()
+
+
+def remove_artifacts_after_checkpoint(output_dir: Path, target_checkpoint: str) -> None:
+    downstream_checkpoints = checkpoints_after(target_checkpoint)
+    if not downstream_checkpoints:
+        return
+    remove_artifacts_from_checkpoint(output_dir, downstream_checkpoints[0].key)
+
+
+def remove_checkpoint_cache_after(state: BuildState, target_checkpoint: str) -> None:
+    downstream_keys = {checkpoint.key for checkpoint in checkpoints_after(target_checkpoint)}
+    checkpoints = state.cache.get("checkpoints", {})
+    if isinstance(checkpoints, dict):
+        for key in downstream_keys:
+            checkpoints.pop(key, None)
+    for key in downstream_keys:
+        state.checkpoint_digests.pop(key, None)
 
 
 def checkpoint_has_any_artifact(output_dir: Path, checkpoint: CheckpointSpec) -> bool:
