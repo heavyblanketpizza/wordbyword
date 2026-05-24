@@ -13,8 +13,15 @@ from wordbyword.dictionary_build.output_files import read_jsonl, write_jsonl
 DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(Path("build-dictionary"), ArtifactId.FINAL_DICTIONARY)
 DEFAULT_LIVE_GRADE_LEXICON_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "live-grade-lexicon"
 DEFAULT_LIVE_LEXICON_PATH = DEFAULT_LIVE_GRADE_LEXICON_ROOT / "grade1-live-lexicon-canonical.jsonl"
+DEFAULT_SUPPLEMENTAL_LEXICON_PATH = DEFAULT_LIVE_GRADE_LEXICON_ROOT / "grade1-live-lexicon-supplemental.jsonl"
 DEFAULT_USAGE_CANDIDATES_PATH = artifact_path(DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT, ArtifactId.DICTIONARY_CANDIDATES)
 DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT / "10_unmatched_usage_candidates.jsonl"
+CANONICAL_SOURCE_DICTIONARY_SEED = "seeded_from_dictionary"
+CANONICAL_SOURCE_LIVE_LEXICON = "existing_live_lexicon"
+SUPPLEMENTAL_SOURCE_TIER = "supplemental_private"
+SUPPLEMENTAL_STATUS_OBSERVED = "non_canonical_observed"
+SUPPLEMENTAL_STATUS_INACTIVE = "inactive_observed"
+SUPPLEMENTAL_STATUS_PROMOTED = "promoted_to_canonical"
 REMOVED_CANONICAL_FIELDS = {
     "example_generated_with_ollama",
     "meaning_generated_with_ollama",
@@ -31,13 +38,31 @@ class LiveLexiconUpdateResult:
     usage_candidates_path: Path
     usage_summary_path: Path
     live_lexicon_path: Path
+    supplemental_lexicon_path: Path
     unmatched_usage_output_path: Path
+    canonical_source: str
     canonical_rows: int
     live_lexicon_rows: int
     usage_candidate_rows: int
     total_class_printouts: int
     matched_count: int
     unmatched_count: int
+    supplemental_rows: int
+    supplemental_active_rows: int
+    supplemental_added_count: int
+    supplemental_updated_count: int
+    supplemental_inactive_count: int
+    supplemental_promoted_count: int
+
+
+@dataclass(frozen=True)
+class SupplementalLexiconUpdate:
+    rows: list[dict[str, Any]]
+    active_rows: int
+    added_count: int
+    updated_count: int
+    inactive_count: int
+    promoted_count: int
 
 
 class LiveLexiconUpdateError(RuntimeError):
@@ -50,10 +75,10 @@ def update_live_lexicon(
     usage_candidates_path: Path = DEFAULT_USAGE_CANDIDATES_PATH,
     usage_summary_path: Path | None = None,
     live_lexicon_path: Path = DEFAULT_LIVE_LEXICON_PATH,
+    supplemental_lexicon_path: Path = DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
     unmatched_usage_output_path: Path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
 ) -> LiveLexiconUpdateResult:
     resolved_usage_summary_path = usage_summary_path or artifact_path(usage_candidates_path.parent, ArtifactId.SUMMARY)
-    canonical_rows = read_jsonl_objects(canonical_dictionary_path, label="canonical dictionary")
     usage_candidates = read_jsonl_objects(usage_candidates_path, label="usage candidates")
     usage_summary = read_json_object(resolved_usage_summary_path, label="usage summary")
     total_class_printouts = parse_nonnegative_int(
@@ -61,17 +86,20 @@ def update_live_lexicon(
         field="document_count",
         canonical_key="usage summary",
     )
+    canonical_source_rows, canonical_source = read_canonical_source_rows(
+        canonical_dictionary_path=canonical_dictionary_path,
+        live_lexicon_path=live_lexicon_path,
+    )
     usage_by_key = {
         canonical_key(row): row
         for row in usage_candidates
         if canonical_key(row)
     }
-    live_keys = {canonical_key(row) for row in canonical_rows if canonical_key(row)}
 
     updated_rows: list[dict[str, Any]] = []
     matched_count = 0
-    for row in canonical_rows:
-        updated_row = canonical_live_row(row)
+    for row in canonical_source_rows:
+        updated_row = canonical_live_row(row, preserve_curation_status=canonical_source == CANONICAL_SOURCE_LIVE_LEXICON)
         key = canonical_key(updated_row)
         usage_row = usage_by_key.get(key)
         if usage_row is None:
@@ -103,13 +131,20 @@ def update_live_lexicon(
         updated_rows.append(updated_row)
         matched_count += 1
 
+    live_keys = active_canonical_keys(updated_rows)
     unmatched_usage_candidates = [
         dict(row)
         for row in usage_candidates
         if canonical_key(row) not in live_keys
     ]
+    supplemental_result = update_supplemental_rows(
+        supplemental_lexicon_path=supplemental_lexicon_path,
+        unmatched_usage_candidates=unmatched_usage_candidates,
+        active_live_keys=live_keys,
+    )
 
     write_jsonl_atomic(live_lexicon_path, updated_rows)
+    write_jsonl_atomic(supplemental_lexicon_path, supplemental_result.rows)
     write_jsonl_atomic(unmatched_usage_output_path, unmatched_usage_candidates)
 
     return LiveLexiconUpdateResult(
@@ -117,13 +152,21 @@ def update_live_lexicon(
         usage_candidates_path=usage_candidates_path,
         usage_summary_path=resolved_usage_summary_path,
         live_lexicon_path=live_lexicon_path,
+        supplemental_lexicon_path=supplemental_lexicon_path,
         unmatched_usage_output_path=unmatched_usage_output_path,
-        canonical_rows=len(canonical_rows),
+        canonical_source=canonical_source,
+        canonical_rows=len(canonical_source_rows),
         live_lexicon_rows=len(updated_rows),
         usage_candidate_rows=len(usage_candidates),
         total_class_printouts=total_class_printouts,
         matched_count=matched_count,
         unmatched_count=len(unmatched_usage_candidates),
+        supplemental_rows=len(supplemental_result.rows),
+        supplemental_active_rows=supplemental_result.active_rows,
+        supplemental_added_count=supplemental_result.added_count,
+        supplemental_updated_count=supplemental_result.updated_count,
+        supplemental_inactive_count=supplemental_result.inactive_count,
+        supplemental_promoted_count=supplemental_result.promoted_count,
     )
 
 
@@ -154,32 +197,182 @@ def read_json_object(path: Path, *, label: str) -> dict[str, Any]:
     return dict(row)
 
 
-def canonical_live_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def read_canonical_source_rows(
+    *,
+    canonical_dictionary_path: Path,
+    live_lexicon_path: Path,
+) -> tuple[list[dict[str, Any]], str]:
+    if live_lexicon_path.is_file():
+        return read_jsonl_objects(live_lexicon_path, label="canonical live lexicon"), CANONICAL_SOURCE_LIVE_LEXICON
+    return read_jsonl_objects(canonical_dictionary_path, label="canonical dictionary"), CANONICAL_SOURCE_DICTIONARY_SEED
+
+
+def canonical_live_row(row: Mapping[str, Any], *, preserve_curation_status: bool = False) -> dict[str, Any]:
     key = canonical_key(row)
     updated: dict[str, Any] = {}
+    raw_count: Any = None
+    raw_document_count: Any = None
+    raw_variants: Any = None
     for field, value in row.items():
         if field in REMOVED_CANONICAL_FIELDS:
             continue
         if field == "count":
-            updated["canonical_count"] = parse_nonnegative_int(value, field="count", canonical_key=key)
+            raw_count = value
             continue
         if field == "document_count":
-            updated["canonical_document_count"] = parse_nonnegative_int(
-                value,
-                field="document_count",
-                canonical_key=key,
-            )
+            raw_document_count = value
+            continue
+        if field == "curation_status" and not preserve_curation_status:
+            continue
+        if field == "variants":
+            raw_variants = value
             continue
         updated[field] = value
 
+    if "canonical_count" not in updated and raw_count is not None:
+        updated["canonical_count"] = raw_count
+    if "canonical_document_count" not in updated and raw_document_count is not None:
+        updated["canonical_document_count"] = raw_document_count
     if "canonical_count" not in updated:
-        raise LiveLexiconUpdateError(f"count for {key} must be present in the canonical dictionary.")
+        raise LiveLexiconUpdateError(f"canonical_count/count for {key} must be present in the canonical source.")
     if "canonical_document_count" not in updated:
-        raise LiveLexiconUpdateError(f"document_count for {key} must be present in the canonical dictionary.")
-    updated["curation_status"] = "canonical"
+        raise LiveLexiconUpdateError(
+            f"canonical_document_count/document_count for {key} must be present in the canonical source."
+        )
+    updated["canonical_count"] = parse_nonnegative_int(
+        updated["canonical_count"],
+        field="canonical_count",
+        canonical_key=key,
+    )
+    updated["canonical_document_count"] = parse_nonnegative_int(
+        updated["canonical_document_count"],
+        field="canonical_document_count",
+        canonical_key=key,
+    )
+    if not preserve_curation_status or not updated.get("curation_status"):
+        updated["curation_status"] = "canonical"
+    updated["variants"] = parse_variants(raw_variants)
     updated["class_count"] = 0
     updated["class_printout_count"] = 0
     updated["roi_score"] = parse_score(updated.get("quality_score"), field="quality_score", canonical_key=key)
+    return updated
+
+
+def active_canonical_keys(rows: list[dict[str, Any]]) -> set[str]:
+    return {
+        key
+        for row in rows
+        if (key := canonical_key(row)) and row.get("active") is not False
+    }
+
+
+def update_supplemental_rows(
+    *,
+    supplemental_lexicon_path: Path,
+    unmatched_usage_candidates: list[dict[str, Any]],
+    active_live_keys: set[str],
+) -> SupplementalLexiconUpdate:
+    existing_rows = (
+        read_jsonl_objects(supplemental_lexicon_path, label="supplemental live lexicon")
+        if supplemental_lexicon_path.is_file()
+        else []
+    )
+    unmatched_by_key = {
+        canonical_key(row): row
+        for row in unmatched_usage_candidates
+        if canonical_key(row)
+    }
+
+    rows: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    added_count = 0
+    updated_count = 0
+    inactive_count = 0
+    promoted_count = 0
+    for row in existing_rows:
+        key = canonical_key(row)
+        if key:
+            seen_keys.add(key)
+        if key and key in active_live_keys:
+            rows.append(supplemental_status_row(row, canonical_status=SUPPLEMENTAL_STATUS_PROMOTED))
+            promoted_count += 1
+            continue
+        if key and key in unmatched_by_key:
+            rows.append(supplemental_live_row(unmatched_by_key[key], existing_row=row))
+            updated_count += 1
+            continue
+        rows.append(supplemental_status_row(row, canonical_status=SUPPLEMENTAL_STATUS_INACTIVE))
+        inactive_count += 1
+
+    for row in unmatched_usage_candidates:
+        key = canonical_key(row)
+        if not key or key in seen_keys:
+            continue
+        rows.append(supplemental_live_row(row))
+        seen_keys.add(key)
+        added_count += 1
+
+    return SupplementalLexiconUpdate(
+        rows=rows,
+        active_rows=sum(1 for row in rows if row.get("active") is True),
+        added_count=added_count,
+        updated_count=updated_count,
+        inactive_count=inactive_count,
+        promoted_count=promoted_count,
+    )
+
+
+def supplemental_live_row(
+    usage_row: Mapping[str, Any],
+    *,
+    existing_row: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    key = canonical_key(usage_row)
+    updated = dict(existing_row or {})
+    for field, value in usage_row.items():
+        if field in {
+            "count",
+            "document_count",
+            "class_count",
+            "class_printout_count",
+            "class_document_count",
+            "source_tier",
+            "canonical_status",
+            "active",
+        }:
+            continue
+        if existing_row is not None and field == "curation_status" and field in updated:
+            continue
+        updated[field] = value
+    updated.pop("count", None)
+    updated.pop("document_count", None)
+    updated.pop("class_document_count", None)
+    updated["variants"] = merge_variants(
+        existing_row.get("variants") if existing_row is not None else None,
+        usage_row.get("variants"),
+    )
+    updated["class_count"] = parse_nonnegative_int(usage_row.get("count"), field="count", canonical_key=key)
+    updated["class_printout_count"] = parse_nonnegative_int(
+        usage_row.get("document_count"),
+        field="document_count",
+        canonical_key=key,
+    )
+    updated["source_tier"] = SUPPLEMENTAL_SOURCE_TIER
+    updated["canonical_status"] = SUPPLEMENTAL_STATUS_OBSERVED
+    updated["active"] = True
+    return updated
+
+
+def supplemental_status_row(row: Mapping[str, Any], *, canonical_status: str) -> dict[str, Any]:
+    updated = dict(row)
+    updated.pop("count", None)
+    updated.pop("document_count", None)
+    updated.pop("class_document_count", None)
+    updated["class_count"] = 0
+    updated["class_printout_count"] = 0
+    updated["source_tier"] = SUPPLEMENTAL_SOURCE_TIER
+    updated["canonical_status"] = canonical_status
+    updated["active"] = False
     return updated
 
 

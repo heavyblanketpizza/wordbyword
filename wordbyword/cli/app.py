@@ -242,6 +242,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             usage_candidates_path=args.usage_candidates,
             usage_summary_path=args.usage_summary,
             live_lexicon_path=args.live_lexicon,
+            supplemental_lexicon_path=args.supplemental_lexicon,
             unmatched_usage_output_path=args.unmatched_usage_output,
         )
     if args.show_distribution is not None:
@@ -1461,6 +1462,7 @@ def update_live_lexicon_cli(
     usage_candidates_path: Path,
     usage_summary_path: Path | None,
     live_lexicon_path: Path,
+    supplemental_lexicon_path: Path,
     unmatched_usage_output_path: Path,
 ) -> int:
     try:
@@ -1469,6 +1471,7 @@ def update_live_lexicon_cli(
             usage_candidates_path=usage_candidates_path,
             usage_summary_path=usage_summary_path,
             live_lexicon_path=live_lexicon_path,
+            supplemental_lexicon_path=supplemental_lexicon_path,
             unmatched_usage_output_path=unmatched_usage_output_path,
         )
     except LiveLexiconUpdateError as error:
@@ -1478,7 +1481,9 @@ def update_live_lexicon_cli(
     sys.stdout.write(
         "live lexicon updated\n"
         f"  canonical_dictionary: {result.canonical_dictionary_path}\n"
+        f"  canonical_source: {result.canonical_source}\n"
         f"  live_lexicon: {result.live_lexicon_path}\n"
+        f"  supplemental_lexicon: {result.supplemental_lexicon_path}\n"
         f"  usage_candidates: {result.usage_candidates_path}\n"
         f"  usage_summary: {result.usage_summary_path}\n"
         f"  unmatched_usage_output: {result.unmatched_usage_output_path}\n"
@@ -1488,6 +1493,12 @@ def update_live_lexicon_cli(
         f"  total_class_printouts: {result.total_class_printouts}\n"
         f"  matched: {result.matched_count}\n"
         f"  unmatched: {result.unmatched_count}\n"
+        f"  supplemental_rows: {result.supplemental_rows}\n"
+        f"  supplemental_active_rows: {result.supplemental_active_rows}\n"
+        f"  supplemental_added: {result.supplemental_added_count}\n"
+        f"  supplemental_updated: {result.supplemental_updated_count}\n"
+        f"  supplemental_inactive: {result.supplemental_inactive_count}\n"
+        f"  supplemental_promoted: {result.supplemental_promoted_count}\n"
     )
     sys.stdout.flush()
     return 0

@@ -14,6 +14,7 @@ from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
 from wordbyword.class_archive.live_lexicon import (
     DEFAULT_CANONICAL_DICTIONARY_PATH,
     DEFAULT_LIVE_LEXICON_PATH,
+    DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
     DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
     DEFAULT_USAGE_CANDIDATES_PATH,
 )
@@ -537,8 +538,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LIVE_LEXICON_PATH,
         help=(
-            "Canonical live lexicon JSONL to regenerate with class usage signals. "
+            "Canonical live lexicon JSONL to maintain with class usage signals. "
             "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--supplemental-lexicon",
+        type=Path,
+        default=DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
+        help=(
+            "Supplemental non-canonical live lexicon JSONL to maintain from unmatched class usage. "
+            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-supplemental.jsonl."
         ),
     )
     parser.add_argument(

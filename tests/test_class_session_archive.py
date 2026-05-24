@@ -28,6 +28,7 @@ from wordbyword.class_archive.archive import (
 from wordbyword.class_archive.live_lexicon import (
     DEFAULT_CANONICAL_DICTIONARY_PATH,
     DEFAULT_LIVE_LEXICON_PATH,
+    DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
     DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
     DEFAULT_USAGE_CANDIDATES_PATH,
     update_live_lexicon,
@@ -297,12 +298,13 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
 
 
 class LiveLexiconUpdateTest(unittest.TestCase):
-    def test_update_live_lexicon_regenerates_canonical_output_and_overlays_usage(self) -> None:
+    def test_update_live_lexicon_seeds_canonical_and_supplemental_on_initial_run(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
             old_live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon.jsonl"
             live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -363,13 +365,18 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 usage_candidates_path=usage_candidates_path,
                 usage_summary_path=usage_summary_path,
                 live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
                 unmatched_usage_output_path=unmatched_output_path,
             )
 
+            self.assertEqual(result.canonical_source, "seeded_from_dictionary")
             self.assertEqual(result.canonical_rows, 2)
             self.assertEqual(result.total_class_printouts, 4)
             self.assertEqual(result.matched_count, 1)
             self.assertEqual(result.unmatched_count, 1)
+            self.assertEqual(result.supplemental_rows, 1)
+            self.assertEqual(result.supplemental_active_rows, 1)
+            self.assertEqual(result.supplemental_added_count, 1)
             updated_rows = read_jsonl(live_lexicon_path)
             self.assertEqual([row["canonical_key"] for row in updated_rows], ["먹다", "물"])
             self.assertNotIn("count", updated_rows[0])
@@ -394,12 +401,213 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertEqual(old_live_lexicon_path.read_text(encoding="utf-8"), "legacy live lexicon\n")
             unmatched_rows = read_jsonl(unmatched_output_path)
             self.assertEqual([row["canonical_key"] for row in unmatched_rows], ["새단어"])
+            supplemental_rows = read_jsonl(supplemental_lexicon_path)
+            self.assertEqual([row["canonical_key"] for row in supplemental_rows], ["새단어"])
+            self.assertEqual(supplemental_rows[0]["class_count"], 3)
+            self.assertEqual(supplemental_rows[0]["class_printout_count"], 1)
+            self.assertEqual(supplemental_rows[0]["source_tier"], "supplemental_private")
+            self.assertEqual(supplemental_rows[0]["canonical_status"], "non_canonical_observed")
+            self.assertIs(supplemental_rows[0]["active"], True)
+            self.assertNotIn("count", supplemental_rows[0])
+            self.assertNotIn("document_count", supplemental_rows[0])
+
+    def test_update_live_lexicon_maintains_existing_canonical_without_dictionary(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
+            usage_summary_path = root / "usage-signal-build" / "00_summary.json"
+            unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
+            write_jsonl(
+                live_lexicon_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "display": "먹다",
+                        "canonical_count": 99,
+                        "canonical_document_count": 9,
+                        "quality_score": 0.7,
+                        "curation_status": "reviewed",
+                        "variants": ["먹다"],
+                        "meaning": "live meaning wins",
+                        "manual_note": "keep me",
+                        "class_count": 123,
+                        "class_printout_count": 45,
+                    },
+                ],
+            )
+            usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+            write_jsonl(
+                usage_candidates_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 7,
+                        "document_count": 2,
+                        "quality_score": 0.6,
+                        "variants": ["먹고"],
+                    },
+                ],
+            )
+
+            result = update_live_lexicon(
+                canonical_dictionary_path=canonical_dictionary_path,
+                usage_candidates_path=usage_candidates_path,
+                usage_summary_path=usage_summary_path,
+                live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+
+            self.assertEqual(result.canonical_source, "existing_live_lexicon")
+            updated_rows = read_jsonl(live_lexicon_path)
+            self.assertEqual(len(updated_rows), 1)
+            self.assertEqual(updated_rows[0]["canonical_count"], 99)
+            self.assertEqual(updated_rows[0]["canonical_document_count"], 9)
+            self.assertEqual(updated_rows[0]["curation_status"], "reviewed")
+            self.assertEqual(updated_rows[0]["meaning"], "live meaning wins")
+            self.assertEqual(updated_rows[0]["manual_note"], "keep me")
+            self.assertEqual(updated_rows[0]["class_count"], 7)
+            self.assertEqual(updated_rows[0]["class_printout_count"], 2)
+            self.assertEqual(updated_rows[0]["variants"], ["먹다", "먹고"])
+            self.assertEqual(updated_rows[0]["roi_score"], 0.66)
+
+    def test_update_live_lexicon_maintains_supplemental_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
+            usage_summary_path = root / "usage-signal-build" / "00_summary.json"
+            unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
+            write_jsonl(
+                live_lexicon_path,
+                [
+                    {
+                        "canonical_key": "물",
+                        "canonical_count": 47,
+                        "canonical_document_count": 3,
+                        "quality_score": 0.9,
+                        "variants": ["물"],
+                    },
+                ],
+            )
+            write_jsonl(
+                supplemental_lexicon_path,
+                [
+                    {
+                        "canonical_key": "팀",
+                        "display": "팀",
+                        "variants": ["팀", "팀은"],
+                        "quality_score": 0.5,
+                        "class_count": 99,
+                        "class_printout_count": 99,
+                        "source_tier": "supplemental_private",
+                        "canonical_status": "non_canonical_observed",
+                        "active": True,
+                        "curation_status": "reviewed",
+                        "manual_note": "keep",
+                    },
+                    {
+                        "canonical_key": "사라짐",
+                        "display": "사라짐",
+                        "quality_score": 0.4,
+                        "class_count": 2,
+                        "class_printout_count": 1,
+                        "source_tier": "supplemental_private",
+                        "canonical_status": "non_canonical_observed",
+                        "active": True,
+                    },
+                    {
+                        "canonical_key": "물",
+                        "display": "물",
+                        "quality_score": 0.8,
+                        "class_count": 4,
+                        "class_printout_count": 2,
+                        "source_tier": "supplemental_private",
+                        "canonical_status": "non_canonical_observed",
+                        "active": True,
+                    },
+                ],
+            )
+            usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+            write_jsonl(
+                usage_candidates_path,
+                [
+                    {
+                        "canonical_key": "물",
+                        "count": 7,
+                        "document_count": 2,
+                        "quality_score": 0.6,
+                        "variants": ["물을"],
+                    },
+                    {
+                        "canonical_key": "팀",
+                        "display": "팀",
+                        "kind": "term",
+                        "variants": ["팀", "팀을"],
+                        "count": 4,
+                        "document_count": 2,
+                        "quality_score": 0.82,
+                        "example": "팀이 함께 실험했어요.",
+                        "curation_status": "candidate",
+                    },
+                    {
+                        "canonical_key": "새단어",
+                        "display": "새단어",
+                        "kind": "term",
+                        "variants": ["새단어"],
+                        "count": 3,
+                        "document_count": 1,
+                        "quality_score": 0.7,
+                        "example": "새단어를 배웠어요.",
+                    },
+                ],
+            )
+
+            result = update_live_lexicon(
+                usage_candidates_path=usage_candidates_path,
+                usage_summary_path=usage_summary_path,
+                live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+
+            self.assertEqual(result.supplemental_rows, 4)
+            self.assertEqual(result.supplemental_active_rows, 2)
+            self.assertEqual(result.supplemental_added_count, 1)
+            self.assertEqual(result.supplemental_updated_count, 1)
+            self.assertEqual(result.supplemental_inactive_count, 1)
+            self.assertEqual(result.supplemental_promoted_count, 1)
+            self.assertEqual([row["canonical_key"] for row in read_jsonl(unmatched_output_path)], ["팀", "새단어"])
+            supplemental_by_key = {row["canonical_key"]: row for row in read_jsonl(supplemental_lexicon_path)}
+            self.assertEqual(supplemental_by_key["팀"]["class_count"], 4)
+            self.assertEqual(supplemental_by_key["팀"]["class_printout_count"], 2)
+            self.assertEqual(supplemental_by_key["팀"]["quality_score"], 0.82)
+            self.assertEqual(supplemental_by_key["팀"]["variants"], ["팀", "팀은", "팀을"])
+            self.assertEqual(supplemental_by_key["팀"]["manual_note"], "keep")
+            self.assertEqual(supplemental_by_key["팀"]["curation_status"], "reviewed")
+            self.assertEqual(supplemental_by_key["팀"]["canonical_status"], "non_canonical_observed")
+            self.assertIs(supplemental_by_key["팀"]["active"], True)
+            self.assertEqual(supplemental_by_key["사라짐"]["class_count"], 0)
+            self.assertEqual(supplemental_by_key["사라짐"]["class_printout_count"], 0)
+            self.assertEqual(supplemental_by_key["사라짐"]["canonical_status"], "inactive_observed")
+            self.assertIs(supplemental_by_key["사라짐"]["active"], False)
+            self.assertEqual(supplemental_by_key["물"]["canonical_status"], "promoted_to_canonical")
+            self.assertIs(supplemental_by_key["물"]["active"], False)
+            self.assertEqual(supplemental_by_key["새단어"]["source_tier"], "supplemental_private")
+            self.assertIs(supplemental_by_key["새단어"]["active"], True)
 
     def test_update_live_lexicon_regeneration_is_idempotent_for_same_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
             live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -426,6 +634,12 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "document_count": 2,
                         "quality_score": 0.876,
                     },
+                    {
+                        "canonical_key": "새단어",
+                        "count": 3,
+                        "document_count": 1,
+                        "quality_score": 0.7,
+                    },
                 ],
             )
 
@@ -433,18 +647,22 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
                 unmatched_usage_output_path=unmatched_output_path,
             )
             first_live = live_lexicon_path.read_text(encoding="utf-8")
+            first_supplemental = supplemental_lexicon_path.read_text(encoding="utf-8")
             first_unmatched = unmatched_output_path.read_text(encoding="utf-8")
             update_live_lexicon(
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
                 unmatched_usage_output_path=unmatched_output_path,
             )
 
             self.assertEqual(live_lexicon_path.read_text(encoding="utf-8"), first_live)
+            self.assertEqual(supplemental_lexicon_path.read_text(encoding="utf-8"), first_supplemental)
             self.assertEqual(unmatched_output_path.read_text(encoding="utf-8"), first_unmatched)
 
 
@@ -494,6 +712,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(args.usage_candidates, DEFAULT_USAGE_CANDIDATES_PATH)
         self.assertIsNone(args.usage_summary)
         self.assertEqual(args.live_lexicon, DEFAULT_LIVE_LEXICON_PATH)
+        self.assertEqual(args.supplemental_lexicon, DEFAULT_SUPPLEMENTAL_LEXICON_PATH)
         self.assertEqual(args.unmatched_usage_output, DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH)
 
     def test_parser_has_live_lexicon_update_overrides(self) -> None:
@@ -508,6 +727,8 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
                 "custom/00.json",
                 "--live-lexicon",
                 "custom/live.jsonl",
+                "--supplemental-lexicon",
+                "custom/supplemental.jsonl",
             ]
         )
 
@@ -515,6 +736,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(args.usage_candidates, Path("custom/08.jsonl"))
         self.assertEqual(args.usage_summary, Path("custom/00.json"))
         self.assertEqual(args.live_lexicon, Path("custom/live.jsonl"))
+        self.assertEqual(args.supplemental_lexicon, Path("custom/supplemental.jsonl"))
 
     def test_main_with_usage_signal_build_skips_pipeline(self) -> None:
         stdout = io.StringIO()
@@ -594,13 +816,21 @@ class FakeLiveLexiconUpdateResult:
     usage_candidates_path = DEFAULT_USAGE_CANDIDATES_PATH
     usage_summary_path = DEFAULT_USAGE_CANDIDATES_PATH.parent / "00_summary.json"
     live_lexicon_path = DEFAULT_LIVE_LEXICON_PATH
+    supplemental_lexicon_path = DEFAULT_SUPPLEMENTAL_LEXICON_PATH
     unmatched_usage_output_path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH
+    canonical_source = "existing_live_lexicon"
     canonical_rows = 2
     live_lexicon_rows = 2
     usage_candidate_rows = 3
     total_class_printouts = 2
     matched_count = 1
     unmatched_count = 2
+    supplemental_rows = 2
+    supplemental_active_rows = 1
+    supplemental_added_count = 0
+    supplemental_updated_count = 1
+    supplemental_inactive_count = 1
+    supplemental_promoted_count = 0
 
 
 def write_docx(path: Path, text: str) -> None:

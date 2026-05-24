@@ -164,6 +164,8 @@ Update the live classroom vocabulary list:
 uv --no-cache run python -m wordbyword --update-live-lexicon
 ```
 
+This maintains the canonical live lexicon, the supplemental non-canonical live lexicon, and the unmatched usage audit file.
+
 ## Make An After-Class Report
 
 After a used handout has a managed archive filename, make one adult-facing report:

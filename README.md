@@ -258,7 +258,7 @@ Update the live grade lexicon:
 uv --no-cache run python -m wordbyword --update-live-lexicon
 ```
 
-`--build-usage-signals` writes `00` through `09` usage artifacts under `wbw-vocabulary-intelligence/usage-signal-build/`. `--update-live-lexicon` writes `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` and unmatched usage candidates.
+`--build-usage-signals` writes `00` through `09` usage artifacts under `wbw-vocabulary-intelligence/usage-signal-build/`. `--update-live-lexicon` maintains `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl`, `grade1-live-lexicon-supplemental.jsonl`, and the raw unmatched usage audit file.
 
 ## After-Class Reports
 
