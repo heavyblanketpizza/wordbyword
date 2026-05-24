@@ -9,13 +9,15 @@ from docx import Document
 from kiwipiepy import Kiwi
 
 from wordbyword.class_archive.archive import (
+    ClassSessionArchiveError,
     DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     DEFAULT_VOCABULARY_INTELLIGENCE_ROOT,
-    discover_archive_duplicates,
     format_archive_duplicate_message,
     is_managed_archive_name,
     natural_path_sort_key,
+    scan_archive_duplicates,
 )
+from wordbyword.dictionary_build.llm import SupportsCompletion
 from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
 from wordbyword.dictionary_build.models import PageText
 from wordbyword.dictionary_build.readers import normalize_text
@@ -49,6 +51,8 @@ def build_usage_signals(
     output_root: Path = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
     include_punctuation: bool = False,
     include_numbers: bool = False,
+    near_duplicate_client: SupportsCompletion | None = None,
+    near_duplicate_model: str | None = None,
     progress: ProgressCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
 ) -> UsageSignalBuildResult:
@@ -57,7 +61,15 @@ def build_usage_signals(
     if not archive_root.is_dir():
         raise UsageSignalBuildError(f"class-session archive path is not a folder: {archive_root}")
 
-    duplicates = discover_archive_duplicates(archive_root)
+    try:
+        duplicates = scan_archive_duplicates(
+            archive_root,
+            include_near_duplicates=True,
+            near_duplicate_client=near_duplicate_client,
+            near_duplicate_model=near_duplicate_model,
+        ).duplicate_groups
+    except ClassSessionArchiveError as error:
+        raise UsageSignalBuildError(str(error)) from error
     if duplicates:
         raise UsageSignalBuildError(format_archive_duplicate_message(archive_root, duplicates))
 

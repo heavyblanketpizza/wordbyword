@@ -252,6 +252,12 @@ If the archive contains duplicate class printouts, rename and usage-signal comma
 uv --no-cache run python -m wordbyword --resolve-archive-duplicates
 ```
 
+To also review conservative near-duplicate candidates with Ollama before quarantining, include the near-duplicate layer:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-archive-duplicates --include-near-duplicates --ollama-model gemma4:31b
+```
+
 For explicit non-interactive cleanup, apply the recommended quarantine plan:
 
 ```bash

@@ -31,6 +31,10 @@ from wordbyword.cli.terminal_ui import (
 
 
 class TerminalUiTest(unittest.TestCase):
+    def assert_no_old_terminal_ornaments(self, rendered: str) -> None:
+        for token in ("▟▙", "cassette", "RELIC", "relic", "░▒▓", "◉", "night-city", "NIGHT CITY"):
+            self.assertNotIn(token, rendered)
+
     def test_render_boot_screen_keeps_mode_without_old_profile_copy(self) -> None:
         rendered = render_boot_screen(
             input_dir=Path("build-dictionary/original"),
@@ -41,11 +45,13 @@ class TerminalUiTest(unittest.TestCase):
             width=80,
         )
 
-        self.assertIn("TOKYO NIGHT RELIC BOOT", rendered)
+        self.assertIn("WORD BY WORD // READY", rendered)
         self.assertIn("gemma4:31b", rendered)
-        self.assertIn("mode    :: ollama cleanup online // gemma4:31b", rendered)
+        self.assertIn("ollama cleanup online // gemma4:31b", rendered)
+        self.assertIn("scan -> extract -> analyze -> write -> complete", rendered)
         self.assertNotIn("profile ::", rendered)
         self.assertNotIn("style   ::", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_stage_update_plain_mode_is_scan_friendly(self) -> None:
         rendered = render_stage_update("analyze", "tokenizing 422 page/text unit(s)", color=False)
@@ -136,6 +142,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("rewritten/lesson/content.md", rendered)
         self.assertIn("lesson", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_printable_progress_plain_is_scan_friendly(self) -> None:
         progress = PrintableProgress(
@@ -196,6 +203,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("images 1", rendered)
         self.assertIn("font 13pt", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_after_class_report_progress_plain_is_scan_friendly(self) -> None:
         progress = AfterClassReportProgress(
@@ -258,6 +266,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("vocab 15", rendered)
         self.assertIn("written", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_usage_signal_summary_plain_is_scan_friendly(self) -> None:
         result = SimpleNamespace(
@@ -273,11 +282,12 @@ class TerminalUiTest(unittest.TestCase):
 
         rendered = render_usage_signal_summary(result, color=False, width=100)
 
-        self.assertIn("USAGE SIGNALS // CLASS ARCHIVE SCAN", rendered)
+        self.assertIn("USAGE SIGNALS // WRITTEN", rendered)
         self.assertIn("status     :: written", rendered)
         self.assertIn("documents  :: 3", rendered)
         self.assertIn("tokens     :: 7,809", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_live_lexicon_summary_plain_is_scan_friendly(self) -> None:
         result = SimpleNamespace(
@@ -302,13 +312,14 @@ class TerminalUiTest(unittest.TestCase):
 
         rendered = render_live_lexicon_summary(result, color=False, width=100)
 
-        self.assertIn("LIVE LEXICON // SIGNAL MAINTAINED", rendered)
+        self.assertIn("LIVE LEXICON // UPDATED", rendered)
         self.assertIn("source     :: existing live lexicon", rendered)
         self.assertIn("canonical  :: 2,160", rendered)
         self.assertIn("promoted   :: 1", rendered)
         self.assertIn("live files", rendered)
         self.assertNotIn("unmatched  .../10_unmatched_usage_candidates.jsonl", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_live_lexicon_summary_shortens_long_paths(self) -> None:
         result = SimpleNamespace(
@@ -358,7 +369,7 @@ class TerminalUiTest(unittest.TestCase):
         rendered = render_live_lexicon_summary(result, color=True, width=100)
 
         self.assertIn("\x1b[", rendered)
-        self.assertIn("LIVE LEXICON // SIGNAL MAINTAINED", rendered)
+        self.assertIn("LIVE LEXICON // UPDATED", rendered)
 
     def test_render_live_lexicon_progress_includes_phase_label(self) -> None:
         rendered = render_live_lexicon_progress(
@@ -392,15 +403,15 @@ class TerminalUiTest(unittest.TestCase):
             width=120,
         )
 
-        self.assertIn("RELIC LINK STABLE // OUTPUT STACK WRITTEN", rendered)
-        self.assertIn("wordbyword@night-city", rendered)
+        self.assertIn("PIPELINE // COMPLETE", rendered)
+        self.assertIn("wordbyword", rendered)
         self.assertIn("documents", rendered)
         self.assertIn("45,155", rendered)
         self.assertIn("-punctuation -numbers", rendered)
-        self.assertIn("NIGHT CITY SIGNAL", rendered)
         self.assertNotIn("operator", rendered)
         self.assertNotIn("profile", rendered)
         self.assertNotIn("palette", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_completion_screen_color_mode_includes_ansi(self) -> None:
         result = PipelineResult(
@@ -425,7 +436,7 @@ class TerminalUiTest(unittest.TestCase):
         )
 
         self.assertIn("\x1b[", rendered)
-        self.assertIn("RELIC LINK // ACTIVE", rendered)
+        self.assertIn("PIPELINE // COMPLETE", rendered)
         self.assertIn("gemma4:31b", rendered)
 
 
@@ -510,21 +521,23 @@ class TerminalUiTest(unittest.TestCase):
 
         rendered = render_dictionary_distribution(entries, color=False, width=100, bins=20, height=8)
 
-        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
+        self.assertIn("DISTRIBUTION // DICTIONARY", rendered)
         self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
         self.assertIn("-0.50", rendered)
         self.assertIn("0.50", rendered)
         self.assertIn("█", rendered)
-        self.assertIn("10 relics", rendered)
+        self.assertIn("10 entries", rendered)
         self.assertNotIn("\x1b[", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_dictionary_distribution_handles_empty_entries(self) -> None:
         rendered = render_dictionary_distribution([], color=False, width=80, bins=12, height=6)
 
-        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
-        self.assertIn("0 relics", rendered)
-        self.assertIn("no signal // empty cache", rendered)
+        self.assertIn("DISTRIBUTION // DICTIONARY", rendered)
+        self.assertIn("0 entries", rendered)
+        self.assertIn("no entries", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_dictionary_distribution_reads_legacy_v2_fields(self) -> None:
         entries = [
@@ -541,6 +554,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("-0.50", rendered)
         self.assertIn("0.50", rendered)
         self.assertIn("occurrence count distribution", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_dictionary_distribution_color_mode_emits_ansi(self) -> None:
         entries = [{"learning_signal_score": 0.0, "count": 10}]
@@ -548,7 +562,7 @@ class TerminalUiTest(unittest.TestCase):
         rendered = render_dictionary_distribution(entries, color=True, width=80, bins=12, height=6)
 
         self.assertIn("\x1b[", rendered)
-        self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
+        self.assertIn("DISTRIBUTION // DICTIONARY", rendered)
 
     def test_render_artifact_drop_for_dictionary_includes_distribution(self) -> None:
         entries = [
@@ -566,11 +580,13 @@ class TerminalUiTest(unittest.TestCase):
             width=100,
         )
 
-        self.assertIn("RELIC DROP // 11_cleaned_dictionary_candidates.jsonl", rendered)
-        self.assertIn("DICTIONARY RELIC // CACHE LOCKED", rendered)
-        self.assertIn("relics     :: 3 headwords", rendered)
+        self.assertIn("ARTIFACT // CLEANED DICTIONARY", rendered)
+        self.assertIn("file       :: 11_cleaned_dictionary_candidates.jsonl", rendered)
+        self.assertIn("entries    :: 3 headwords", rendered)
+        self.assertIn("status     :: written", rendered)
         self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_artifact_drop_for_raw_dictionary_candidates_includes_distribution(self) -> None:
         entries = [
@@ -588,10 +604,11 @@ class TerminalUiTest(unittest.TestCase):
             width=100,
         )
 
-        self.assertIn("RELIC DROP // 08_dictionary_candidates.jsonl", rendered)
-        self.assertIn("DICTIONARY RELIC // CANDIDATES LOCKED", rendered)
+        self.assertIn("ARTIFACT // DICTIONARY CANDIDATES", rendered)
+        self.assertIn("file       :: 08_dictionary_candidates.jsonl", rendered)
         self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_artifact_drop_for_final_dictionary_includes_distribution(self) -> None:
         entries = [
@@ -609,26 +626,30 @@ class TerminalUiTest(unittest.TestCase):
             width=100,
         )
 
-        self.assertIn("RELIC DROP // 15_final_dictionary.jsonl", rendered)
-        self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", rendered)
-        self.assertIn("relics     :: 3 headwords", rendered)
+        self.assertIn("ARTIFACT // FINAL DICTIONARY", rendered)
+        self.assertIn("file       :: 15_final_dictionary.jsonl", rendered)
+        self.assertIn("entries    :: 3 headwords", rendered)
         self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
     def test_render_artifact_drop_for_example_sentences_skips_distribution(self) -> None:
         rendered = render_artifact_drop(
             "09_example_sentences",
             file_label="09_example_sentences.csv",
-            summary=(("relics", "12 sentences"),),
+            summary=(("relics", "12 sentences"), ("status", "signal locked")),
             color=False,
             width=100,
         )
 
-        self.assertIn("RELIC DROP // 09_example_sentences.csv", rendered)
-        self.assertIn("EXAMPLE STREAM // SIGNAL FIXED", rendered)
-        self.assertIn("relics     :: 12 sentences", rendered)
+        self.assertIn("ARTIFACT // EXAMPLE SENTENCES", rendered)
+        self.assertIn("file       :: 09_example_sentences.csv", rendered)
+        self.assertIn("entries    :: 12 sentences", rendered)
+        self.assertIn("status     :: written", rendered)
+        self.assertNotIn("signal locked", rendered)
         self.assertNotIn("learning_signal_score distribution", rendered)
         self.assertNotIn("occurrence count distribution", rendered)
+        self.assert_no_old_terminal_ornaments(rendered)
 
 
 if __name__ == "__main__":

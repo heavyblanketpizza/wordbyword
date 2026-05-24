@@ -484,6 +484,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--include-near-duplicates",
+        action="store_true",
+        help=(
+            "With --resolve-archive-duplicates, also ask Ollama to review conservative near-duplicate "
+            "text candidates before recommending quarantines."
+        ),
+    )
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="With --resolve-archive-duplicates, apply the recommended quarantine plan without prompting.",
@@ -678,6 +686,11 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.exit(
             2,
             "wordbyword: error: --yes requires --resolve-archive-duplicates.\n",
+        )
+    if args.include_near_duplicates and args.resolve_archive_duplicates is None:
+        parser.exit(
+            2,
+            "wordbyword: error: --include-near-duplicates requires --resolve-archive-duplicates.\n",
         )
     if args.parse_source_materials is not None and args.source_id:
         parser.exit(

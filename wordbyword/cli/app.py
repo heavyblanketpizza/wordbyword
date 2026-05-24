@@ -59,6 +59,7 @@ from wordbyword.classroom_printout_studio.class_printing.printable import (
 from wordbyword.class_archive.archive import (
     ArchiveDuplicateResolutionResult,
     ClassSessionArchiveError,
+    apply_archive_duplicate_resolution_result,
     resolve_archive_duplicates,
     rename_class_session_archive,
 )
@@ -109,6 +110,32 @@ DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS = (".venv-paddleocr-vl", ".venv-paddleocr")
 # Compatibility surface for callers that patch/import wordbyword.cli.app.run_pipeline.
 # The CLI command dispatcher must not call this.
 run_pipeline = _run_pipeline_compat
+
+
+class LazyOllamaCompletionClient:
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str | None,
+        timeout_seconds: float,
+        max_output_tokens: int,
+    ) -> None:
+        self.model = model
+        self.base_url = base_url
+        self.timeout_seconds = timeout_seconds
+        self.max_output_tokens = max_output_tokens
+        self.client: SupportsCompletion | None = None
+
+    def complete(self, *args: object, **kwargs: object) -> object:
+        if self.client is None:
+            self.client = ollama_client(
+                model=self.model,
+                base_url=self.base_url,
+                timeout_seconds=self.timeout_seconds,
+                max_output_tokens=self.max_output_tokens,
+            )
+        return self.client.complete(*args, **kwargs)  # type: ignore[arg-type]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -232,6 +259,9 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
         return resolve_archive_duplicates_cli(
             archive_root=args.resolve_archive_duplicates,
             yes=args.yes,
+            include_near_duplicates=args.include_near_duplicates,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
         )
     if args.rename_class_session_archive is not None:
         return rename_class_session_archive_cli(
@@ -246,6 +276,8 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             output_root=args.usage_signal_output_root,
             include_punctuation=args.include_punctuation,
             include_numbers=args.include_numbers,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
         )
     if args.update_live_lexicon:
         return update_live_lexicon_cli(
@@ -1434,15 +1466,29 @@ def build_usage_signals_cli(
     output_root: Path,
     include_punctuation: bool,
     include_numbers: bool,
+    model: str,
+    base_url: str | None,
 ) -> int:
+    near_duplicate_client = LazyOllamaCompletionClient(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=300.0,
+        max_output_tokens=1024,
+    )
     try:
-        result = build_usage_signals(
-            archive_root=archive_root,
-            output_root=output_root,
-            include_punctuation=include_punctuation,
-            include_numbers=include_numbers,
-            progress=emit_usage_signal_progress,
-        )
+        try:
+            result = build_usage_signals(
+                archive_root=archive_root,
+                output_root=output_root,
+                include_punctuation=include_punctuation,
+                include_numbers=include_numbers,
+                near_duplicate_client=near_duplicate_client,
+                near_duplicate_model=model,
+                progress=emit_usage_signal_progress,
+            )
+        finally:
+            if near_duplicate_client.client is not None:
+                warn_if_model_unload_fails(near_duplicate_client.client)
     except UsageSignalBuildError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -1532,9 +1578,30 @@ def resolve_archive_duplicates_cli(
     *,
     archive_root: Path,
     yes: bool,
+    include_near_duplicates: bool,
+    model: str,
+    base_url: str | None,
 ) -> int:
+    near_duplicate_client: LazyOllamaCompletionClient | None = None
+    if include_near_duplicates:
+        near_duplicate_client = LazyOllamaCompletionClient(
+            model=model,
+            base_url=base_url,
+            timeout_seconds=300.0,
+            max_output_tokens=1024,
+        )
     try:
-        preview = resolve_archive_duplicates(archive_root, apply=False)
+        try:
+            preview = resolve_archive_duplicates(
+                archive_root,
+                apply=False,
+                include_near_duplicates=include_near_duplicates,
+                near_duplicate_client=near_duplicate_client,
+                near_duplicate_model=model if include_near_duplicates else None,
+            )
+        finally:
+            if near_duplicate_client is not None and near_duplicate_client.client is not None:
+                warn_if_model_unload_fails(near_duplicate_client.client)
     except ClassSessionArchiveError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -1544,6 +1611,7 @@ def resolve_archive_duplicates_cli(
             "no duplicate class-session archive files found\n"
             f"  archive_root: {preview.archive_root}\n"
         )
+        write_archive_near_duplicate_review_summary(preview)
         sys.stdout.flush()
         return 0
 
@@ -1561,7 +1629,7 @@ def resolve_archive_duplicates_cli(
             return 1
 
     try:
-        result = resolve_archive_duplicates(archive_root, apply=True)
+        result = apply_archive_duplicate_resolution_result(preview)
     except ClassSessionArchiveError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
@@ -1596,7 +1664,21 @@ def write_archive_duplicate_resolution_summary(
         ):
             action = "quarantined" if applied else "quarantine"
             sys.stdout.write(f"    {action}: {source.name} -> {destination.name}\n")
+    write_archive_near_duplicate_review_summary(result)
     sys.stdout.flush()
+
+
+def write_archive_near_duplicate_review_summary(result: ArchiveDuplicateResolutionResult) -> None:
+    if not result.near_duplicate_reviews:
+        return
+    sys.stdout.write(f"  near_duplicate_reviews: {len(result.near_duplicate_reviews)}\n")
+    for index, review in enumerate(result.near_duplicate_reviews, start=1):
+        action = "actionable" if review.actionable else "reported"
+        filenames = ", ".join(path.name for path in review.candidate.paths)
+        sys.stdout.write(
+            f"    review {index}: {action} {review.verdict} "
+            f"confidence:{review.confidence:.3f} files:{filenames}\n"
+        )
 
 
 def rename_class_session_archive_cli(

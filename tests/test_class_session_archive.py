@@ -24,6 +24,7 @@ from wordbyword.class_archive.archive import (
     archive_filename,
     build_archived_material,
     discover_archive_duplicates,
+    discover_archive_near_duplicate_candidates,
     discover_archive_materials,
     discover_archive_material_paths,
     normalize_grade_level,
@@ -244,6 +245,79 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
             self.assertIn(pdf.name, message)
             self.assertEqual(len(client.calls), 0)
 
+    def test_refuses_model_confirmed_near_duplicate_before_rename_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, near_duplicate_text("Students circle the classroom sentence."))
+            write_docx(second, near_duplicate_text("Students circle the classroom sentences."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    first.name,
+                    second.name,
+                    verdict="same_material",
+                    confidence=0.91,
+                    qualities={first.name: 0.82, second.name: 0.61},
+                ),
+            )
+
+            with self.assertRaises(ClassSessionArchiveError) as context:
+                rename_class_session_archive(
+                    archive,
+                    client=client,
+                    model="fake-ollama",
+                    apply=True,
+                )
+
+            message = str(context.exception)
+            self.assertIn("near_text_model_review", message)
+            self.assertIn("--include-near-duplicates", message)
+            self.assertIn(first.name, message)
+            self.assertIn(second.name, message)
+            self.assertEqual(client.near_duplicate_calls, 1)
+            self.assertEqual(client.rename_calls, 0)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).exists())
+
+    def test_uncertain_model_review_does_not_block_archive_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, near_duplicate_text("Students answer with a short Korean phrase."))
+            write_docx(second, near_duplicate_text("Students answer with a full Korean sentence."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    first.name,
+                    second.name,
+                    verdict="uncertain",
+                    confidence=0.63,
+                    qualities={first.name: 0.73, second.name: 0.77},
+                ),
+                rename_response={
+                    "grade_level": "grade1",
+                    "topic_slug": "reading",
+                    "short_title_slug": "practice",
+                    "korean_title": "읽기 자료",
+                    "confidence": 0.75,
+                },
+            )
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertEqual(result.planned_count, 2)
+            self.assertEqual(client.near_duplicate_calls, 1)
+            self.assertEqual(client.rename_calls, 2)
+
     def test_same_suffix_different_content_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             archive = Path(workspace) / "class-session-archive"
@@ -362,6 +436,44 @@ class ClassSessionArchiveHelpersTest(unittest.TestCase):
 
             self.assertTrue(re.search(r"_grade1-physics\.docx$", name))
 
+    def test_near_duplicate_candidate_generation_finds_same_format_resaved_text(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "lesson-a.docx"
+            second = archive / "lesson-b.docx"
+            write_docx(first, near_duplicate_text("Students underline the apple sentence."))
+            write_docx(second, near_duplicate_text("Students underline the apple sentences."))
+
+            candidates = discover_archive_near_duplicate_candidates(archive)
+
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual({path.name for path in candidates[0].paths}, {first.name, second.name})
+            self.assertGreaterEqual(candidates[0].dice_similarity, 0.88)
+
+    def test_near_duplicate_candidate_generation_finds_cross_format_small_text_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            docx = archive / "lesson.docx"
+            pdf = archive / "lesson.pdf"
+            write_docx(docx, near_duplicate_text("Students answer the final question in Korean."))
+            write_pdf(pdf, near_duplicate_text("Students answer the final question in English."))
+
+            candidates = discover_archive_near_duplicate_candidates(archive)
+
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual({path.name for path in candidates[0].paths}, {docx.name, pdf.name})
+
+    def test_near_duplicate_candidate_generation_ignores_low_similarity_text(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "reading.docx", near_duplicate_text("Students read about apples and classrooms."))
+            write_docx(archive / "science.docx", different_long_text())
+
+            self.assertEqual(discover_archive_near_duplicate_candidates(archive), ())
+
 
 class ClassUsageSignalBuildTest(unittest.TestCase):
     def test_usage_signal_build_reads_only_named_docx_and_pdf(self) -> None:
@@ -464,6 +576,41 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
             self.assertIn(docx.name, message)
             self.assertIn(pdf.name, message)
             self.assertFalse(output.exists())
+
+    def test_usage_signal_build_refuses_model_confirmed_near_duplicate_before_writing_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            output = root / "usage-signal-build"
+            archive.mkdir()
+            first = archive / "2026-05-10_grade1-reading-apples.docx"
+            second = archive / "2026-05-11_grade1-reading-apples-review.docx"
+            write_docx(first, near_duplicate_text("Students circle the apple word."))
+            write_docx(second, near_duplicate_text("Students circle the apple words."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    first.name,
+                    second.name,
+                    verdict="same_material",
+                    confidence=0.9,
+                    qualities={first.name: 0.82, second.name: 0.7},
+                )
+            )
+
+            with self.assertRaises(UsageSignalBuildError) as context:
+                build_usage_signals(
+                    archive_root=archive,
+                    output_root=output,
+                    near_duplicate_client=client,
+                    near_duplicate_model="fake-ollama",
+                )
+
+            message = str(context.exception)
+            self.assertIn("near_text_model_review", message)
+            self.assertIn(first.name, message)
+            self.assertIn(second.name, message)
+            self.assertFalse(output.exists())
+            self.assertEqual(client.near_duplicate_calls, 1)
 
 
 class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
@@ -613,6 +760,313 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
             self.assertTrue((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).is_dir())
             self.assertNotIn("Apply this duplicate quarantine plan?", stdout.getvalue())
             self.assertEqual(stderr.getvalue(), "")
+
+    def test_near_duplicate_prompt_yes_quarantines_lower_quality_file_and_writes_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            kept = archive / "2026-05-10_grade1-reading-apples.docx"
+            duplicate = archive / "copy of apples.docx"
+            write_docx(kept, near_duplicate_text("Students answer the classroom question."))
+            write_docx(duplicate, near_duplicate_text("Students answer the classroom questions."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    kept.name,
+                    duplicate.name,
+                    verdict="same_material",
+                    confidence=0.92,
+                    qualities={kept.name: 0.93, duplicate.name: 0.72},
+                )
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", InteractiveInput("y\n")),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--include-near-duplicates"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(kept.exists())
+            self.assertFalse(duplicate.exists())
+            manifest = json.loads((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME / "manifest.json").read_text(encoding="utf-8"))
+            reason = manifest["resolutions"][0]["reasons"][0]
+            self.assertEqual(reason["reason"], "near_text_model_review")
+            self.assertEqual(reason["metadata"]["verdict"], "same_material")
+            self.assertEqual(manifest["resolutions"][0]["kept"]["name"], kept.name)
+            self.assertEqual(manifest["resolutions"][0]["quarantined"][0]["name"], duplicate.name)
+            self.assertIn("near_duplicate_reviews: 1", stdout.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_near_duplicate_resolution_quality_wins_before_docx_format(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            docx = archive / "material.docx"
+            pdf = archive / "material.pdf"
+            write_docx(docx, near_duplicate_text("Students write one short answer."))
+            write_pdf(pdf, near_duplicate_text("Students write one complete answer."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    docx.name,
+                    pdf.name,
+                    verdict="same_material",
+                    confidence=0.93,
+                    qualities={docx.name: 0.70, pdf.name: 0.92},
+                )
+            )
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=False,
+                include_near_duplicates=True,
+                near_duplicate_client=client,
+                near_duplicate_model="fake-ollama",
+            )
+
+            self.assertEqual(result.resolutions[0].keep_path.name, pdf.name)
+            self.assertEqual(result.resolutions[0].quarantine_paths[0].name, docx.name)
+
+    def test_near_duplicate_resolution_uses_docx_tiebreak_inside_quality_deadband(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            pdf = archive / "material.pdf"
+            docx = archive / "material.docx"
+            write_pdf(pdf, near_duplicate_text("Students read the sentence aloud."))
+            write_docx(docx, near_duplicate_text("Students read the sentences aloud."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    docx.name,
+                    pdf.name,
+                    verdict="same_material",
+                    confidence=0.93,
+                    qualities={docx.name: 0.88, pdf.name: 0.91},
+                )
+            )
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=False,
+                include_near_duplicates=True,
+                near_duplicate_client=client,
+                near_duplicate_model="fake-ollama",
+            )
+
+            self.assertEqual(result.resolutions[0].keep_path.name, docx.name)
+
+    def test_near_duplicate_resolution_uses_managed_tiebreak_inside_quality_deadband(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            unmanaged = archive / "material.docx"
+            managed = archive / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(unmanaged, near_duplicate_text("Students mark the new word."))
+            write_docx(managed, near_duplicate_text("Students mark the new words."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    unmanaged.name,
+                    managed.name,
+                    verdict="same_material",
+                    confidence=0.93,
+                    qualities={unmanaged.name: 0.91, managed.name: 0.88},
+                )
+            )
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=False,
+                include_near_duplicates=True,
+                near_duplicate_client=client,
+                near_duplicate_model="fake-ollama",
+            )
+
+            self.assertEqual(result.resolutions[0].keep_path.name, managed.name)
+
+    def test_near_duplicate_resolution_uses_oldest_tiebreak_inside_quality_deadband(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            older = archive / "a-material.docx"
+            newer = archive / "b-material.docx"
+            write_docx(older, near_duplicate_text("Students copy the sentence."))
+            write_docx(newer, near_duplicate_text("Students copy the sentences."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    older.name,
+                    newer.name,
+                    verdict="same_material",
+                    confidence=0.93,
+                    qualities={older.name: 0.88, newer.name: 0.89},
+                )
+            )
+            first_seen = {
+                older.name: datetime(2026, 5, 1, tzinfo=timezone.utc),
+                newer.name: datetime(2026, 5, 2, tzinfo=timezone.utc),
+            }
+
+            with patch("wordbyword.class_archive.archive.file_first_seen_timestamp", side_effect=lambda path: first_seen[path.name]):
+                result = resolve_archive_duplicates(
+                    archive,
+                    apply=False,
+                    include_near_duplicates=True,
+                    near_duplicate_client=client,
+                    near_duplicate_model="fake-ollama",
+                )
+
+            self.assertEqual(result.resolutions[0].keep_path.name, older.name)
+
+    def test_near_duplicate_related_review_is_reported_without_quarantine(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, near_duplicate_text("Students complete page one."))
+            write_docx(second, near_duplicate_text("Students complete page two."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    first.name,
+                    second.name,
+                    verdict="related_but_distinct",
+                    confidence=0.87,
+                    qualities={first.name: 0.80, second.name: 0.82},
+                )
+            )
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=True,
+                include_near_duplicates=True,
+                near_duplicate_client=client,
+                near_duplicate_model="fake-ollama",
+            )
+
+            self.assertEqual(result.duplicate_group_count, 0)
+            self.assertEqual(len(result.near_duplicate_reviews), 1)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).exists())
+
+    def test_near_duplicate_yes_applies_without_prompting(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            kept = archive / "material.docx"
+            duplicate = archive / "material copy.docx"
+            write_docx(kept, near_duplicate_text("Students finish the reading task."))
+            write_docx(duplicate, near_duplicate_text("Students finish the reading tasks."))
+            client = RoutingArchiveClient(
+                near_duplicate_response=near_duplicate_response(
+                    kept.name,
+                    duplicate.name,
+                    verdict="same_material",
+                    confidence=0.91,
+                    qualities={kept.name: 0.91, duplicate.name: 0.74},
+                )
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", io.StringIO("")),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--include-near-duplicates", "--yes"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(kept.exists())
+            self.assertFalse(duplicate.exists())
+            self.assertNotIn("Apply this duplicate quarantine plan?", stdout.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_near_duplicate_candidate_cap_fails_before_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, near_duplicate_text("Students trace the word."))
+            write_docx(second, near_duplicate_text("Students trace the words."))
+            client = RoutingArchiveClient()
+
+            with (
+                patch("wordbyword.class_archive.archive.MAX_ARCHIVE_NEAR_DUPLICATE_CANDIDATES", 0),
+                self.assertRaises(ClassSessionArchiveError) as context,
+            ):
+                resolve_archive_duplicates(
+                    archive,
+                    apply=False,
+                    include_near_duplicates=True,
+                    near_duplicate_client=client,
+                    near_duplicate_model="fake-ollama",
+                )
+
+            self.assertIn("Too many suspected near-duplicate", str(context.exception))
+            self.assertEqual(client.near_duplicate_calls, 0)
+
+    def test_invalid_near_duplicate_model_response_fails_without_moving_files(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, near_duplicate_text("Students review the sentence card."))
+            write_docx(second, near_duplicate_text("Students review the sentence cards."))
+
+            with self.assertRaises(ClassSessionArchiveError):
+                resolve_archive_duplicates(
+                    archive,
+                    apply=True,
+                    include_near_duplicates=True,
+                    near_duplicate_client=InvalidJsonArchiveClient(),
+                    near_duplicate_model="fake-ollama",
+                )
+
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).exists())
+
+    def test_quarantine_rolls_back_already_moved_files_when_later_move_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            kept = archive / "a-material.docx"
+            first_duplicate = archive / "b-material.docx"
+            second_duplicate = archive / "c-material.docx"
+            write_docx(kept, "중복된 수업 자료입니다.")
+            shutil.copyfile(kept, first_duplicate)
+            shutil.copyfile(kept, second_duplicate)
+            original_rename = Path.rename
+
+            def flaky_rename(source: Path, target: Path) -> None:
+                source_is_archive_file = DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME not in source.parts
+                if source.name == second_duplicate.name and source_is_archive_file:
+                    raise OSError("simulated move failure")
+                original_rename(source, target)
+
+            with (
+                patch("pathlib.Path.rename", new=flaky_rename),
+                self.assertRaises(ClassSessionArchiveError) as context,
+            ):
+                resolve_archive_duplicates(
+                    archive,
+                    apply=True,
+                    clock=fixed_archive_clock,
+                )
+
+            self.assertIn("Failed to resolve", str(context.exception))
+            self.assertTrue(kept.exists())
+            self.assertTrue(first_duplicate.exists())
+            self.assertTrue(second_duplicate.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME / "manifest.json").exists())
 
 
 class LiveLexiconUpdateTest(unittest.TestCase):
@@ -1057,6 +1511,13 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         )
         self.assertEqual(args.resolve_archive_duplicates, DEFAULT_CLASS_SESSION_ARCHIVE_ROOT)
         self.assertFalse(args.yes)
+        self.assertFalse(args.include_near_duplicates)
+
+    def test_parser_has_near_duplicate_resolver_flag(self) -> None:
+        args = build_parser().parse_args(["--resolve-archive-duplicates", "--include-near-duplicates"])
+
+        self.assertEqual(args.resolve_archive_duplicates, DEFAULT_CLASS_SESSION_ARCHIVE_ROOT)
+        self.assertTrue(args.include_near_duplicates)
 
     def test_yes_requires_archive_duplicate_resolver(self) -> None:
         stderr = io.StringIO()
@@ -1069,6 +1530,18 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
 
         self.assertEqual(context.exception.code, 2)
         self.assertIn("--yes requires --resolve-archive-duplicates", stderr.getvalue())
+
+    def test_include_near_duplicates_requires_archive_duplicate_resolver(self) -> None:
+        stderr = io.StringIO()
+
+        with (
+            patch("sys.stderr", stderr),
+            self.assertRaises(SystemExit) as context,
+        ):
+            main(["--build-usage-signals", "--include-near-duplicates"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("--include-near-duplicates requires --resolve-archive-duplicates", stderr.getvalue())
 
     def test_main_with_archive_rename_skips_pipeline(self) -> None:
         stdout = io.StringIO()
@@ -1217,6 +1690,63 @@ class RecordingArchiveClient:
         )
 
 
+class RoutingArchiveClient:
+    def __init__(
+        self,
+        near_duplicate_response: dict[str, object] | None = None,
+        rename_response: dict[str, object] | None = None,
+    ) -> None:
+        self.near_duplicate_response = near_duplicate_response or {}
+        self.rename_response = rename_response or {
+            "grade_level": "grade1",
+            "topic_slug": "reading",
+            "short_title_slug": "practice",
+            "korean_title": "읽기 자료",
+            "confidence": 0.75,
+        }
+        self.calls: list[tuple[tuple[ChatMessage, ...], dict[str, object]]] = []
+        self.near_duplicate_calls = 0
+        self.rename_calls = 0
+
+    def complete(
+        self,
+        messages: tuple[ChatMessage, ...] | list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        self.calls.append((tuple(messages), {"temperature": temperature, "json_mode": json_mode}))
+        system_prompt = messages[0].content
+        if "suspected duplicate" in system_prompt:
+            self.near_duplicate_calls += 1
+            response = self.near_duplicate_response
+        else:
+            self.rename_calls += 1
+            response = self.rename_response
+        return CompletionResult(
+            provider="ollama",
+            model="fake-ollama",
+            content=json.dumps(response, ensure_ascii=False),
+        )
+
+
+class InvalidJsonArchiveClient:
+    def complete(
+        self,
+        messages: tuple[ChatMessage, ...] | list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_output_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> CompletionResult:
+        return CompletionResult(
+            provider="ollama",
+            model="fake-ollama",
+            content="not json",
+        )
+
+
 class FakeRenameResult:
     archive_root = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
     ledger_path = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT / DEFAULT_ARCHIVE_LEDGER_FILENAME
@@ -1275,6 +1805,48 @@ def duplicate_text() -> str:
         "Students read the same simple passage, notice key vocabulary, and answer gentle questions. "
         "The content is intentionally long enough for duplicate text fingerprinting. "
     ) * 3
+
+
+def near_duplicate_text(variant_sentence: str) -> str:
+    return (
+        "This class handout asks grade one students to read a short classroom story about apples, "
+        "notice repeated Korean vocabulary, circle the target words, answer two gentle comprehension "
+        "questions, and talk with a partner about how the sentence changes. "
+    ) * 3 + variant_sentence
+
+
+def different_long_text() -> str:
+    return (
+        "This science worksheet explains shadows, sunlight, transparent objects, opaque objects, "
+        "and how students can test a prediction with a flashlight during a classroom experiment. "
+    ) * 5
+
+
+def near_duplicate_response(
+    first_name: str,
+    second_name: str,
+    *,
+    verdict: str,
+    confidence: float,
+    qualities: dict[str, float],
+) -> dict[str, object]:
+    return {
+        "verdict": verdict,
+        "confidence": confidence,
+        "reason": "Model-reviewed duplicate relationship for test coverage.",
+        "files": [
+            {
+                "filename": first_name,
+                "content_quality": qualities[first_name],
+                "reason": f"quality score for {first_name}",
+            },
+            {
+                "filename": second_name,
+                "content_quality": qualities[second_name],
+                "reason": f"quality score for {second_name}",
+            },
+        ],
+    }
 
 
 def write_docx(path: Path, text: str) -> None:

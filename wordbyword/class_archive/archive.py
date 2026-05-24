@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import fitz
 from docx import Document
@@ -19,6 +19,8 @@ from wordbyword._json_io import read_json_object, write_json_atomic
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     CompletionResult,
+    LLMConfigurationError,
+    LLMRequestError,
     LLMResponseError,
     SupportsCompletion,
     parse_json_object,
@@ -32,10 +34,20 @@ SUPPORTED_ARCHIVE_EXTENSIONS = {".docx", ".pdf"}
 MAX_ARCHIVE_PROMPT_TEXT_CHARS = 12000
 MAX_FILENAME_SLUG_CHARS = 48
 MIN_ARCHIVE_DUPLICATE_TEXT_CHARS = 200
+MIN_ARCHIVE_NEAR_DUPLICATE_TEXT_CHARS = 600
+ARCHIVE_NEAR_DUPLICATE_SHINGLE_CHARS = 5
+ARCHIVE_NEAR_DUPLICATE_DICE_THRESHOLD = 0.88
+ARCHIVE_NEAR_DUPLICATE_CONTAINMENT_THRESHOLD = 0.94
+ARCHIVE_NEAR_DUPLICATE_MIN_LENGTH_RATIO = 0.60
+ARCHIVE_NEAR_DUPLICATE_ACTION_CONFIDENCE = 0.86
+ARCHIVE_NEAR_DUPLICATE_QUALITY_DEADBAND = 0.05
+MAX_ARCHIVE_NEAR_DUPLICATE_CANDIDATES = 24
+MAX_ARCHIVE_NEAR_DUPLICATE_REVIEW_TEXT_CHARS = 8000
 DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME = ".wordbyword-duplicates"
 ARCHIVE_DUPLICATE_MANIFEST_SCHEMA_VERSION = "wordbyword.class_session_archive_duplicates.v1"
 DUPLICATE_REASON_SAME_FORMAT_SHA256 = "same_format_sha256"
 DUPLICATE_REASON_CROSS_FORMAT_TEXT = "cross_format_text_fingerprint"
+DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW = "near_text_model_review"
 ARCHIVE_NAME_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}_grade(?:[1-6]|-unknown)-[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
@@ -50,6 +62,18 @@ Return exactly one JSON object with these keys:
 - short_title_slug: lowercase ASCII hyphen slug, specific material title, 2 to 8 words
 - korean_title: compact Korean title for audit only
 - confidence: number from 0.0 to 1.0
+Do not include markdown fences or commentary."""
+
+ARCHIVE_NEAR_DUPLICATE_REVIEW_SYSTEM_PROMPT = """You review suspected duplicate Korean class-session archive files.
+Use only the supplied extracted text and metadata.
+Decide whether the files are the same class material, related but distinct materials, or uncertain.
+Do not prefer a file because of filename, format, age, or whether it is already managed.
+Score content_quality from 0.0 to 1.0 for each file based on useful learner-visible content, completeness, clarity, and extraction quality.
+Return exactly one JSON object with these keys:
+- verdict: one of same_material, related_but_distinct, uncertain
+- confidence: number from 0.0 to 1.0
+- reason: concise explanation
+- files: array with exactly one object per supplied file; each object has filename, content_quality, reason
 Do not include markdown fences or commentary."""
 
 
@@ -87,6 +111,38 @@ class ArchiveRenameMetadata(BaseModel):
         return str(value or "").strip()[:120]
 
 
+class ArchiveNearDuplicateFileReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filename: str
+    content_quality: float = Field(ge=0.0, le=1.0)
+    reason: str = ""
+
+    @field_validator("filename", mode="before")
+    @classmethod
+    def normalize_filename(cls, value: object) -> str:
+        return str(value or "").strip()
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> str:
+        return str(value or "").strip()[:300]
+
+
+class ArchiveNearDuplicateReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    verdict: Literal["same_material", "related_but_distinct", "uncertain"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str = ""
+    files: list[ArchiveNearDuplicateFileReviewPayload]
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: object) -> str:
+        return str(value or "").strip()[:500]
+
+
 @dataclass(frozen=True)
 class ArchivedMaterial:
     path: Path
@@ -118,6 +174,8 @@ class ArchiveDuplicateFile:
     first_seen_at: str
     text_fingerprint: str
     text_fingerprint_length: int
+    normalized_text: str
+    review_text: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +183,36 @@ class ArchiveDuplicateEvidence:
     reason: str
     detail: str
     paths: tuple[Path, ...]
+    metadata: Mapping[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class ArchiveNearDuplicateCandidate:
+    paths: tuple[Path, Path]
+    dice_similarity: float
+    containment_similarity: float
+    length_ratio: float
+
+
+@dataclass(frozen=True)
+class ArchiveNearDuplicateFileScore:
+    path: Path
+    content_quality: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class ArchiveNearDuplicateReview:
+    candidate: ArchiveNearDuplicateCandidate
+    verdict: str
+    confidence: float
+    reason: str
+    model: str
+    file_scores: tuple[ArchiveNearDuplicateFileScore, ...]
+
+    @property
+    def actionable(self) -> bool:
+        return self.verdict == "same_material" and self.confidence >= ARCHIVE_NEAR_DUPLICATE_ACTION_CONFIDENCE
 
 
 @dataclass(frozen=True)
@@ -132,6 +220,12 @@ class ArchiveDuplicateGroup:
     paths: tuple[Path, ...]
     files: tuple[ArchiveDuplicateFile, ...]
     evidences: tuple[ArchiveDuplicateEvidence, ...]
+
+
+@dataclass(frozen=True)
+class ArchiveDuplicateScanResult:
+    duplicate_groups: tuple[ArchiveDuplicateGroup, ...]
+    near_duplicate_reviews: tuple[ArchiveNearDuplicateReview, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,9 +242,11 @@ class ArchiveDuplicateResolutionResult:
     quarantine_root: Path
     manifest_path: Path
     batch_root: Path | None
+    resolved_at: str
     duplicate_groups: tuple[ArchiveDuplicateGroup, ...]
     resolutions: tuple[ArchiveDuplicateResolution, ...]
     applied: bool
+    near_duplicate_reviews: tuple[ArchiveNearDuplicateReview, ...] = ()
 
     @property
     def duplicate_group_count(self) -> int:
@@ -223,7 +319,12 @@ def rename_class_session_archive(
 
     resolved_ledger_path = (ledger_path or root / DEFAULT_ARCHIVE_LEDGER_FILENAME).resolve()
     ensure_inside_archive(root, resolved_ledger_path, allow_equal=False)
-    duplicates = discover_archive_duplicates(root)
+    duplicates = scan_archive_duplicates(
+        root,
+        include_near_duplicates=True,
+        near_duplicate_client=client,
+        near_duplicate_model=model,
+    ).duplicate_groups
     if duplicates:
         raise ClassSessionArchiveError(format_archive_duplicate_message(root, duplicates))
     now = clock or (lambda: datetime.now().astimezone())
@@ -329,15 +430,73 @@ def is_supported_archive_material_path(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_ARCHIVE_EXTENSIONS
 
 
-def discover_archive_duplicates(archive_root: Path) -> tuple[ArchiveDuplicateGroup, ...]:
+def discover_archive_duplicates(
+    archive_root: Path,
+    *,
+    include_near_duplicates: bool = False,
+    near_duplicate_client: SupportsCompletion | None = None,
+    near_duplicate_model: str | None = None,
+) -> tuple[ArchiveDuplicateGroup, ...]:
+    return scan_archive_duplicates(
+        archive_root,
+        include_near_duplicates=include_near_duplicates,
+        near_duplicate_client=near_duplicate_client,
+        near_duplicate_model=near_duplicate_model,
+    ).duplicate_groups
+
+
+def scan_archive_duplicates(
+    archive_root: Path,
+    *,
+    include_near_duplicates: bool = False,
+    near_duplicate_client: SupportsCompletion | None = None,
+    near_duplicate_model: str | None = None,
+) -> ArchiveDuplicateScanResult:
     files = tuple(build_archive_duplicate_file(path) for path in discover_archive_duplicate_scan_paths(archive_root))
-    file_by_path = {file.path: file for file in files}
     evidences = [
         *same_format_duplicate_evidences(files),
         *cross_format_text_duplicate_evidences(files),
     ]
+    if evidences:
+        return ArchiveDuplicateScanResult(archive_duplicate_groups_from_evidences(files, tuple(evidences)))
+
+    near_duplicate_reviews: tuple[ArchiveNearDuplicateReview, ...] = ()
+    if include_near_duplicates:
+        candidates = discover_archive_near_duplicate_candidates_from_files(files)
+        if len(candidates) > MAX_ARCHIVE_NEAR_DUPLICATE_CANDIDATES:
+            raise ClassSessionArchiveError(
+                "Too many suspected near-duplicate class-session archive pairs to review "
+                f"({len(candidates)} candidates; limit is {MAX_ARCHIVE_NEAR_DUPLICATE_CANDIDATES}). "
+                "Resolve obvious duplicates or split the archive, then rerun."
+            )
+        if candidates:
+            if near_duplicate_client is None:
+                raise ClassSessionArchiveError(
+                    "Near-duplicate class-session archive candidates require Ollama review; "
+                    "rerun through the CLI or provide a near-duplicate review client."
+                )
+            near_duplicate_reviews = review_archive_near_duplicate_candidates(
+                candidates,
+                files=files,
+                client=near_duplicate_client,
+                model=near_duplicate_model or "",
+            )
+            evidences.extend(near_duplicate_duplicate_evidences(near_duplicate_reviews))
+
+    return ArchiveDuplicateScanResult(
+        duplicate_groups=archive_duplicate_groups_from_evidences(files, tuple(evidences)),
+        near_duplicate_reviews=near_duplicate_reviews,
+    )
+
+
+def archive_duplicate_groups_from_evidences(
+    files: tuple[ArchiveDuplicateFile, ...],
+    evidences: tuple[ArchiveDuplicateEvidence, ...],
+) -> tuple[ArchiveDuplicateGroup, ...]:
     if not evidences:
         return ()
+
+    file_by_path = {file.path: file for file in files}
 
     parent = {file.path: file.path for file in files}
 
@@ -402,7 +561,8 @@ def discover_archive_duplicate_scan_paths(archive_root: Path) -> tuple[Path, ...
 
 
 def build_archive_duplicate_file(path: Path) -> ArchiveDuplicateFile:
-    compact_text = normalize_archive_duplicate_text(extract_archive_full_text(path))
+    full_text = extract_archive_full_text(path)
+    compact_text = normalize_archive_duplicate_text(full_text)
     text_fingerprint = ""
     if len(compact_text) >= MIN_ARCHIVE_DUPLICATE_TEXT_CHARS:
         text_fingerprint = hashlib.sha256(compact_text.encode("utf-8")).hexdigest()
@@ -413,6 +573,8 @@ def build_archive_duplicate_file(path: Path) -> ArchiveDuplicateFile:
         first_seen_at=file_first_seen_timestamp(path).isoformat(timespec="seconds"),
         text_fingerprint=text_fingerprint,
         text_fingerprint_length=len(compact_text),
+        normalized_text=compact_text,
+        review_text=full_text[:MAX_ARCHIVE_NEAR_DUPLICATE_REVIEW_TEXT_CHARS],
     )
 
 
@@ -459,6 +621,239 @@ def cross_format_text_duplicate_evidences(files: tuple[ArchiveDuplicateFile, ...
     return tuple(sorted(evidences, key=lambda evidence: (evidence.detail, tuple(natural_path_sort_key(path) for path in evidence.paths))))
 
 
+def discover_archive_near_duplicate_candidates(archive_root: Path) -> tuple[ArchiveNearDuplicateCandidate, ...]:
+    files = tuple(build_archive_duplicate_file(path) for path in discover_archive_duplicate_scan_paths(archive_root))
+    return discover_archive_near_duplicate_candidates_from_files(files)
+
+
+def discover_archive_near_duplicate_candidates_from_files(
+    files: tuple[ArchiveDuplicateFile, ...],
+) -> tuple[ArchiveNearDuplicateCandidate, ...]:
+    candidate_files = tuple(
+        file
+        for file in files
+        if len(file.normalized_text) >= MIN_ARCHIVE_NEAR_DUPLICATE_TEXT_CHARS
+    )
+    shingles_by_path = {
+        file.path: archive_text_shingles(file.normalized_text)
+        for file in candidate_files
+    }
+    candidates: list[ArchiveNearDuplicateCandidate] = []
+    for left_index, left in enumerate(candidate_files):
+        left_shingles = shingles_by_path[left.path]
+        if not left_shingles:
+            continue
+        for right in candidate_files[left_index + 1 :]:
+            right_shingles = shingles_by_path[right.path]
+            if not right_shingles:
+                continue
+            left_length = len(left.normalized_text)
+            right_length = len(right.normalized_text)
+            length_ratio = min(left_length, right_length) / max(left_length, right_length)
+            if length_ratio < ARCHIVE_NEAR_DUPLICATE_MIN_LENGTH_RATIO:
+                continue
+            overlap = len(left_shingles & right_shingles)
+            dice_similarity = (2.0 * overlap) / (len(left_shingles) + len(right_shingles))
+            containment_similarity = overlap / min(len(left_shingles), len(right_shingles))
+            if (
+                dice_similarity >= ARCHIVE_NEAR_DUPLICATE_DICE_THRESHOLD
+                or containment_similarity >= ARCHIVE_NEAR_DUPLICATE_CONTAINMENT_THRESHOLD
+            ):
+                paths = tuple(sorted((left.path, right.path), key=natural_path_sort_key))
+                candidates.append(
+                    ArchiveNearDuplicateCandidate(
+                        paths=(paths[0], paths[1]),
+                        dice_similarity=dice_similarity,
+                        containment_similarity=containment_similarity,
+                        length_ratio=length_ratio,
+                    )
+                )
+
+    return tuple(
+        sorted(
+            candidates,
+            key=lambda candidate: (
+                -candidate.dice_similarity,
+                -candidate.containment_similarity,
+                tuple(natural_path_sort_key(path) for path in candidate.paths),
+            ),
+        )
+    )
+
+
+def archive_text_shingles(text: str) -> set[str]:
+    if len(text) < ARCHIVE_NEAR_DUPLICATE_SHINGLE_CHARS:
+        return set()
+    return {
+        text[index : index + ARCHIVE_NEAR_DUPLICATE_SHINGLE_CHARS]
+        for index in range(0, len(text) - ARCHIVE_NEAR_DUPLICATE_SHINGLE_CHARS + 1)
+    }
+
+
+def review_archive_near_duplicate_candidates(
+    candidates: tuple[ArchiveNearDuplicateCandidate, ...],
+    *,
+    files: tuple[ArchiveDuplicateFile, ...],
+    client: SupportsCompletion,
+    model: str,
+) -> tuple[ArchiveNearDuplicateReview, ...]:
+    file_by_path = {file.path: file for file in files}
+    reviews = [
+        review_archive_near_duplicate_candidate(
+            candidate,
+            files=(file_by_path[candidate.paths[0]], file_by_path[candidate.paths[1]]),
+            client=client,
+            model=model,
+        )
+        for candidate in candidates
+    ]
+    return tuple(reviews)
+
+
+def review_archive_near_duplicate_candidate(
+    candidate: ArchiveNearDuplicateCandidate,
+    *,
+    files: tuple[ArchiveDuplicateFile, ArchiveDuplicateFile],
+    client: SupportsCompletion,
+    model: str,
+) -> ArchiveNearDuplicateReview:
+    payload = {
+        "deterministic_similarity": {
+            "dice_similarity": round(candidate.dice_similarity, 6),
+            "containment_similarity": round(candidate.containment_similarity, 6),
+            "length_ratio": round(candidate.length_ratio, 6),
+            "normalized_text_min_chars": MIN_ARCHIVE_NEAR_DUPLICATE_TEXT_CHARS,
+        },
+        "files": [
+            {
+                "filename": file.path.name,
+                "suffix": file.suffix,
+                "byte_size": file.path.stat().st_size,
+                "first_seen_at": file.first_seen_at,
+                "managed_filename": is_managed_archive_name(file.path.stem),
+                "normalized_text_length": file.text_fingerprint_length,
+                "extracted_text_excerpt": file.review_text,
+            }
+            for file in files
+        ],
+    }
+    try:
+        result = client.complete(
+            [
+                ChatMessage(role="system", content=ARCHIVE_NEAR_DUPLICATE_REVIEW_SYSTEM_PROMPT),
+                ChatMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
+            ],
+            temperature=0.0,
+            max_output_tokens=1024,
+            json_mode=True,
+        )
+    except (LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        raise ClassSessionArchiveError(f"Archive near-duplicate review failed: {error}") from error
+    return parse_archive_near_duplicate_review(result, candidate=candidate, files=files, model=model or result.model)
+
+
+def parse_archive_near_duplicate_review(
+    result: CompletionResult,
+    *,
+    candidate: ArchiveNearDuplicateCandidate,
+    files: tuple[ArchiveDuplicateFile, ArchiveDuplicateFile],
+    model: str,
+) -> ArchiveNearDuplicateReview:
+    try:
+        payload = parse_json_object(result.content)
+    except LLMResponseError as error:
+        raise ClassSessionArchiveError(str(error)) from error
+    try:
+        review_payload = ArchiveNearDuplicateReviewPayload.model_validate(payload)
+    except ValueError as error:
+        raise ClassSessionArchiveError(f"Archive near-duplicate review failed validation: {error}") from error
+
+    expected_filenames = {file.path.name for file in files}
+    reviewed_filenames = [file.filename for file in review_payload.files]
+    if set(reviewed_filenames) != expected_filenames or len(reviewed_filenames) != len(expected_filenames):
+        expected = ", ".join(sorted(expected_filenames))
+        received = ", ".join(sorted(reviewed_filenames))
+        raise ClassSessionArchiveError(
+            "Archive near-duplicate review returned file scores for the wrong files "
+            f"(expected: {expected}; received: {received})."
+        )
+
+    review_by_filename = {file.filename: file for file in review_payload.files}
+    file_scores = tuple(
+        ArchiveNearDuplicateFileScore(
+            path=file.path,
+            content_quality=review_by_filename[file.path.name].content_quality,
+            reason=review_by_filename[file.path.name].reason,
+        )
+        for file in files
+    )
+    return ArchiveNearDuplicateReview(
+        candidate=candidate,
+        verdict=review_payload.verdict,
+        confidence=review_payload.confidence,
+        reason=review_payload.reason,
+        model=model or result.model,
+        file_scores=file_scores,
+    )
+
+
+def near_duplicate_duplicate_evidences(
+    reviews: tuple[ArchiveNearDuplicateReview, ...],
+) -> tuple[ArchiveDuplicateEvidence, ...]:
+    evidences: list[ArchiveDuplicateEvidence] = []
+    for review in reviews:
+        if not review.actionable:
+            continue
+        detail = (
+            f"dice:{review.candidate.dice_similarity:.3f} "
+            f"containment:{review.candidate.containment_similarity:.3f} "
+            f"length_ratio:{review.candidate.length_ratio:.3f} "
+            f"confidence:{review.confidence:.3f} "
+            f"model:{review.model or 'unknown'}"
+        )
+        evidences.append(
+            ArchiveDuplicateEvidence(
+                reason=DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW,
+                detail=detail,
+                paths=review.candidate.paths,
+                metadata=archive_near_duplicate_review_record(review),
+            )
+        )
+    return tuple(
+        sorted(
+            evidences,
+            key=lambda evidence: (
+                evidence.detail,
+                tuple(natural_path_sort_key(path) for path in evidence.paths),
+            ),
+        )
+    )
+
+
+def archive_near_duplicate_review_record(review: ArchiveNearDuplicateReview) -> dict[str, object]:
+    return {
+        "verdict": review.verdict,
+        "confidence": review.confidence,
+        "model": review.model,
+        "reason": review.reason,
+        "deterministic_similarity": {
+            "dice_similarity": review.candidate.dice_similarity,
+            "containment_similarity": review.candidate.containment_similarity,
+            "length_ratio": review.candidate.length_ratio,
+            "shingle_chars": ARCHIVE_NEAR_DUPLICATE_SHINGLE_CHARS,
+            "min_text_chars": MIN_ARCHIVE_NEAR_DUPLICATE_TEXT_CHARS,
+        },
+        "files": [
+            {
+                "name": score.path.name,
+                "content_quality": score.content_quality,
+                "reason": score.reason,
+            }
+            for score in review.file_scores
+        ],
+    }
+
+
 def discover_same_format_archive_duplicates(archive_root: Path) -> tuple[SameFormatArchiveDuplicate, ...]:
     duplicates: list[SameFormatArchiveDuplicate] = []
     files = tuple(build_archive_duplicate_file(path) for path in discover_archive_duplicate_scan_paths(archive_root))
@@ -480,10 +875,17 @@ def parse_same_format_duplicate_detail(detail: str) -> tuple[str, str]:
 
 
 def format_archive_duplicate_message(archive_root: Path, duplicates: tuple[ArchiveDuplicateGroup, ...]) -> str:
+    resolver_command = "--resolve-archive-duplicates"
+    if any(
+        evidence.reason == DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW
+        for duplicate in duplicates
+        for evidence in duplicate.evidences
+    ):
+        resolver_command = "--resolve-archive-duplicates --include-near-duplicates"
     lines = [
         (
             "duplicate class-session archive files detected in "
-            f"{archive_root}; run --resolve-archive-duplicates before renaming or building usage signals:"
+            f"{archive_root}; run {resolver_command} before renaming or building usage signals:"
         )
     ]
     for index, duplicate in enumerate(duplicates, start=1):
@@ -532,6 +934,9 @@ def resolve_archive_duplicates(
     archive_root: Path = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     *,
     apply: bool = False,
+    include_near_duplicates: bool = False,
+    near_duplicate_client: SupportsCompletion | None = None,
+    near_duplicate_model: str | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> ArchiveDuplicateResolutionResult:
     root = archive_root.resolve()
@@ -549,16 +954,24 @@ def resolve_archive_duplicates(
     ensure_inside_archive(root, manifest_path, allow_equal=False)
     ensure_inside_archive(root, batch_root, allow_equal=False)
 
-    duplicate_groups = discover_archive_duplicates(root)
+    scan_result = scan_archive_duplicates(
+        root,
+        include_near_duplicates=include_near_duplicates,
+        near_duplicate_client=near_duplicate_client,
+        near_duplicate_model=near_duplicate_model,
+    )
+    duplicate_groups = scan_result.duplicate_groups
     resolutions = tuple(build_archive_duplicate_resolution(root, batch_root, group) for group in duplicate_groups)
     result = ArchiveDuplicateResolutionResult(
         archive_root=root,
         quarantine_root=quarantine_root,
         manifest_path=manifest_path,
         batch_root=batch_root if duplicate_groups else None,
+        resolved_at=resolved_at,
         duplicate_groups=duplicate_groups,
         resolutions=resolutions,
         applied=False,
+        near_duplicate_reviews=scan_result.near_duplicate_reviews,
     )
     if not apply or not resolutions:
         return result
@@ -569,9 +982,38 @@ def resolve_archive_duplicates(
         quarantine_root=quarantine_root,
         manifest_path=manifest_path,
         batch_root=batch_root,
+        resolved_at=resolved_at,
         duplicate_groups=duplicate_groups,
         resolutions=resolutions,
         applied=True,
+        near_duplicate_reviews=scan_result.near_duplicate_reviews,
+    )
+
+
+def apply_archive_duplicate_resolution_result(
+    result: ArchiveDuplicateResolutionResult,
+) -> ArchiveDuplicateResolutionResult:
+    if result.applied or not result.resolutions:
+        return result
+    if result.batch_root is None:
+        raise ClassSessionArchiveError("Archive duplicate resolution result has no quarantine batch root.")
+    apply_archive_duplicate_resolutions(
+        result.archive_root,
+        result.manifest_path,
+        result.batch_root,
+        result.resolutions,
+        result.resolved_at,
+    )
+    return ArchiveDuplicateResolutionResult(
+        archive_root=result.archive_root,
+        quarantine_root=result.quarantine_root,
+        manifest_path=result.manifest_path,
+        batch_root=result.batch_root,
+        resolved_at=result.resolved_at,
+        duplicate_groups=result.duplicate_groups,
+        resolutions=result.resolutions,
+        applied=True,
+        near_duplicate_reviews=result.near_duplicate_reviews,
     )
 
 
@@ -594,9 +1036,27 @@ def build_archive_duplicate_resolution(
 
 
 def recommended_archive_duplicate_survivor(group: ArchiveDuplicateGroup) -> Path:
+    near_quality_by_path = archive_near_duplicate_quality_by_path(group)
+    if near_quality_by_path:
+        highest_quality = max(near_quality_by_path.values())
+        near_tied_paths = tuple(
+            path
+            for path in group.paths
+            if highest_quality - near_quality_by_path.get(path, 0.0) <= ARCHIVE_NEAR_DUPLICATE_QUALITY_DEADBAND
+        )
+        if len(near_tied_paths) == 1:
+            return near_tied_paths[0]
+        return deterministic_archive_duplicate_survivor(group, near_tied_paths)
+    return deterministic_archive_duplicate_survivor(group, group.paths)
+
+
+def deterministic_archive_duplicate_survivor(
+    group: ArchiveDuplicateGroup,
+    paths: tuple[Path, ...],
+) -> Path:
     first_seen_by_path = {file.path: file.first_seen_at for file in group.files}
     return min(
-        group.paths,
+        paths,
         key=lambda path: (
             0 if path.suffix.lower() == ".docx" else 1,
             0 if is_managed_archive_name(path.stem) else 1,
@@ -604,6 +1064,33 @@ def recommended_archive_duplicate_survivor(group: ArchiveDuplicateGroup) -> Path
             natural_path_sort_key(path),
         ),
     )
+
+
+def archive_near_duplicate_quality_by_path(group: ArchiveDuplicateGroup) -> dict[Path, float]:
+    scores: dict[Path, list[float]] = {}
+    for evidence in group.evidences:
+        if evidence.reason != DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW:
+            continue
+        metadata = evidence.metadata or {}
+        files = metadata.get("files")
+        if not isinstance(files, list):
+            continue
+        for file_score in files:
+            if not isinstance(file_score, Mapping):
+                continue
+            name = str(file_score.get("name") or "")
+            quality = file_score.get("content_quality")
+            if not isinstance(quality, (int, float)):
+                continue
+            matching_path = next((path for path in group.paths if path.name == name), None)
+            if matching_path is None:
+                continue
+            scores.setdefault(matching_path, []).append(float(quality))
+    return {
+        path: sum(path_scores) / len(path_scores)
+        for path, path_scores in scores.items()
+        if path_scores
+    }
 
 
 def apply_archive_duplicate_resolutions(
@@ -695,6 +1182,7 @@ def archive_duplicate_resolution_record(
                 "reason": evidence.reason,
                 "detail": evidence.detail,
                 "files": [archive_relative_path(archive_root, path) for path in evidence.paths],
+                **({"metadata": evidence.metadata} if evidence.metadata is not None else {}),
             }
             for evidence in resolution.group.evidences
         ],

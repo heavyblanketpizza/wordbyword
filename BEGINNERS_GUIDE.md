@@ -158,6 +158,12 @@ If the tool reports duplicate class printouts, quarantine the duplicate copies b
 uv --no-cache run python -m wordbyword --resolve-archive-duplicates
 ```
 
+If it reports model-reviewed near duplicates, rerun the resolver with Ollama review enabled:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-archive-duplicates --include-near-duplicates --ollama-model gemma4:31b
+```
+
 Then count vocabulary from used handouts:
 
 ```bash

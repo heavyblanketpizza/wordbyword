@@ -50,48 +50,6 @@ PHASE_COLORS = {
     "skip": TOKYO_NIGHT["yellow"],
 }
 
-ASCII_ART = [
-    "╔═══════════════════════════════════════════════╗",
-    "║  ░▒▓█  NIGHT CITY SIGNAL // RELIC LINK  █▓▒░  ║",
-    "╠═══════════════════════════════════════════════╣",
-    "║                       ▓▓                      ║",
-    "║          ▓▓         ██████        ▓▓          ║",
-    "║    ▓▓   ████      ██████████    ████   ▓▓     ║",
-    "║   ████ ██████▓▓  ████████████  ██████ ████    ║",
-    "║   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   ║",
-    "║                                               ║",
-    "║   ╭───────╮  ░▒▓ A-SIDE // 90 ▓▒░  ╭───────╮  ║",
-    "║   │ ◉ ▣ ◉ │  ▓▒░░░▒▒▓▓▒▒▒░░░▒▓     │ ◉ ▣ ◉ │  ║",
-    "║   ╰───────╯  ╶─╴╶─╴╶─╴╶─╴╶─╴╶─╴    ╰───────╯  ║",
-    "║                                               ║",
-    "║      ░▒▓█  RELIC LINK // ACTIVE  █▓▒░         ║",
-    "╚═══════════════════════════════════════════════╝",
-]
-
-ASCII_ART_PALETTE = [
-    TOKYO_NIGHT["purple"],
-    TOKYO_NIGHT["cyan"],
-    TOKYO_NIGHT["purple"],
-    TOKYO_NIGHT["blue"],
-    TOKYO_NIGHT["pink"],
-    TOKYO_NIGHT["pink"],
-    TOKYO_NIGHT["orange"],
-    TOKYO_NIGHT["yellow"],
-    TOKYO_NIGHT["comment"],
-    TOKYO_NIGHT["green"],
-    TOKYO_NIGHT["cyan"],
-    TOKYO_NIGHT["green"],
-    TOKYO_NIGHT["comment"],
-    TOKYO_NIGHT["pink"],
-    TOKYO_NIGHT["purple"],
-]
-
-BOOT_GLYPH = [
-    "  ▄▄▄▄ ▄▄▄▄ ▄▄▄▄    ░▒▓█▓▒░    ▄▄▄▄ ▄▄▄▄ ▄▄▄▄  ",
-    "  █▄▄█ █▄▄█ █▄▄█  ░▒▓ wbw ▓▒░  █▄▄█ █▄▄█ █▄▄█  ",
-    "  ────────────────────────────────────────────  ",
-]
-
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -327,39 +285,27 @@ def render_boot_screen(
     if clean_example_sentences:
         mode = f"{mode} // {sentence_cleanup_model}"
 
-    banner = _paint(
-        " WORD BY WORD // TOKYO NIGHT RELIC BOOT ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=TOKYO_NIGHT["cyan"],
-        bold=True,
-        color=color,
-    )
-    glyph_palette = (TOKYO_NIGHT["pink"], TOKYO_NIGHT["purple"], TOKYO_NIGHT["cyan"])
-    glyph = [
-        _paint(line, fg=glyph_palette[index], bold=index == 1, color=color)
-        for index, line in enumerate(BOOT_GLYPH)
-    ]
-    underline = _paint("=" * min(width, 72), fg=TOKYO_NIGHT["comment"], color=color)
+    banner = _banner("WORD BY WORD // READY", accent=TOKYO_NIGHT["cyan"], color=color)
+    underline = _summary_rule(color=color, width=width)
     steps = _paint(
-        "▶ scan ─► extract ─► analyze ─► write ─► relic",
+        "flow      :: scan -> extract -> analyze -> write -> complete",
         fg=TOKYO_NIGHT["purple"],
         bold=True,
         color=color,
     )
     details = [
-        f"input   :: {input_dir}",
-        f"output  :: {output_dir}",
-        f"mode    :: {mode}",
+        _info_line("input", str(input_dir), color=color),
+        _info_line("output", str(output_dir), color=color),
+        _info_line("mode", mode, color=color),
     ]
-    lines = [*glyph, banner, underline, steps]
-    lines.extend(_paint(line, fg=TOKYO_NIGHT["fg"], color=color) for line in details)
+    lines = [banner, underline, steps, *details]
     return "\n".join(lines)
 
 
 def render_stage_update(phase: str, detail: str, *, color: bool) -> str:
     phase_color = PHASE_COLORS.get(phase, TOKYO_NIGHT["blue"])
     tag = _paint(f" {phase.upper():<8} ", fg=TOKYO_NIGHT["bg"], bg=phase_color, bold=True, color=color)
-    arrow = _paint("▶", fg=phase_color, bold=True, color=color)
+    arrow = _paint(">", fg=phase_color, bold=True, color=color)
     message = _paint(detail, fg=TOKYO_NIGHT["fg"], color=color)
     return f"{tag} {arrow} {message}"
 
@@ -380,7 +326,7 @@ def render_source_material_progress(
         bold=True,
         color=color,
     )
-    arrow_glyph = "▶" if progress.completed_pages <= 0 else "▣"
+    arrow_glyph = ">"
     arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
 
     source_prefix = (
@@ -434,7 +380,7 @@ def render_after_class_report_progress(
         bold=True,
         color=color,
     )
-    arrow_glyph = "▣" if progress.phase == "complete" else "▶"
+    arrow_glyph = ">"
     arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
     source_label = _shorten_text(
         progress.source_id,
@@ -459,7 +405,7 @@ def render_printable_progress(
         bold=True,
         color=color,
     )
-    arrow_glyph = "▣" if progress.phase == "complete" else "▶"
+    arrow_glyph = ">"
     arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
     source_prefix = (
         f"{progress.source_index}/{progress.total_sources} "
@@ -489,7 +435,7 @@ def render_source_rewrite_progress(
         bold=True,
         color=color,
     )
-    arrow_glyph = "▣" if progress.phase == "complete" else "▶"
+    arrow_glyph = ">"
     arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
     source_prefix = (
         f"{progress.source_index}/{progress.total_sources} "
@@ -522,7 +468,7 @@ def render_cleanup_progress(
         bold=True,
         color=color,
     )
-    arrow_glyph = "▶" if progress.phase == "start" else "▣"
+    arrow_glyph = ">"
     arrow = _paint(arrow_glyph, fg=phase_color, bold=True, color=color)
 
     total_rows = max(progress.total_rows, 1)
@@ -569,7 +515,7 @@ def render_completion_screen(
         "+numbers" if include_numbers else "-numbers",
     ]
     cleanup_state = sentence_cleanup_model if clean_example_sentences else "off"
-    header = "wordbyword@night-city"
+    header = "wordbyword"
     info_lines = [
         _paint(header, fg=TOKYO_NIGHT["blue"], bold=True, color=color),
         _paint("-" * len(header), fg=TOKYO_NIGHT["comment"], color=color),
@@ -586,25 +532,11 @@ def render_completion_screen(
         _info_line("switches", " ".join(switches), color=color),
     ]
 
-    painted_art = [
-        _paint(line, fg=ASCII_ART_PALETTE[index], bold=index in (1, 13), color=color)
-        for index, line in enumerate(ASCII_ART)
-    ]
-    composed = _compose_columns(painted_art, info_lines, width=width)
     lines = [
-        _paint(
-            "  RELIC LINK STABLE // OUTPUT STACK WRITTEN  ",
-            fg=TOKYO_NIGHT["bg"],
-            bg=TOKYO_NIGHT["pink"],
-            bold=True,
-            color=color,
-        ),
-        _paint(
-            "  ░▒▓█ ▓▒░  signal locked  ░▒▓ ▓▒░  cassette spinning  ░▒▓█",
-            fg=TOKYO_NIGHT["comment"],
-            color=color,
-        ),
-        composed,
+        _banner("PIPELINE // COMPLETE", accent=TOKYO_NIGHT["pink"], color=color),
+        _summary_rule(color=color, width=width),
+        *info_lines,
+        _summary_rule(color=color, width=width),
     ]
     return "\n".join(lines)
 
@@ -686,8 +618,8 @@ def render_usage_signal_summary(
     width: int = 100,
 ) -> str:
     return _render_lexicon_summary_panel(
-        banner_text="USAGE SIGNALS // CLASS ARCHIVE SCAN",
-        subtitle="  ▟▙ class usage signal bundle written ▟▙",
+        banner_text="USAGE SIGNALS // WRITTEN",
+        subtitle="class archive scan complete",
         accent=TOKYO_NIGHT["blue"],
         subtitle_color=TOKYO_NIGHT["cyan"],
         summary=(
@@ -736,8 +668,8 @@ def render_live_lexicon_summary(
     rule = _summary_rule(color=color, width=width)
     lines = [
         _render_lexicon_summary_panel(
-            banner_text="LIVE LEXICON // SIGNAL MAINTAINED",
-            subtitle="  ▟▙ canonical boundary kept // supplemental signal maintained ▟▙",
+            banner_text="LIVE LEXICON // UPDATED",
+            subtitle="canonical and supplemental rows maintained",
             accent=TOKYO_NIGHT["green"],
             subtitle_color=TOKYO_NIGHT["purple"],
             summary=(
@@ -756,7 +688,7 @@ def render_live_lexicon_summary(
             color=color,
             width=width,
         ),
-        _paint("┃ live files", fg=TOKYO_NIGHT["cyan"], bold=True, color=color),
+        _paint("| live files", fg=TOKYO_NIGHT["cyan"], bold=True, color=color),
         _paint(
             f"  - canonical  {_shorten_path_end(str(result.live_lexicon_path), max_width=value_width)}",
             fg=TOKYO_NIGHT["fg"],
@@ -781,27 +713,17 @@ def render_after_class_report_summary(
     width: int = 100,
 ) -> str:
     accent = TOKYO_NIGHT["purple"]
-    banner = _paint(
-        f"  ░▒▓█  AFTER-CLASS REPORT // {title.upper()}  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=accent,
-        bold=True,
-        color=color,
-    )
-    rule = _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
-        color=color,
-    )
+    banner = _banner(f"AFTER-CLASS REPORT // {title.upper()}", accent=accent, color=color)
+    rule = _summary_rule(color=color, width=width)
     lines = [
         banner,
-        _paint("  ▟▙ adult-facing reading report signal written ▟▙", fg=TOKYO_NIGHT["cyan"], bold=True, color=color),
+        _info_line("note", "adult-facing reading report written", color=color),
         rule,
     ]
     lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
     if source_rows:
         lines.append(rule)
-        lines.append(_paint("┃ report bundle", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
+        lines.append(_paint("| report bundle", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
         for row in source_rows:
             lines.append(_after_class_report_summary_row(row, color=color, width=width))
     lines.append(rule)
@@ -837,32 +759,22 @@ def render_printable_summary(
     width: int = 100,
 ) -> str:
     accent = TOKYO_NIGHT["orange"]
-    banner = _paint(
-        f"  ░▒▓█  PRINTABLE CLASS // {title.upper()}  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=accent,
-        bold=True,
-        color=color,
-    )
-    rule = _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
-        color=color,
-    )
+    banner = _banner(f"PRINTABLE CLASS // {title.upper()}", accent=accent, color=color)
+    rule = _summary_rule(color=color, width=width)
     lines = [
         banner,
-        _paint("  ▟▙ editable DOCX signal written for class use ▟▙", fg=TOKYO_NIGHT["purple"], bold=True, color=color),
+        _info_line("note", "editable DOCX written for class use", color=color),
         rule,
     ]
     lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
     if source_rows:
         lines.append(rule)
-        lines.append(_paint("┃ DOCX bundles", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
+        lines.append(_paint("| DOCX bundles", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
         for row in source_rows:
             lines.append(_printable_summary_row(row, color=color, width=width))
     if skipped_rows:
         lines.append(rule)
-        lines.append(_paint("┃ skipped bundles", fg=TOKYO_NIGHT["yellow"], bold=True, color=color))
+        lines.append(_paint("| skipped bundles", fg=TOKYO_NIGHT["yellow"], bold=True, color=color))
         for row in skipped_rows:
             source = _shorten_text(str(row.get("source_dir", "")), max_width=max(18, min(42, width // 2)))
             reason = str(row.get("reason", ""))
@@ -929,32 +841,22 @@ def render_source_rewrite_summary(
     width: int = 100,
 ) -> str:
     accent = TOKYO_NIGHT["green"]
-    banner = _paint(
-        f"  ░▒▓█  SOURCE REWRITE // {title.upper()}  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=accent,
-        bold=True,
-        color=color,
-    )
-    rule = _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
-        color=color,
-    )
+    banner = _banner(f"SOURCE REWRITE // {title.upper()}", accent=accent, color=color)
+    rule = _summary_rule(color=color, width=width)
     lines = [
         banner,
-        _paint("  ▟▙ class-source signal rewritten for classroom use ▟▙", fg=TOKYO_NIGHT["purple"], bold=True, color=color),
+        _info_line("note", "class source rewritten for classroom use", color=color),
         rule,
     ]
     lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
     if source_rows:
         lines.append(rule)
-        lines.append(_paint("┃ source bundles", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
+        lines.append(_paint("| source bundles", fg=TOKYO_NIGHT["cyan"], bold=True, color=color))
         for row in source_rows:
             lines.append(_source_rewrite_summary_row(row, color=color, width=width))
     if skipped_rows:
         lines.append(rule)
-        lines.append(_paint("┃ skipped bundles", fg=TOKYO_NIGHT["yellow"], bold=True, color=color))
+        lines.append(_paint("| skipped bundles", fg=TOKYO_NIGHT["yellow"], bold=True, color=color))
         for row in skipped_rows:
             source = _shorten_text(str(row.get("source_dir", "")), max_width=max(18, min(42, width // 2)))
             reason = str(row.get("reason", ""))
@@ -984,69 +886,15 @@ def _source_rewrite_summary_row(row: Mapping[str, object], *, color: bool, width
 
 HISTOGRAM_FRACTIONS = " ▁▂▃▄▅▆▇█"
 
-RELIC_DROP_ART_QUALITY = [
-    "    ░▒▓█▓▒░  ░▒▓ DICTIONARY RELIC // CACHE LOCKED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 11_cleaned_dictionary_candidates.jsonl ▓▒░  ░▒▓  │  ",
-    "  │   ◉─◉─◉   ▟▙ headword stack online ▟▙   ◉─◉─◉   ░░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_DICTIONARY_CANDIDATES = [
-    "    ░▒▓█▓▒░  ░▒▓ DICTIONARY RELIC // CANDIDATES LOCKED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 08_dictionary_candidates.jsonl ▓▒░  ░▒▓  │  ",
-    "  │   ◉─◉─◉   ▟▙ headword stack online ▟▙   ◉─◉─◉   ░░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_SENTENCES = [
-    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE STREAM // SIGNAL FIXED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────╮  ",
-    "  │   ▓▒░  ░▒▓ 09_example_sentences.csv ▓▒░  ░░▒▒▓▓▒▒░░░░░░   │  ",
-    "  │   ◉─◉─◉   ▟▙ sentence stack online ▟▙   ◉─◉─◉   ░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_LINKED = [
-    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE RELAY // CACHE MERGED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 12_dictionary_candidates_with_cleaned_examples ▓▒  │  ",
-    "  │   ◉─◉─◉   ▟▙ relay stack online ▟▙   ◉─◉─◉   ░░░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_GENERATED = [
-    "    ░▒▓█▓▒░  ░▒▓ EXAMPLE FORGE // VOCAB WRITTEN ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 13_vocabulary_with_generated_examples ▓▒░   │  ",
-    "  │   ◉─◉─◉   ▟▙ forge stack online ▟▙   ◉─◉─◉   ░░░░░░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_MEANINGS = [
-    "    ░▒▓█▓▒░  ░▒▓ MEANING RELAY // REFERENCE MERGED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭──────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 14_vocabulary_with_meanings.jsonl ▓▒░   │  ",
-    "  │   ◉─◉─◉   ▟▙ meaning stack online ▟▙   ◉─◉─◉   ░░░░░░░░   │  ",
-    "  ╰──────────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_ART_GENERATED_MEANINGS = [
-    "    ░▒▓█▓▒░  ░▒▓ MEANING FORGE // EMPTY SLOTS FILLED ▓▒░  ░▒▓█▓▒░    ",
-    "  ╭────────────────────────────────────────────────────────────────╮  ",
-    "  │  ▓▒░  ░▒▓ 15_final_dictionary ▓▒░ │  ",
-    "  │   ◉─◉─◉   ▟▙ generated meanings online ▟▙   ◉─◉─◉   ░░░░░   │  ",
-    "  ╰────────────────────────────────────────────────────────────────╯  ",
-]
-
-RELIC_DROP_PALETTE = (
-    TOKYO_NIGHT["pink"],
-    TOKYO_NIGHT["purple"],
-    TOKYO_NIGHT["cyan"],
-    TOKYO_NIGHT["yellow"],
-    TOKYO_NIGHT["pink"],
-)
+ARTIFACT_LABELS = {
+    "08_dictionary_candidates": ("ARTIFACT // DICTIONARY CANDIDATES", TOKYO_NIGHT["pink"]),
+    "09_example_sentences": ("ARTIFACT // EXAMPLE SENTENCES", TOKYO_NIGHT["cyan"]),
+    "11_cleaned_dictionary_candidates": ("ARTIFACT // CLEANED DICTIONARY", TOKYO_NIGHT["pink"]),
+    "12_dictionary_candidates_with_cleaned_examples": ("ARTIFACT // LINKED EXAMPLES", TOKYO_NIGHT["orange"]),
+    "13_vocabulary_with_generated_examples": ("ARTIFACT // GENERATED EXAMPLES", TOKYO_NIGHT["green"]),
+    "14_vocabulary_with_meanings": ("ARTIFACT // VOCABULARY MEANINGS", TOKYO_NIGHT["purple"]),
+    "15_final_dictionary": ("ARTIFACT // FINAL DICTIONARY", TOKYO_NIGHT["yellow"]),
+}
 
 
 def emit_artifact_drop(
@@ -1106,51 +954,17 @@ def render_artifact_drop(
     color: bool,
     width: int = 100,
 ) -> str:
-    if stage == "08_dictionary_candidates":
-        art = RELIC_DROP_ART_DICTIONARY_CANDIDATES
-        accent = TOKYO_NIGHT["pink"]
-    elif stage == "11_cleaned_dictionary_candidates":
-        art = RELIC_DROP_ART_QUALITY
-        accent = TOKYO_NIGHT["pink"]
-    elif stage == "12_dictionary_candidates_with_cleaned_examples":
-        art = RELIC_DROP_ART_LINKED
-        accent = TOKYO_NIGHT["orange"]
-    elif stage == "13_vocabulary_with_generated_examples":
-        art = RELIC_DROP_ART_GENERATED
-        accent = TOKYO_NIGHT["green"]
-    elif stage == "14_vocabulary_with_meanings":
-        art = RELIC_DROP_ART_MEANINGS
-        accent = TOKYO_NIGHT["purple"]
-    elif stage == "15_final_dictionary":
-        art = RELIC_DROP_ART_GENERATED_MEANINGS
-        accent = TOKYO_NIGHT["yellow"]
-    else:
-        art = RELIC_DROP_ART_SENTENCES
-        accent = TOKYO_NIGHT["cyan"]
+    artifact_title, accent = ARTIFACT_LABELS.get(stage, ("ARTIFACT // WRITTEN", TOKYO_NIGHT["cyan"]))
     label = file_label or _stage_default_label(stage)
-
-    banner = _paint(
-        f"  ░▒▓█  RELIC DROP // {label}  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=accent,
-        bold=True,
-        color=color,
-    )
-    glyph_lines = [
-        _paint(line, fg=RELIC_DROP_PALETTE[index % len(RELIC_DROP_PALETTE)], bold=index in (0, 2), color=color)
-        for index, line in enumerate(art)
-    ]
-    rule = _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
-        color=color,
-    )
+    banner = _banner(artifact_title, accent=accent, color=color)
+    rule = _summary_rule(color=color, width=width)
 
     info_lines: list[str] = []
+    info_lines.append(_info_line("file", label, color=color))
     for key, value in summary:
-        info_lines.append(_info_line(key, value, color=color))
+        info_lines.append(_artifact_info_line(key, value, color=color))
 
-    parts: list[str] = [banner, *glyph_lines, rule]
+    parts: list[str] = [banner, rule]
     if info_lines:
         parts.extend(info_lines)
         parts.append(rule)
@@ -1174,7 +988,7 @@ def render_dictionary_distribution(
     bins: int = 24,
     height: int = 10,
 ) -> str:
-    """Render cyberpunk Tokyo Night histograms for dictionary candidates.
+    """Render compact histograms for dictionary candidates.
 
     First chart: x-axis learning_signal_score (-0.500 .. 0.500), y-axis count of vocab in each bin.
     Final chart: x-axis occurrence count (log-spaced), y-axis count of vocab in each bin.
@@ -1186,18 +1000,8 @@ def render_dictionary_distribution(
     learning_signal_scores = [_row_learning_signal_score(entry) for entry in entries]
     counts = [_safe_int(entry.get("count")) for entry in entries]
 
-    header = _paint(
-        "  ░▒▓█  RELIC // DICTIONARY DISTRIBUTION SCAN  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=TOKYO_NIGHT["purple"],
-        bold=True,
-        color=color,
-    )
-    rule = _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
-        color=color,
-    )
+    header = _banner("DISTRIBUTION // DICTIONARY", accent=TOKYO_NIGHT["purple"], color=color)
+    rule = _summary_rule(color=color, width=width)
 
     learning_signal_panel = _render_histogram_panel(
         title="learning_signal_score distribution",
@@ -1236,11 +1040,11 @@ def _render_histogram_panel(
     bar_color: str,
     accent_color: str,
 ) -> str:
-    title_line = _paint(f"┃ {title}", fg=accent_color, bold=True, color=color)
-    subtitle_line = _paint(f"┃   {subtitle}", fg=TOKYO_NIGHT["comment"], color=color)
+    title_line = _paint(f"| {title}", fg=accent_color, bold=True, color=color)
+    subtitle_line = _paint(f"|   {subtitle}", fg=TOKYO_NIGHT["comment"], color=color)
 
     if not bin_counts or all(value == 0 for value in bin_counts):
-        empty = _paint("┃   ░▒▓ no signal // empty cache ▓▒░", fg=TOKYO_NIGHT["comment"], color=color)
+        empty = _paint("|   no entries", fg=TOKYO_NIGHT["comment"], color=color)
         return "\n".join([title_line, subtitle_line, empty])
 
     max_count = max(bin_counts)
@@ -1268,11 +1072,11 @@ def _render_histogram_panel(
             label_text = f"{0:>{y_label_width}}"
         else:
             label_text = " " * y_label_width
-        gutter = _paint(f"  {label_text} ▕", fg=TOKYO_NIGHT["comment"], color=color)
+        gutter = _paint(f"  {label_text} |", fg=TOKYO_NIGHT["comment"], color=color)
         rows.append(f"{gutter}{bar_segment}")
 
-    axis_prefix = "  " + " " * y_label_width + " ╰"
-    axis_line = _paint(axis_prefix + "─" * bar_count + "╴", fg=TOKYO_NIGHT["comment"], color=color)
+    axis_prefix = "  " + " " * y_label_width + " +"
+    axis_line = _paint(axis_prefix + "-" * bar_count + "-", fg=TOKYO_NIGHT["comment"], color=color)
     rows.append(axis_line)
 
     label_offset = len(axis_prefix)
@@ -1320,21 +1124,21 @@ def _log_count_bin_counts(counts: Sequence[int], *, bins: int) -> list[int]:
 
 def _learning_signal_subtitle(scores: Sequence[float], *, bins: int) -> str:
     if not scores:
-        return f"0 relics // bins={bins} // span -0.500 → 0.500"
+        return f"0 entries // bins={bins} // span -0.500 -> 0.500"
     return (
-        f"{len(scores):,} relics // bins={bins} // centered "
+        f"{len(scores):,} entries // bins={bins} // centered "
         f"min {min(scores):.3f}  median {_median(scores):.3f}  max {max(scores):.3f}"
     )
 
 
 def _count_subtitle(counts: Sequence[int], *, bins: int) -> str:
     if not counts:
-        return f"0 relics // bins={bins} // log-spaced span 1 → 1"
+        return f"0 entries // bins={bins} // log-spaced span 1 -> 1"
     positive = [value for value in counts if value > 0]
     if not positive:
-        return f"{len(counts):,} relics // bins={bins} // all-zero counts"
+        return f"{len(counts):,} entries // bins={bins} // all-zero counts"
     return (
-        f"{len(counts):,} relics // bins={bins} // log-spaced "
+        f"{len(counts):,} entries // bins={bins} // log-spaced "
         f"min {min(positive):,}  median {int(_median(positive)):,}  max {max(positive):,}"
     )
 
@@ -1426,17 +1230,11 @@ def _render_lexicon_summary_panel(
     color: bool,
     width: int,
 ) -> str:
-    banner = _paint(
-        f"  ░▒▓█  {banner_text}  █▓▒░  ",
-        fg=TOKYO_NIGHT["bg"],
-        bg=accent,
-        bold=True,
-        color=color,
-    )
+    banner = _banner(banner_text, accent=accent, color=color)
     rule = _summary_rule(color=color, width=width)
     lines = [
         banner,
-        _paint(subtitle, fg=subtitle_color, bold=True, color=color),
+        _paint(f"note      :: {subtitle}", fg=subtitle_color, bold=True, color=color),
         rule,
     ]
     lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
@@ -1444,12 +1242,18 @@ def _render_lexicon_summary_panel(
     return "\n".join(lines)
 
 
-def _summary_rule(*, color: bool, width: int) -> str:
+def _banner(text: str, *, accent: str, color: bool) -> str:
     return _paint(
-        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
-        fg=TOKYO_NIGHT["comment"],
+        f" {text} ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=accent,
+        bold=True,
         color=color,
     )
+
+
+def _summary_rule(*, color: bool, width: int) -> str:
+    return _paint("-" * min(width, 72), fg=TOKYO_NIGHT["comment"], color=color)
 
 
 def _summary_value_width(width: int) -> int:
@@ -1471,6 +1275,13 @@ def _info_line(key: str, value: str, *, color: bool, emphasis: bool = False) -> 
     divider = _paint("::", fg=TOKYO_NIGHT["comment"], color=color)
     value_text = _paint(value, fg=value_color, color=color)
     return f"{key_text} {divider} {value_text}"
+
+
+def _artifact_info_line(key: str, value: str, *, color: bool) -> str:
+    display_key = "entries" if key == "relics" else key
+    display_value = "written" if key == "status" and value in {"cache locked", "signal locked"} else value
+    return _info_line(display_key, display_value, color=color, emphasis=display_key == "status")
+
 
 def _paint(
     text: str,

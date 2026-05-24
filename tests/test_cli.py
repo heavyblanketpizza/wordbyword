@@ -799,6 +799,10 @@ def wordbyword_cli_unresolved_generated_example_failures():
 
 
 class ShowDistributionCliTest(unittest.TestCase):
+    def assert_no_old_terminal_ornaments(self, rendered: str) -> None:
+        for token in ("▟▙", "cassette", "RELIC", "relic", "░▒▓", "◉", "night-city", "NIGHT CITY"):
+            self.assertNotIn(token, rendered)
+
     def test_resolve_distribution_path_uses_final_default_when_no_dictionary_artifacts_exist(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace) / "build-dictionary"
@@ -830,8 +834,8 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(path, output_dir / "08_dictionary_candidates.jsonl")
 
     def test_resolve_distribution_path_uses_supplied_value(self) -> None:
-        path = resolve_distribution_path("/tmp/relics.jsonl", Path("build-dictionary"))
-        self.assertEqual(path, Path("/tmp/relics.jsonl"))
+        path = resolve_distribution_path("/tmp/entries.jsonl", Path("build-dictionary"))
+        self.assertEqual(path, Path("/tmp/entries.jsonl"))
 
     def test_load_dictionary_candidates_reads_jsonl_rows(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -879,12 +883,12 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
-            self.assertIn("RELIC DROP //", output)
-            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
+            self.assertIn("ARTIFACT // FINAL DICTIONARY", output)
             self.assertIn("3 headwords", output)
             self.assertIn("replay // no llm calls", output)
             self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
+            self.assert_no_old_terminal_ornaments(output)
             self.assertEqual(stderr.getvalue(), "")
 
     def test_show_distribution_preserves_explicit_stage_eleven_panel(self) -> None:
@@ -907,12 +911,12 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
-            self.assertIn("RELIC DROP //", output)
-            self.assertIn("DICTIONARY RELIC // CACHE LOCKED", output)
+            self.assertIn("ARTIFACT // CLEANED DICTIONARY", output)
             self.assertIn("3 headwords", output)
             self.assertIn("replay // no llm calls", output)
             self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
+            self.assert_no_old_terminal_ornaments(output)
             self.assertEqual(stderr.getvalue(), "")
 
     def test_show_distribution_uses_matching_panel_for_known_intermediate_artifact(self) -> None:
@@ -930,9 +934,10 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
-            self.assertIn("MEANING RELAY // REFERENCE MERGED", output)
+            self.assertIn("ARTIFACT // VOCABULARY MEANINGS", output)
             self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
+            self.assert_no_old_terminal_ornaments(output)
             self.assertEqual(stderr.getvalue(), "")
 
     def test_show_distribution_reports_missing_file_to_stderr(self) -> None:
@@ -969,8 +974,9 @@ class ShowDistributionCliTest(unittest.TestCase):
             mock_pipeline.assert_not_called()
             output = stdout.getvalue()
             self.assertIn("15_final_dictionary.jsonl", output)
-            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
+            self.assertIn("ARTIFACT // FINAL DICTIONARY", output)
             self.assertIn("learning_signal_score distribution", output)
+            self.assert_no_old_terminal_ornaments(output)
 
     def test_main_with_show_distribution_uses_available_dictionary_artifact_without_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -990,12 +996,13 @@ class ShowDistributionCliTest(unittest.TestCase):
             mock_pipeline.assert_not_called()
             output = stdout.getvalue()
             self.assertIn("08_dictionary_candidates.jsonl", output)
-            self.assertIn("DICTIONARY RELIC // CANDIDATES LOCKED", output)
+            self.assertIn("ARTIFACT // DICTIONARY CANDIDATES", output)
             self.assertIn("learning_signal_score distribution", output)
+            self.assert_no_old_terminal_ornaments(output)
 
     def test_main_with_show_distribution_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
-            jsonl_path = Path(workspace) / "relics.jsonl"
+            jsonl_path = Path(workspace) / "entries.jsonl"
             jsonl_path.write_text(
                 json.dumps({"learning_signal_score": 0.0, "count": 7}) + "\n",
                 encoding="utf-8",
@@ -1007,8 +1014,9 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertIn("RELIC DROP //", stdout.getvalue())
-            self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", stdout.getvalue())
+            output = stdout.getvalue()
+            self.assertIn("ARTIFACT // FINAL DICTIONARY", output)
+            self.assert_no_old_terminal_ornaments(output)
 
     def test_link_cleaned_examples_builds_stage_twelve_without_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
