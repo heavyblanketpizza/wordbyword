@@ -8,6 +8,7 @@ dependencies = [
     "kiwipiepy>=0.23.1",
     "pillow>=12.0.0",
     "pydantic>=2.12.5",
+    "PySide6>=6.11.1",
     "pymupdf>=1.27.2.2",
     "python-docx>=1.1.2",
 ]
@@ -20,6 +21,7 @@ dev = [
 
 [project.scripts]
 wordbyword = "wordbyword.cli:main"
+wordbyword-gui = "wordbyword.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
