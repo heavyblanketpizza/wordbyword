@@ -11,6 +11,8 @@ from kiwipiepy import Kiwi
 from wordbyword.class_archive.archive import (
     DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     DEFAULT_VOCABULARY_INTELLIGENCE_ROOT,
+    discover_same_format_archive_duplicates,
+    format_same_format_archive_duplicate_message,
     is_managed_archive_name,
     natural_path_sort_key,
 )
@@ -54,6 +56,10 @@ def build_usage_signals(
         raise UsageSignalBuildError(f"class-session archive folder does not exist: {archive_root}")
     if not archive_root.is_dir():
         raise UsageSignalBuildError(f"class-session archive path is not a folder: {archive_root}")
+
+    duplicates = discover_same_format_archive_duplicates(archive_root)
+    if duplicates:
+        raise UsageSignalBuildError(format_same_format_archive_duplicate_message(archive_root, duplicates))
 
     _report(progress, "scan", f"discovering named class printouts in {archive_root}")
     documents = discover_usage_signal_documents(archive_root)

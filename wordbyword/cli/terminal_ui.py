@@ -1176,20 +1176,14 @@ def render_dictionary_distribution(
 ) -> str:
     """Render cyberpunk Tokyo Night histograms for dictionary candidates.
 
-    First chart: x-axis quality_score (0.000 .. 1.000), y-axis count of vocab in each bin.
-    Optional second chart: x-axis quality_score_v2 (-0.500 .. 0.500), y-axis count of vocab in each bin.
+    First chart: x-axis learning_signal_score (-0.500 .. 0.500), y-axis count of vocab in each bin.
     Final chart: x-axis occurrence count (log-spaced), y-axis count of vocab in each bin.
     """
 
     safe_bins = max(8, min(bins, max(8, width - 12)))
     safe_height = max(4, height)
 
-    quality_scores = [_safe_float(entry.get("quality_score")) for entry in entries]
-    quality_scores_v2 = [
-        _safe_float(entry.get("quality_score_v2"))
-        for entry in entries
-        if "quality_score_v2" in entry
-    ]
+    learning_signal_scores = [_row_learning_signal_score(entry) for entry in entries]
     counts = [_safe_int(entry.get("count")) for entry in entries]
 
     header = _paint(
@@ -1205,29 +1199,17 @@ def render_dictionary_distribution(
         color=color,
     )
 
-    quality_panel = _render_histogram_panel(
-        title="quality_score distribution",
-        subtitle=_quality_subtitle(quality_scores, bins=safe_bins),
-        bin_counts=_quality_score_bin_counts(quality_scores, bins=safe_bins),
-        x_axis_labels=("0.00", "0.50", "1.00"),
+    learning_signal_panel = _render_histogram_panel(
+        title="learning_signal_score distribution",
+        subtitle=_learning_signal_subtitle(learning_signal_scores, bins=safe_bins),
+        bin_counts=_learning_signal_bin_counts(learning_signal_scores, bins=safe_bins),
+        x_axis_labels=("-0.50", "0.00", "0.50"),
         height=safe_height,
         color=color,
         bar_color=TOKYO_NIGHT["cyan"],
         accent_color=TOKYO_NIGHT["pink"],
     )
-    panels = [header, rule, quality_panel]
-    if quality_scores_v2:
-        quality_v2_panel = _render_histogram_panel(
-            title="quality_score_v2 distribution",
-            subtitle=_quality_v2_subtitle(quality_scores_v2, bins=safe_bins),
-            bin_counts=_centered_quality_score_bin_counts(quality_scores_v2, bins=safe_bins),
-            x_axis_labels=("-0.50", "0.00", "0.50"),
-            height=safe_height,
-            color=color,
-            bar_color=TOKYO_NIGHT["blue"],
-            accent_color=TOKYO_NIGHT["purple"],
-        )
-        panels.extend(["", quality_v2_panel])
+    panels = [header, rule, learning_signal_panel]
     count_panel = _render_histogram_panel(
         title="occurrence count distribution",
         subtitle=_count_subtitle(counts, bins=safe_bins),
@@ -1306,16 +1288,7 @@ def _render_histogram_panel(
     return "\n".join(rows)
 
 
-def _quality_score_bin_counts(scores: Sequence[float], *, bins: int) -> list[int]:
-    bin_counts = [0] * bins
-    for score in scores:
-        clamped = min(max(score, 0.0), 1.0)
-        index = min(int(clamped * bins), bins - 1)
-        bin_counts[index] += 1
-    return bin_counts
-
-
-def _centered_quality_score_bin_counts(scores: Sequence[float], *, bins: int) -> list[int]:
+def _learning_signal_bin_counts(scores: Sequence[float], *, bins: int) -> list[int]:
     bin_counts = [0] * bins
     for score in scores:
         clamped = min(max(score, -0.5), 0.5)
@@ -1345,16 +1318,7 @@ def _log_count_bin_counts(counts: Sequence[int], *, bins: int) -> list[int]:
     return bin_counts
 
 
-def _quality_subtitle(scores: Sequence[float], *, bins: int) -> str:
-    if not scores:
-        return f"0 relics // bins={bins} // span 0.000 → 1.000"
-    return (
-        f"{len(scores):,} relics // bins={bins} // "
-        f"min {min(scores):.3f}  median {_median(scores):.3f}  max {max(scores):.3f}"
-    )
-
-
-def _quality_v2_subtitle(scores: Sequence[float], *, bins: int) -> str:
+def _learning_signal_subtitle(scores: Sequence[float], *, bins: int) -> str:
     if not scores:
         return f"0 relics // bins={bins} // span -0.500 → 0.500"
     return (
@@ -1408,6 +1372,20 @@ def _safe_float(value: object) -> float:
         return float(cast(str | bytes | bytearray | int | float, value))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _row_learning_signal_score(row: Mapping[str, object]) -> float:
+    if "learning_signal_score" in row:
+        return _clamped_float(row.get("learning_signal_score"), minimum=-0.5, maximum=0.5)
+    if "quality_score_v2" in row:
+        return _clamped_float(row.get("quality_score_v2"), minimum=-0.5, maximum=0.5)
+    if "quality_score" in row:
+        return _clamped_float(row.get("quality_score"), minimum=0.0, maximum=1.0) - 0.5
+    return 0.0
+
+
+def _clamped_float(value: object, *, minimum: float, maximum: float) -> float:
+    return min(max(_safe_float(value), minimum), maximum)
 
 
 def _safe_int(value: object) -> int:

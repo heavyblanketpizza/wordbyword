@@ -9,6 +9,14 @@ from typing import Any, Mapping
 from wordbyword.class_archive.archive import DEFAULT_VOCABULARY_INTELLIGENCE_ROOT
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
+from wordbyword.dictionary_build.candidates import (
+    LEARNING_SIGNAL_FIELD_RENAMES,
+    LEGACY_VOCABULARY_SCORE_FIELDS,
+    VOCABULARY_SIGNAL_FIELDS,
+    normalized_learning_signal_score,
+    parse_learning_signal_score,
+    row_learning_signal_score,
+)
 from wordbyword.dictionary_build.output_files import read_jsonl, write_jsonl
 
 DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(Path("build-dictionary"), ArtifactId.FINAL_DICTIONARY)
@@ -24,6 +32,8 @@ SUPPLEMENTAL_STATUS_OBSERVED = "non_canonical_observed"
 SUPPLEMENTAL_STATUS_INACTIVE = "inactive_observed"
 SUPPLEMENTAL_STATUS_PROMOTED = "promoted_to_canonical"
 ProgressCallback = Callable[[str, str], None]
+SCORE_FIELD_RENAMES = LEARNING_SIGNAL_FIELD_RENAMES
+SCORE_FIELDS = {*LEGACY_VOCABULARY_SCORE_FIELDS, *VOCABULARY_SIGNAL_FIELDS}
 REMOVED_CANONICAL_FIELDS = {
     "example_generated_with_ollama",
     "meaning_generated_with_ollama",
@@ -31,6 +41,7 @@ REMOVED_CANONICAL_FIELDS = {
     "class_count",
     "class_printout_count",
     "class_document_count",
+    "roi_score",
 }
 
 
@@ -121,11 +132,7 @@ def update_live_lexicon(
         key = canonical_key(updated_row)
         usage_row = usage_by_key.get(key)
         if usage_row is None:
-            updated_row["roi_score"] = parse_score(
-                updated_row.get("quality_score"),
-                field="quality_score",
-                canonical_key=key,
-            )
+            updated_row["roi_score"] = learning_signal_roi_score(updated_row)
             updated_rows.append(updated_row)
             continue
 
@@ -136,19 +143,11 @@ def update_live_lexicon(
             canonical_key=key,
         )
         updated_row["variants"] = merge_variants(updated_row.get("variants"), usage_row.get("variants"))
-        updated_row["roi_score"] = usage_roi_score(
-            canonical_quality_score=parse_score(
-                updated_row.get("quality_score"),
-                field="quality_score",
-                canonical_key=key,
-            ),
-            usage_quality_score=parse_score(usage_row.get("quality_score"), field="quality_score", canonical_key=key),
-            class_printout_count=updated_row["class_printout_count"],
-            total_class_printouts=total_class_printouts,
-        )
+        updated_row["roi_score"] = learning_signal_roi_score(usage_row)
         updated_rows.append(updated_row)
         matched_count += 1
 
+    updated_rows = sort_canonical_live_rows(updated_rows)
     live_keys = active_canonical_keys(updated_rows)
     unmatched_usage_candidates = [
         dict(row)
@@ -261,6 +260,8 @@ def canonical_live_row(row: Mapping[str, Any], *, preserve_curation_status: bool
     for field, value in row.items():
         if field in REMOVED_CANONICAL_FIELDS:
             continue
+        if field in SCORE_FIELDS:
+            continue
         if field == "count":
             raw_count = value
             continue
@@ -297,9 +298,10 @@ def canonical_live_row(row: Mapping[str, Any], *, preserve_curation_status: bool
     if not preserve_curation_status or not updated.get("curation_status"):
         updated["curation_status"] = "canonical"
     updated["variants"] = parse_variants(raw_variants)
+    apply_learning_signal_fields(updated, row)
     updated["class_count"] = 0
     updated["class_printout_count"] = 0
-    updated["roi_score"] = parse_score(updated.get("quality_score"), field="quality_score", canonical_key=key)
+    updated["roi_score"] = learning_signal_roi_score(updated)
     return updated
 
 
@@ -309,6 +311,48 @@ def active_canonical_keys(rows: list[dict[str, Any]]) -> set[str]:
         for row in rows
         if (key := canonical_key(row)) and row.get("active") is not False
     }
+
+
+def apply_learning_signal_fields(target: dict[str, Any], source: Mapping[str, Any]) -> None:
+    for legacy_field, renamed_field in SCORE_FIELD_RENAMES.items():
+        value = source.get(renamed_field, source.get(legacy_field))
+        if value is not None:
+            target[renamed_field] = parse_learning_signal_score(value)
+    target["learning_signal_score"] = row_learning_signal_score(source)
+    frequency_rate = source.get("frequency_rate_per_10k")
+    if frequency_rate is not None:
+        target["frequency_rate_per_10k"] = parse_nonnegative_float(
+            frequency_rate,
+            field="frequency_rate_per_10k",
+            canonical_key=canonical_key(source),
+        )
+
+
+def learning_signal_roi_score(row: Mapping[str, Any]) -> float:
+    return normalized_learning_signal_score(row)
+
+
+def sort_canonical_live_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(rows, key=live_row_sort_key)
+
+
+def sort_supplemental_live_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            0 if row.get("active") is True else 1,
+            *live_row_sort_key(row),
+        ),
+    )
+
+
+def live_row_sort_key(row: Mapping[str, Any]) -> tuple[float, int, int, str]:
+    return (
+        -parse_score(row.get("roi_score"), field="roi_score", canonical_key=canonical_key(row)),
+        -parse_nonnegative_int(row.get("class_printout_count", 0), field="class_printout_count", canonical_key=canonical_key(row)),
+        -parse_nonnegative_int(row.get("class_count", 0), field="class_count", canonical_key=canonical_key(row)),
+        canonical_key(row),
+    )
 
 
 def update_supplemental_rows(
@@ -357,9 +401,10 @@ def update_supplemental_rows(
         seen_keys.add(key)
         added_count += 1
 
+    sorted_rows = sort_supplemental_live_rows(rows)
     return SupplementalLexiconUpdate(
-        rows=rows,
-        active_rows=sum(1 for row in rows if row.get("active") is True),
+        rows=sorted_rows,
+        active_rows=sum(1 for row in sorted_rows if row.get("active") is True),
         added_count=added_count,
         updated_count=updated_count,
         inactive_count=inactive_count,
@@ -384,7 +429,10 @@ def supplemental_live_row(
             "source_tier",
             "canonical_status",
             "active",
+            "roi_score",
         }:
+            continue
+        if field in SCORE_FIELDS:
             continue
         if existing_row is not None and field == "curation_status" and field in updated:
             continue
@@ -396,12 +444,14 @@ def supplemental_live_row(
         existing_row.get("variants") if existing_row is not None else None,
         usage_row.get("variants"),
     )
+    apply_learning_signal_fields(updated, usage_row)
     updated["class_count"] = parse_nonnegative_int(usage_row.get("count"), field="count", canonical_key=key)
     updated["class_printout_count"] = parse_nonnegative_int(
         usage_row.get("document_count"),
         field="document_count",
         canonical_key=key,
     )
+    updated["roi_score"] = learning_signal_roi_score(updated)
     updated["source_tier"] = SUPPLEMENTAL_SOURCE_TIER
     updated["canonical_status"] = SUPPLEMENTAL_STATUS_OBSERVED
     updated["active"] = True
@@ -415,6 +465,8 @@ def supplemental_status_row(row: Mapping[str, Any], *, canonical_status: str) ->
     updated.pop("class_document_count", None)
     updated["class_count"] = 0
     updated["class_printout_count"] = 0
+    apply_learning_signal_fields(updated, row)
+    updated["roi_score"] = learning_signal_roi_score(updated)
     updated["source_tier"] = SUPPLEMENTAL_SOURCE_TIER
     updated["canonical_status"] = canonical_status
     updated["active"] = False
@@ -444,23 +496,6 @@ def parse_variants(value: Any) -> list[str]:
     return [str(variant).strip() for variant in raw_values if str(variant).strip()]
 
 
-def usage_roi_score(
-    *,
-    canonical_quality_score: float,
-    usage_quality_score: float,
-    class_printout_count: int,
-    total_class_printouts: int,
-) -> float:
-    if total_class_printouts <= 0:
-        class_printout_signal = 0.0
-    else:
-        class_printout_signal = min(class_printout_count / total_class_printouts, 1.0)
-    return round(
-        (0.7 * canonical_quality_score) + (0.2 * usage_quality_score) + (0.1 * class_printout_signal),
-        3,
-    )
-
-
 def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = path.with_suffix(f"{path.suffix}.tmp")
@@ -482,6 +517,18 @@ def parse_nonnegative_int(value: Any, *, field: str, canonical_key: str) -> int:
     if parsed < 0:
         raise LiveLexiconUpdateError(f"{field} for {canonical_key} must be a non-negative integer.")
     return parsed
+
+
+def parse_nonnegative_float(value: Any, *, field: str, canonical_key: str) -> float:
+    if isinstance(value, bool):
+        raise LiveLexiconUpdateError(f"{field} for {canonical_key} must be a non-negative number.")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as error:
+        raise LiveLexiconUpdateError(f"{field} for {canonical_key} must be a non-negative number.") from error
+    if parsed < 0:
+        raise LiveLexiconUpdateError(f"{field} for {canonical_key} must be a non-negative number.")
+    return round(parsed, 3)
 
 
 def parse_score(value: Any, *, field: str, canonical_key: str) -> float:

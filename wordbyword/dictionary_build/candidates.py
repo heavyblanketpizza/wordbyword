@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from kiwipiepy import Kiwi
@@ -15,11 +16,7 @@ LOW_VALUE_BOUND_NOUNS = {"것", "거", "수", "등", "데", "바", "뿐", "채",
 PARTICLE_OR_ENDING_PREFIXES = ("J", "E")
 FREQUENCY_RATE_SCALE = 10_000
 IDEAL_FREQUENCY_RATE = 10.0
-QUALITY_SCORE_V2_FREQUENCY_SIGMA = 1.0
-OVERUSED_FREQUENCY_RATE = 40.0
-EXTREME_FREQUENCY_RATE = 100.0
-EXTREME_FREQUENCY_PENALTY = -0.5
-DEFAULT_ROI_SCORE: float | None = None
+LEARNING_SIGNAL_FREQUENCY_SIGMA = 1.0
 POS_WEIGHTS = {
     "noun": 0.9,
     "verb": 0.72,
@@ -32,6 +29,15 @@ POS_WEIGHTS = {
     "foreign_or_hanja": 0.86,
 }
 DEFAULT_POS_WEIGHT = 0.45
+LEARNING_SIGNAL_FIELD_RENAMES = {
+    "quality_score_v2": "learning_signal_score",
+    "frequency_score_v2": "frequency_signal_score",
+    "dispersion_score_v2": "dispersion_signal_score",
+    "pos_score_v2": "pos_signal_score",
+    "variant_score_v2": "variant_signal_score",
+}
+LEGACY_VOCABULARY_SCORE_FIELDS = {"quality_score", "roi_score", *LEARNING_SIGNAL_FIELD_RENAMES}
+VOCABULARY_SIGNAL_FIELDS = {*LEARNING_SIGNAL_FIELD_RENAMES.values()}
 
 # TODO: Split candidate heuristics into smaller, tested pieces
 # wordbyword/candidates.py is doing a lot: canonicalization, rejection, scoring, aggregation, dictionary packet generation. It is okay for now, but I would gradually split it into:
@@ -128,8 +134,7 @@ class CandidateBuilder:
 
         term_rows.sort(
             key=lambda row: (
-                roi_score_sort_key(row["roi_score"]),
-                -float(row["quality_score"]),
+                -float(row["learning_signal_score"]),
                 -int(row["count"]),
                 str(row["canonical_key"]),
             )
@@ -296,17 +301,11 @@ def term_row(
     total_token_occurrences: int = 0,
 ) -> dict[str, object]:
     count = aggregate.count or aggregate.surface_count
-    quality = term_quality_score(
+    learning_signal = term_learning_signal_scores(
         aggregate,
         total_document_count=total_document_count,
         total_token_occurrences=total_token_occurrences,
     )
-    quality_v2 = term_quality_score_v2(
-        aggregate,
-        total_document_count=total_document_count,
-        total_token_occurrences=total_token_occurrences,
-    )
-    roi = roi_score()
     return {
         "canonical_key": aggregate.canonical_key,
         "display": aggregate.display,
@@ -317,9 +316,7 @@ def term_row(
         "document_count": aggregate.document_count,
         "variant_count": len(aggregate.variants),
         "variants": join_counter_keys(aggregate.variants),
-        "quality_score": quality,
-        **quality_v2,
-        "roi_score": roi,
+        **learning_signal,
         "example": clean_example_text(aggregate.example),
     }
 
@@ -332,37 +329,18 @@ def dictionary_entry(row: dict[str, object]) -> dict[str, object]:
         "variants": split_joined(row.get("variants", "")),
         "count": row["count"],
         "document_count": row["document_count"],
-        "quality_score": row["quality_score"],
-        "quality_score_v2": row["quality_score_v2"],
-        "frequency_score_v2": row["frequency_score_v2"],
-        "dispersion_score_v2": row["dispersion_score_v2"],
-        "pos_score_v2": row["pos_score_v2"],
-        "variant_score_v2": row["variant_score_v2"],
+        "learning_signal_score": row["learning_signal_score"],
+        "frequency_signal_score": row["frequency_signal_score"],
+        "dispersion_signal_score": row["dispersion_signal_score"],
+        "pos_signal_score": row["pos_signal_score"],
+        "variant_signal_score": row["variant_signal_score"],
         "frequency_rate_per_10k": row["frequency_rate_per_10k"],
-        "roi_score": row["roi_score"],
         "example": row["example"],
         "curation_status": "candidate",
     }
 
 
-def term_quality_score(
-    aggregate: CandidateAggregate,
-    *,
-    total_document_count: int = 0,
-    total_token_occurrences: int = 0,
-) -> float:
-    count = aggregate.count or aggregate.surface_count
-    frequency_count = max(count, aggregate.surface_count)
-    frequency = frequency_usefulness_score(frequency_count, total_token_occurrences)
-    dispersion = dispersion_score(aggregate.document_count, total_document_count)
-    variant_signal = bounded_log_score(len(aggregate.variants), 20)
-    pos = aggregate.pos_groups.most_common(1)[0][0] if aggregate.pos_groups else "unknown"
-    pos_weight = POS_WEIGHTS.get(pos, DEFAULT_POS_WEIGHT)
-    score = (0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos_weight) + (0.14 * variant_signal)
-    return round(clamp(score, 0.0, 1.0), 3)
-
-
-def term_quality_score_v2(
+def term_learning_signal_scores(
     aggregate: CandidateAggregate,
     *,
     total_document_count: int = 0,
@@ -371,18 +349,18 @@ def term_quality_score_v2(
     count = aggregate.count or aggregate.surface_count
     frequency_count = max(count, aggregate.surface_count)
     frequency_rate = frequency_rate_per_10k(frequency_count, total_token_occurrences)
-    frequency = frequency_score_v2(frequency_rate)
-    dispersion = dispersion_score_v2(aggregate.document_count, total_document_count)
-    variant = variant_score_v2(len(aggregate.variants))
+    frequency = frequency_signal_score(frequency_rate)
+    dispersion = dispersion_signal_score(aggregate.document_count, total_document_count)
+    variant = variant_signal_score(len(aggregate.variants))
     pos_group_name = aggregate.pos_groups.most_common(1)[0][0] if aggregate.pos_groups else "unknown"
-    pos = pos_score_v2(POS_WEIGHTS.get(pos_group_name, DEFAULT_POS_WEIGHT))
+    pos = pos_signal_score(POS_WEIGHTS.get(pos_group_name, DEFAULT_POS_WEIGHT))
     score = (0.42 * frequency) + (0.22 * dispersion) + (0.22 * pos) + (0.14 * variant)
     return {
-        "quality_score_v2": round(clamp(score, -0.5, 0.5), 3),
-        "frequency_score_v2": round(frequency, 3),
-        "dispersion_score_v2": round(dispersion, 3),
-        "pos_score_v2": round(pos, 3),
-        "variant_score_v2": round(variant, 3),
+        "learning_signal_score": round(clamp(score, -0.5, 0.5), 3),
+        "frequency_signal_score": round(frequency, 3),
+        "dispersion_signal_score": round(dispersion, 3),
+        "pos_signal_score": round(pos, 3),
+        "variant_signal_score": round(variant, 3),
         "frequency_rate_per_10k": round(frequency_rate, 3),
     }
 
@@ -393,38 +371,23 @@ def frequency_rate_per_10k(count: int, total_token_occurrences: int) -> float:
     return count / total_token_occurrences * FREQUENCY_RATE_SCALE
 
 
-def frequency_score_v2(rate_per_10k: float) -> float:
+def frequency_signal_score(rate_per_10k: float) -> float:
     x = math.log1p(max(rate_per_10k, 0.0))
     mu = math.log1p(IDEAL_FREQUENCY_RATE)
-    gaussian = math.exp(-((x - mu) ** 2) / (2 * QUALITY_SCORE_V2_FREQUENCY_SIGMA**2))
+    gaussian = math.exp(-((x - mu) ** 2) / (2 * LEARNING_SIGNAL_FREQUENCY_SIGMA**2))
     return gaussian - 0.5
 
 
-def dispersion_score_v2(document_count: int, total_document_count: int) -> float:
+def dispersion_signal_score(document_count: int, total_document_count: int) -> float:
     return dispersion_score(document_count, total_document_count) - 0.5
 
 
-def pos_score_v2(pos_weight: float) -> float:
+def pos_signal_score(pos_weight: float) -> float:
     return pos_weight - 0.5
 
 
-def variant_score_v2(variant_count: int) -> float:
+def variant_signal_score(variant_count: int) -> float:
     return bounded_log_score(variant_count, 20) - 0.5
-
-
-def frequency_usefulness_score(count: int, total_token_occurrences: int) -> float:
-    if count <= 0 or total_token_occurrences <= 0:
-        return 0.0
-
-    rate = count / total_token_occurrences * FREQUENCY_RATE_SCALE
-    if rate <= IDEAL_FREQUENCY_RATE:
-        return rate / IDEAL_FREQUENCY_RATE
-    if rate <= OVERUSED_FREQUENCY_RATE:
-        return 1.0 - ((rate - IDEAL_FREQUENCY_RATE) / (OVERUSED_FREQUENCY_RATE - IDEAL_FREQUENCY_RATE))
-    if rate <= EXTREME_FREQUENCY_RATE:
-        penalty_ratio = (rate - OVERUSED_FREQUENCY_RATE) / (EXTREME_FREQUENCY_RATE - OVERUSED_FREQUENCY_RATE)
-        return EXTREME_FREQUENCY_PENALTY * penalty_ratio
-    return EXTREME_FREQUENCY_PENALTY
 
 
 def dispersion_score(document_count: int, total_document_count: int) -> float:
@@ -433,11 +396,6 @@ def dispersion_score(document_count: int, total_document_count: int) -> float:
 
     denominator = total_document_count if total_document_count > 0 else document_count
     return min(document_count / denominator, 1.0)
-
-
-# roi_score: Is this candidate worth prioritizing now for study, curation, or dictionary generation?
-def roi_score() -> float | None:
-    return DEFAULT_ROI_SCORE
 
 
 def parse_roi_score(value: object) -> float | None:
@@ -463,6 +421,57 @@ def roi_score_sort_key(value: object) -> tuple[int, float]:
     if score is None:
         return (1, 0.0)
     return (0, -score)
+
+
+def row_learning_signal_score(row: Mapping[str, object] | object) -> float:
+    if not isinstance(row, Mapping):
+        return 0.0
+    if "learning_signal_score" in row:
+        return parse_learning_signal_score(row.get("learning_signal_score"))
+    if "quality_score_v2" in row:
+        return parse_learning_signal_score(row.get("quality_score_v2"))
+    if "quality_score" in row:
+        return round(parse_legacy_quality_score(row.get("quality_score")) - 0.5, 3)
+    return 0.0
+
+
+def normalized_learning_signal_score(row: Mapping[str, object] | object) -> float:
+    return round(clamp(row_learning_signal_score(row) + 0.5, 0.0, 1.0), 3)
+
+
+def migrated_vocabulary_score_row(row: Mapping[str, object]) -> dict[str, object]:
+    migrated = {
+        field: value
+        for field, value in row.items()
+        if field not in LEGACY_VOCABULARY_SCORE_FIELDS and field not in VOCABULARY_SIGNAL_FIELDS
+    }
+    for legacy_field, renamed_field in LEARNING_SIGNAL_FIELD_RENAMES.items():
+        if renamed_field in row:
+            migrated[renamed_field] = parse_learning_signal_score(row.get(renamed_field))
+        elif legacy_field in row:
+            migrated[renamed_field] = parse_learning_signal_score(row.get(legacy_field))
+    migrated["learning_signal_score"] = row_learning_signal_score(row)
+    return migrated
+
+
+def parse_learning_signal_score(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(clamp(parsed, -0.5, 0.5), 3)
+
+
+def parse_legacy_quality_score(value: object) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(clamp(parsed, 0.0, 1.0), 3)
 
 
 def bounded_log_score(value: int, midpoint: int) -> float:

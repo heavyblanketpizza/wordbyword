@@ -34,6 +34,7 @@ from wordbyword.classroom_printout_studio.class_printing.printable import (
 )
 from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_filename, artifact_path
+from wordbyword.dictionary_build.candidates import normalized_learning_signal_score, row_learning_signal_score
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     CompletionResult,
@@ -1520,12 +1521,11 @@ def merge_candidate_rows(
                 "document_count": int_value(row.get("document_count")),
                 "variant_count": int_value(row.get("variant_count")),
                 "variants": split_joined(row.get("variants") or dictionary_row.get("variants") or ""),
-                "quality_score": float_value(row.get("quality_score")),
-                "quality_score_v2": float_value(row.get("quality_score_v2")),
-                "frequency_score_v2": float_value(row.get("frequency_score_v2")),
-                "dispersion_score_v2": float_value(row.get("dispersion_score_v2")),
-                "pos_score_v2": float_value(row.get("pos_score_v2")),
-                "variant_score_v2": float_value(row.get("variant_score_v2")),
+                "learning_signal_score": row_learning_signal_score(row),
+                "frequency_signal_score": float_value(score_field(row, "frequency_signal_score", "frequency_score_v2")),
+                "dispersion_signal_score": float_value(score_field(row, "dispersion_signal_score", "dispersion_score_v2")),
+                "pos_signal_score": float_value(score_field(row, "pos_signal_score", "pos_score_v2")),
+                "variant_signal_score": float_value(score_field(row, "variant_signal_score", "variant_score_v2")),
                 "roi_score": optional_float(row.get("roi_score")),
                 "example": clean_example_text(str(row.get("example") or dictionary_row.get("example") or "")),
             }
@@ -1538,7 +1538,7 @@ def vocabulary_candidate_sort_key(row: Mapping[str, object]) -> tuple[float, flo
     roi_score = float(roi) if isinstance(roi, (int, float)) else -1.0
     return (
         -roi_score,
-        -float_value(row.get("quality_score")),
+        -normalized_learning_signal_score(row),
         -int_value(row.get("count")),
         -int_value(row.get("variant_count")),
         -int_value(row.get("document_count")),
@@ -1565,8 +1565,7 @@ def prompt_candidate_row(row: Mapping[str, object]) -> dict[str, object]:
         "document_count": row.get("document_count"),
         "variant_count": row.get("variant_count"),
         "variants": row.get("variants"),
-        "quality_score": row.get("quality_score"),
-        "quality_score_v2": row.get("quality_score_v2"),
+        "learning_signal_score": row.get("learning_signal_score"),
         "roi_score": row.get("roi_score"),
         "example": row.get("example"),
     }
@@ -1687,6 +1686,12 @@ def float_value(value: object) -> float:
         return float(str(value).strip())
     except (TypeError, ValueError):
         return 0.0
+
+
+def score_field(row: Mapping[str, object], primary: str, legacy: str) -> object:
+    if primary in row:
+        return row.get(primary)
+    return row.get(legacy)
 
 
 def optional_float(value: object) -> float | None:

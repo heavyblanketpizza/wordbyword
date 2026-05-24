@@ -494,27 +494,27 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("gemma4:31b", rendered)
 
 
-    def test_render_dictionary_distribution_includes_two_histograms(self) -> None:
+    def test_render_dictionary_distribution_includes_learning_signal_and_count_histograms(self) -> None:
         entries = [
-            {"quality_score": 0.05, "count": 1},
-            {"quality_score": 0.18, "count": 4},
-            {"quality_score": 0.24, "count": 12},
-            {"quality_score": 0.32, "count": 22},
-            {"quality_score": 0.41, "count": 51},
-            {"quality_score": 0.55, "count": 88},
-            {"quality_score": 0.62, "count": 144},
-            {"quality_score": 0.78, "count": 220},
-            {"quality_score": 0.91, "count": 412},
-            {"quality_score": 0.97, "count": 980},
+            {"learning_signal_score": -0.45, "count": 1},
+            {"learning_signal_score": -0.32, "count": 4},
+            {"learning_signal_score": -0.26, "count": 12},
+            {"learning_signal_score": -0.18, "count": 22},
+            {"learning_signal_score": -0.09, "count": 51},
+            {"learning_signal_score": 0.05, "count": 88},
+            {"learning_signal_score": 0.12, "count": 144},
+            {"learning_signal_score": 0.28, "count": 220},
+            {"learning_signal_score": 0.41, "count": 412},
+            {"learning_signal_score": 0.47, "count": 980},
         ]
 
         rendered = render_dictionary_distribution(entries, color=False, width=100, bins=20, height=8)
 
         self.assertIn("RELIC // DICTIONARY DISTRIBUTION SCAN", rendered)
-        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
-        self.assertIn("0.00", rendered)
-        self.assertIn("1.00", rendered)
+        self.assertIn("-0.50", rendered)
+        self.assertIn("0.50", rendered)
         self.assertIn("█", rendered)
         self.assertIn("10 relics", rendered)
         self.assertNotIn("\x1b[", rendered)
@@ -526,24 +526,24 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("0 relics", rendered)
         self.assertIn("no signal // empty cache", rendered)
 
-    def test_render_dictionary_distribution_includes_v2_histogram_when_present(self) -> None:
+    def test_render_dictionary_distribution_reads_legacy_v2_fields(self) -> None:
         entries = [
-            {"quality_score": 0.2, "quality_score_v2": -0.4, "count": 2},
-            {"quality_score": 0.6, "quality_score_v2": 0.0, "count": 20},
-            {"quality_score": 0.9, "quality_score_v2": 0.45, "count": 200},
+            {"quality_score_v2": -0.4, "count": 2},
+            {"quality_score_v2": 0.0, "count": 20},
+            {"quality_score_v2": 0.45, "count": 200},
         ]
 
         rendered = render_dictionary_distribution(entries, color=False, width=80, bins=12, height=6)
 
-        self.assertIn("quality_score distribution", rendered)
-        self.assertIn("quality_score_v2 distribution", rendered)
+        self.assertIn("learning_signal_score distribution", rendered)
+        self.assertNotIn("quality_score_v2 distribution", rendered)
         self.assertIn("centered", rendered)
         self.assertIn("-0.50", rendered)
         self.assertIn("0.50", rendered)
         self.assertIn("occurrence count distribution", rendered)
 
     def test_render_dictionary_distribution_color_mode_emits_ansi(self) -> None:
-        entries = [{"quality_score": 0.5, "count": 10}]
+        entries = [{"learning_signal_score": 0.0, "count": 10}]
 
         rendered = render_dictionary_distribution(entries, color=True, width=80, bins=12, height=6)
 
@@ -552,9 +552,9 @@ class TerminalUiTest(unittest.TestCase):
 
     def test_render_artifact_drop_for_dictionary_includes_distribution(self) -> None:
         entries = [
-            {"quality_score": 0.21, "count": 7},
-            {"quality_score": 0.62, "count": 88},
-            {"quality_score": 0.94, "count": 612},
+            {"learning_signal_score": -0.29, "count": 7},
+            {"learning_signal_score": 0.12, "count": 88},
+            {"learning_signal_score": 0.44, "count": 612},
         ]
 
         rendered = render_artifact_drop(
@@ -569,14 +569,14 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("RELIC DROP // 11_cleaned_dictionary_candidates.jsonl", rendered)
         self.assertIn("DICTIONARY RELIC // CACHE LOCKED", rendered)
         self.assertIn("relics     :: 3 headwords", rendered)
-        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
 
     def test_render_artifact_drop_for_raw_dictionary_candidates_includes_distribution(self) -> None:
         entries = [
-            {"quality_score": 0.21, "count": 7},
-            {"quality_score": 0.62, "count": 88},
-            {"quality_score": 0.94, "count": 612},
+            {"learning_signal_score": -0.29, "count": 7},
+            {"learning_signal_score": 0.12, "count": 88},
+            {"learning_signal_score": 0.44, "count": 612},
         ]
 
         rendered = render_artifact_drop(
@@ -590,14 +590,14 @@ class TerminalUiTest(unittest.TestCase):
 
         self.assertIn("RELIC DROP // 08_dictionary_candidates.jsonl", rendered)
         self.assertIn("DICTIONARY RELIC // CANDIDATES LOCKED", rendered)
-        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
 
     def test_render_artifact_drop_for_final_dictionary_includes_distribution(self) -> None:
         entries = [
-            {"quality_score": 0.21, "count": 7},
-            {"quality_score": 0.62, "count": 88},
-            {"quality_score": 0.94, "count": 612},
+            {"learning_signal_score": -0.29, "count": 7},
+            {"learning_signal_score": 0.12, "count": 88},
+            {"learning_signal_score": 0.44, "count": 612},
         ]
 
         rendered = render_artifact_drop(
@@ -612,7 +612,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("RELIC DROP // 15_final_dictionary.jsonl", rendered)
         self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", rendered)
         self.assertIn("relics     :: 3 headwords", rendered)
-        self.assertIn("quality_score distribution", rendered)
+        self.assertIn("learning_signal_score distribution", rendered)
         self.assertIn("occurrence count distribution", rendered)
 
     def test_render_artifact_drop_for_example_sentences_skips_distribution(self) -> None:
@@ -627,7 +627,7 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("RELIC DROP // 09_example_sentences.csv", rendered)
         self.assertIn("EXAMPLE STREAM // SIGNAL FIXED", rendered)
         self.assertIn("relics     :: 12 sentences", rendered)
-        self.assertNotIn("quality_score distribution", rendered)
+        self.assertNotIn("learning_signal_score distribution", rendered)
         self.assertNotIn("occurrence count distribution", rendered)
 
 

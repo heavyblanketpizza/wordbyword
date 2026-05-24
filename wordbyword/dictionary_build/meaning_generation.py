@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 
+from wordbyword.dictionary_build.candidates import migrated_vocabulary_score_row
 from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
@@ -262,7 +263,7 @@ def materialize_generated_meaning_rows(
     rows: list[dict[str, object]] = []
     for index, entry in enumerate(dictionary_entries):
         row = {
-            **dict(entry),
+            **migrated_vocabulary_score_row(entry),
             "curation_status": "confirmed",
         }
         row_id = row_id_by_index.get(index)

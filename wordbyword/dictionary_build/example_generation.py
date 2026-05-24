@@ -8,7 +8,11 @@ from typing import Any
 from kiwipiepy import Kiwi
 
 from wordbyword.dictionary_build.canonical_keys import ordered_unique, sentence_candidate_keys, split_joined_keys
-from wordbyword.dictionary_build.candidates import is_allowed_variant_tail
+from wordbyword.dictionary_build.candidates import (
+    is_allowed_variant_tail,
+    migrated_vocabulary_score_row,
+    normalized_learning_signal_score,
+)
 from wordbyword.dictionary_build.example_cleanup import (
     CleanupProgressCallback,
     cleanup_batch_sizes,
@@ -175,7 +179,7 @@ def build_generated_dictionary_candidate_outputs(
 ) -> GeneratedExampleOutputs:
     resolved_kiwi = kiwi if kiwi is not None else Kiwi()
     quality_by_key = {
-        str(row["canonical_key"]): float(row["quality_score"])
+        str(row["canonical_key"]): normalized_learning_signal_score(row)
         for row in candidate_terms
         if row.get("canonical_key")
     }
@@ -296,7 +300,7 @@ def retry_generated_dictionary_candidate_outputs(
 ) -> GeneratedExampleOutputs:
     resolved_kiwi = kiwi if kiwi is not None else Kiwi()
     quality_by_key = {
-        str(row["canonical_key"]): float(row["quality_score"])
+        str(row["canonical_key"]): normalized_learning_signal_score(row)
         for row in candidate_terms
         if row.get("canonical_key")
     }
@@ -948,7 +952,7 @@ def materialize_generated_dictionary_rows(
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for index, row in enumerate(dictionary_entries):
-        output_row = dict(row)
+        output_row = migrated_vocabulary_score_row(row)
         row_id = row_id_by_index.get(index)
         if row_id is not None and row_id in generated_by_id:
             output_row["example"] = generated_by_id[row_id]

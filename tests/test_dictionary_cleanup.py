@@ -46,14 +46,16 @@ class DictionaryCleanupTest(unittest.TestCase):
         self.assertIn("김철수", system_prompt)
         self.assertIn("Keep ordinary Korean vocabulary", system_prompt)
 
-    def test_dictionary_cleanup_prompt_preserves_uncalculated_roi_score(self) -> None:
+    def test_dictionary_cleanup_prompt_uses_learning_signal_score(self) -> None:
         packet = build_dictionary_prompt_packet(
             dictionary_candidate("학교"),
             candidate_term("학교", "noun"),
             [],
         )
 
-        self.assertIsNone(packet["roi_score"])
+        self.assertEqual(packet["learning_signal_score"], 0.4)
+        self.assertNotIn("quality_score", packet)
+        self.assertNotIn("roi_score", packet)
 
     def test_build_cleaned_dictionary_candidate_outputs_rejects_names_and_keeps_common_words(self) -> None:
         outputs = build_cleaned_dictionary_candidate_outputs(
@@ -98,6 +100,8 @@ class DictionaryCleanupTest(unittest.TestCase):
         self.assertEqual(outputs.rejection_reason_counts["proper_name"], 1)
         self.assertEqual(outputs.rejection_reason_counts["metadata_name"], 1)
         self.assertEqual([row["canonical_key"] for row in outputs.rows], ["여우", "문장"])
+        self.assertTrue(all("quality_score" not in row for row in outputs.rows))
+        self.assertTrue(all("roi_score" not in row for row in outputs.rows))
 
 
 def dictionary_candidate(canonical_key: str, *, example: str = "") -> dict[str, object]:
@@ -108,8 +112,7 @@ def dictionary_candidate(canonical_key: str, *, example: str = "") -> dict[str, 
         "variants": [canonical_key],
         "count": 3,
         "document_count": 1,
-        "quality_score": 0.5,
-        "roi_score": None,
+        "learning_signal_score": 0.4,
         "example": example or f"{canonical_key} 예문입니다.",
         "curation_status": "candidate",
     }
@@ -144,8 +147,7 @@ def indexed_candidate(
             "pos_group": term_row["pos_group"],
             "count": dictionary_entry["count"],
             "document_count": dictionary_entry["document_count"],
-            "quality_score": dictionary_entry["quality_score"],
-            "roi_score": dictionary_entry["roi_score"],
+            "learning_signal_score": dictionary_entry["learning_signal_score"],
             "variants": dictionary_entry["variants"],
             "source_example": dictionary_entry["example"],
             "support_sentences": support_sentences,

@@ -98,6 +98,13 @@ class ArchivedMaterial:
 
 
 @dataclass(frozen=True)
+class SameFormatArchiveDuplicate:
+    suffix: str
+    sha256: str
+    paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class ArchiveRenamePlan:
     material_id: str
     source_path: Path
@@ -159,6 +166,9 @@ def rename_class_session_archive(
 
     resolved_ledger_path = (ledger_path or root / DEFAULT_ARCHIVE_LEDGER_FILENAME).resolve()
     ensure_inside_archive(root, resolved_ledger_path, allow_equal=False)
+    duplicates = discover_same_format_archive_duplicates(root)
+    if duplicates:
+        raise ClassSessionArchiveError(format_same_format_archive_duplicate_message(root, duplicates))
     now = clock or (lambda: datetime.now().astimezone())
     ledger = load_archive_ledger(resolved_ledger_path)
     entries = ledger.setdefault("entries", {})
@@ -260,6 +270,55 @@ def is_supported_archive_material_path(path: Path) -> bool:
     if path.name.startswith("~$"):
         return False
     return path.suffix.lower() in SUPPORTED_ARCHIVE_EXTENSIONS
+
+
+def discover_same_format_archive_duplicates(archive_root: Path) -> tuple[SameFormatArchiveDuplicate, ...]:
+    groups: dict[tuple[str, str], list[Path]] = {}
+    for path in sorted(archive_root.iterdir(), key=natural_path_sort_key):
+        if not is_supported_archive_material_path(path):
+            continue
+        suffix = path.suffix.lower()
+        digest = file_sha256(path)
+        groups.setdefault((suffix, digest), []).append(path)
+
+    duplicates: list[SameFormatArchiveDuplicate] = []
+    for (suffix, digest), paths in groups.items():
+        if len(paths) < 2:
+            continue
+        duplicates.append(
+            SameFormatArchiveDuplicate(
+                suffix=suffix,
+                sha256=digest,
+                paths=tuple(sorted(paths, key=natural_path_sort_key)),
+            )
+        )
+    return tuple(
+        sorted(
+            duplicates,
+            key=lambda duplicate: (
+                duplicate.suffix,
+                duplicate.sha256,
+                tuple(natural_path_sort_key(path) for path in duplicate.paths),
+            ),
+        )
+    )
+
+
+def format_same_format_archive_duplicate_message(
+    archive_root: Path,
+    duplicates: tuple[SameFormatArchiveDuplicate, ...],
+) -> str:
+    lines = [
+        (
+            "duplicate same-format class-session archive files detected in "
+            f"{archive_root}; remove or move duplicates before renaming or building usage signals:"
+        )
+    ]
+    for duplicate in duplicates:
+        lines.append(f"  {duplicate.suffix} sha256:{duplicate.sha256}")
+        for path in duplicate.paths:
+            lines.append(f"    - {path.name}")
+    return "\n".join(lines)
 
 
 def natural_path_sort_key(path: Path) -> tuple[tuple[int, int | str], ...]:

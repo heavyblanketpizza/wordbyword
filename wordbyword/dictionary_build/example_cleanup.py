@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 from kiwipiepy import Kiwi
 
 from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
+from wordbyword.dictionary_build.candidates import normalized_learning_signal_score
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
@@ -148,7 +149,7 @@ def build_cleaned_example_sentence_outputs(
 ) -> CleanedExampleOutputs:
     resolved_kiwi = kiwi if kiwi is not None else Kiwi()
     quality_by_key = {
-        str(row["canonical_key"]): float(row["quality_score"])
+        str(row["canonical_key"]): normalized_learning_signal_score(row)
         for row in candidate_terms
         if row.get("canonical_key")
     }

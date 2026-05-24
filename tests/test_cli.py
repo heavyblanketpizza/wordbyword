@@ -837,8 +837,8 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "11_cleaned_dictionary_candidates.jsonl"
             rows = [
-                {"canonical_key": "가다", "quality_score": 0.42, "count": 12},
-                {"canonical_key": "오다", "quality_score": 0.71, "count": 88},
+                {"canonical_key": "가다", "learning_signal_score": -0.08, "count": 12},
+                {"canonical_key": "오다", "learning_signal_score": 0.21, "count": 88},
             ]
             jsonl_path.write_text(
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
@@ -863,9 +863,9 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "15_final_dictionary.jsonl"
             rows = [
-                {"quality_score": 0.12, "count": 3},
-                {"quality_score": 0.46, "count": 18},
-                {"quality_score": 0.91, "count": 220},
+                {"learning_signal_score": -0.38, "count": 3},
+                {"learning_signal_score": -0.04, "count": 18},
+                {"learning_signal_score": 0.41, "count": 220},
             ]
             jsonl_path.write_text(
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
@@ -883,7 +883,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
             self.assertIn("3 headwords", output)
             self.assertIn("replay // no llm calls", output)
-            self.assertIn("quality_score distribution", output)
+            self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
             self.assertEqual(stderr.getvalue(), "")
 
@@ -891,9 +891,9 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "11_cleaned_dictionary_candidates.jsonl"
             rows = [
-                {"quality_score": 0.12, "count": 3},
-                {"quality_score": 0.46, "count": 18},
-                {"quality_score": 0.91, "count": 220},
+                {"learning_signal_score": -0.38, "count": 3},
+                {"learning_signal_score": -0.04, "count": 18},
+                {"learning_signal_score": 0.41, "count": 220},
             ]
             jsonl_path.write_text(
                 "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
@@ -911,7 +911,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertIn("DICTIONARY RELIC // CACHE LOCKED", output)
             self.assertIn("3 headwords", output)
             self.assertIn("replay // no llm calls", output)
-            self.assertIn("quality_score distribution", output)
+            self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
             self.assertEqual(stderr.getvalue(), "")
 
@@ -919,7 +919,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "14_vocabulary_with_meanings.jsonl"
             jsonl_path.write_text(
-                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                json.dumps({"learning_signal_score": 0.0, "count": 7}) + "\n",
                 encoding="utf-8",
             )
 
@@ -931,7 +931,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
             self.assertIn("MEANING RELAY // REFERENCE MERGED", output)
-            self.assertIn("quality_score distribution", output)
+            self.assertIn("learning_signal_score distribution", output)
             self.assertIn("occurrence count distribution", output)
             self.assertEqual(stderr.getvalue(), "")
 
@@ -957,7 +957,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir.mkdir()
             jsonl_path = output_dir / "15_final_dictionary.jsonl"
             jsonl_path.write_text(
-                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                json.dumps({"learning_signal_score": 0.0, "count": 7}) + "\n",
                 encoding="utf-8",
             )
 
@@ -970,7 +970,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("15_final_dictionary.jsonl", output)
             self.assertIn("MEANING FORGE // EMPTY SLOTS FILLED", output)
-            self.assertIn("quality_score distribution", output)
+            self.assertIn("learning_signal_score distribution", output)
 
     def test_main_with_show_distribution_uses_available_dictionary_artifact_without_path(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -978,7 +978,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir.mkdir()
             jsonl_path = output_dir / "08_dictionary_candidates.jsonl"
             jsonl_path.write_text(
-                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                json.dumps({"learning_signal_score": 0.0, "count": 7}) + "\n",
                 encoding="utf-8",
             )
 
@@ -991,13 +991,13 @@ class ShowDistributionCliTest(unittest.TestCase):
             output = stdout.getvalue()
             self.assertIn("08_dictionary_candidates.jsonl", output)
             self.assertIn("DICTIONARY RELIC // CANDIDATES LOCKED", output)
-            self.assertIn("quality_score distribution", output)
+            self.assertIn("learning_signal_score distribution", output)
 
     def test_main_with_show_distribution_skips_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             jsonl_path = Path(workspace) / "relics.jsonl"
             jsonl_path.write_text(
-                json.dumps({"quality_score": 0.5, "count": 7}) + "\n",
+                json.dumps({"learning_signal_score": 0.0, "count": 7}) + "\n",
                 encoding="utf-8",
             )
 
@@ -1105,7 +1105,6 @@ class ShowDistributionCliTest(unittest.TestCase):
                             {
                                 "canonical_key": "없는말",
                                 "display": "없는말",
-                                "roi_score": None,
                                 "example": "없는말 예문",
                             },
                             ensure_ascii=False,
@@ -1152,8 +1151,9 @@ class ShowDistributionCliTest(unittest.TestCase):
             ]
             self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
             self.assertEqual(rows[1]["meaning"], "")
-            self.assertTrue(all(row["roi_score"] is None for row in rows))
-            self.assertEqual(rows[0]["quality_score_v2"], 0.35)
+            self.assertTrue(all("roi_score" not in row for row in rows))
+            self.assertTrue(all("quality_score_v2" not in row for row in rows))
+            self.assertEqual(rows[0]["learning_signal_score"], 0.35)
             self.assertTrue(all(row["curation_status"] == "confirmed" for row in rows))
 
             summary = json.loads((output_dir / "00_summary.json").read_text(encoding="utf-8"))
@@ -1221,7 +1221,6 @@ class ShowDistributionCliTest(unittest.TestCase):
                                 "display": "없는말",
                                 "example": "없는말 예문",
                                 "curation_status": "confirmed",
-                                "roi_score": None,
                                 "meaning": "",
                             },
                             ensure_ascii=False,
@@ -1252,8 +1251,9 @@ class ShowDistributionCliTest(unittest.TestCase):
                 ).splitlines()
             ]
             self.assertEqual(rows[0]["meaning"], "학생들이 배우는 곳.")
-            self.assertTrue(all(row["roi_score"] is None for row in rows))
-            self.assertEqual(rows[0]["quality_score_v2"], 0.35)
+            self.assertTrue(all("roi_score" not in row for row in rows))
+            self.assertTrue(all("quality_score_v2" not in row for row in rows))
+            self.assertEqual(rows[0]["learning_signal_score"], 0.35)
             self.assertFalse(rows[0]["meaning_generated_with_ollama"])
             self.assertEqual(rows[1]["meaning"], "예문에서 쓰인 뜻.")
             self.assertTrue(rows[1]["meaning_generated_with_ollama"])

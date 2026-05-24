@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from wordbyword.dictionary_build.candidates import migrated_vocabulary_score_row
+
 
 @dataclass(frozen=True)
 class MeaningAssignmentOutputs:
@@ -29,7 +31,7 @@ def build_dictionary_candidates_with_meanings(
         has_reference_match = canonical_key in meaning_by_key
         meaning = meaning_by_key.get(canonical_key, "")
         row = {
-            **dict(entry),
+            **migrated_vocabulary_score_row(entry),
             "curation_status": "confirmed",
             "meaning": meaning,
         }

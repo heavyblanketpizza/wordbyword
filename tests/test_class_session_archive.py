@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ from wordbyword.class_archive.live_lexicon import (
 )
 from wordbyword.class_archive.usage_signals import (
     DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
+    UsageSignalBuildError,
     build_usage_signals,
     discover_usage_signal_documents,
 )
@@ -148,6 +150,93 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
             self.assertEqual(result.skipped_count, 0)
             self.assertEqual(len(client.calls), 0)
             self.assertTrue(existing.exists())
+
+    def test_refuses_unmanaged_duplicate_of_existing_managed_docx_before_llm_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            existing = archive / "2026-05-10_grade1-reading-apples.docx"
+            duplicate = archive / "copy of apples.docx"
+            write_docx(existing, "사과를 먹고 학교에 갑니다.")
+            shutil.copyfile(existing, duplicate)
+            client = RecordingArchiveClient({})
+
+            with self.assertRaises(ClassSessionArchiveError) as context:
+                rename_class_session_archive(
+                    archive,
+                    client=client,
+                    model="fake-ollama",
+                    apply=True,
+                )
+
+            message = str(context.exception)
+            self.assertIn("duplicate same-format class-session archive files detected", message)
+            self.assertIn(existing.name, message)
+            self.assertIn(duplicate.name, message)
+            self.assertEqual(len(client.calls), 0)
+            self.assertTrue(existing.exists())
+            self.assertTrue(duplicate.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).exists())
+
+    def test_refuses_two_unmanaged_duplicate_docx_files_before_partial_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, "중복된 수업 자료입니다.")
+            shutil.copyfile(first, second)
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "grade1",
+                    "topic_slug": "reading",
+                    "short_title_slug": "duplicate-material",
+                    "korean_title": "중복 자료",
+                    "confidence": 0.9,
+                }
+            )
+
+            with self.assertRaises(ClassSessionArchiveError) as context:
+                rename_class_session_archive(
+                    archive,
+                    client=client,
+                    model="fake-ollama",
+                    apply=True,
+                )
+
+            message = str(context.exception)
+            self.assertIn(first.name, message)
+            self.assertIn(second.name, message)
+            self.assertEqual(len(client.calls), 0)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).exists())
+
+    def test_same_suffix_different_content_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "첫 번째 수업 자료입니다.")
+            write_docx(archive / "material 2.docx", "두 번째 수업 자료입니다.")
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "grade1",
+                    "topic_slug": "reading",
+                    "short_title_slug": "practice",
+                    "korean_title": "읽기 자료",
+                    "confidence": 0.75,
+                }
+            )
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                apply=False,
+            )
+
+            self.assertEqual(result.planned_count, 2)
+            self.assertEqual(len(client.calls), 2)
 
     def test_mixed_archive_filters_named_files_and_naturally_sorts_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -296,6 +385,29 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
             self.assertGreater(len(candidate_terms), 0)
             self.assertIn("먹다", {row["canonical_key"] for row in candidate_terms})
 
+    def test_usage_signal_build_refuses_duplicate_managed_docx_files_before_writing_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            output = root / "usage-signal-build"
+            archive.mkdir()
+            first = archive / "2026-05-10_grade1-reading-apples.docx"
+            second = archive / "2026-05-11_grade1-reading-apples-copy.docx"
+            write_docx(first, "사과를 먹고 학교에 갑니다.")
+            shutil.copyfile(first, second)
+
+            with self.assertRaises(UsageSignalBuildError) as context:
+                build_usage_signals(
+                    archive_root=archive,
+                    output_root=output,
+                )
+
+            message = str(context.exception)
+            self.assertIn("duplicate same-format class-session archive files detected", message)
+            self.assertIn(first.name, message)
+            self.assertIn(second.name, message)
+            self.assertFalse(output.exists())
+
 
 class LiveLexiconUpdateTest(unittest.TestCase):
     def test_update_live_lexicon_seeds_canonical_and_supplemental_on_initial_run(self) -> None:
@@ -317,7 +429,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "먹다",
                         "count": 48,
                         "document_count": 3,
-                        "quality_score": 0.9,
+                        "learning_signal_score": 0.4,
                         "roi_score": 0.5,
                         "curation_status": "confirmed",
                         "variants": ["먹다", "먹고"],
@@ -330,7 +442,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "물",
                         "count": 47,
                         "document_count": 3,
-                        "quality_score": 0.8,
+                        "learning_signal_score": 0.3,
                         "roi_score": 0.4,
                         "curation_status": "candidate",
                         "variants": ["물"],
@@ -345,7 +457,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "먹다",
                         "count": 7,
                         "document_count": 2,
-                        "quality_score": 0.6,
+                        "learning_signal_score": 0.3,
                         "variants": ["먹고", "먹어요", "먹다"],
                         "example": "사과를 먹고 학교에 갑니다.",
                     },
@@ -353,7 +465,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "새단어",
                         "count": 3,
                         "document_count": 1,
-                        "quality_score": 0.612,
+                        "learning_signal_score": 0.112,
                         "example": "새단어를 배웠어요.",
                     },
                 ],
@@ -386,7 +498,8 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertNotIn("meaning_generated_with_ollama", updated_rows[0])
             self.assertEqual(updated_rows[0]["canonical_count"], 48)
             self.assertEqual(updated_rows[0]["canonical_document_count"], 3)
-            self.assertEqual(updated_rows[0]["quality_score"], 0.9)
+            self.assertNotIn("quality_score", updated_rows[0])
+            self.assertEqual(updated_rows[0]["learning_signal_score"], 0.4)
             self.assertEqual(updated_rows[0]["curation_status"], "canonical")
             self.assertEqual(updated_rows[0]["class_count"], 7)
             self.assertEqual(updated_rows[0]["class_printout_count"], 2)
@@ -394,6 +507,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertEqual(updated_rows[0]["roi_score"], 0.8)
             self.assertEqual(updated_rows[1]["canonical_count"], 47)
             self.assertEqual(updated_rows[1]["canonical_document_count"], 3)
+            self.assertEqual(updated_rows[1]["learning_signal_score"], 0.3)
             self.assertEqual(updated_rows[1]["curation_status"], "canonical")
             self.assertEqual(updated_rows[1]["class_count"], 0)
             self.assertEqual(updated_rows[1]["class_printout_count"], 0)
@@ -428,7 +542,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "display": "먹다",
                         "canonical_count": 99,
                         "canonical_document_count": 9,
-                        "quality_score": 0.7,
+                        "learning_signal_score": 0.2,
                         "curation_status": "reviewed",
                         "variants": ["먹다"],
                         "meaning": "live meaning wins",
@@ -447,7 +561,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "먹다",
                         "count": 7,
                         "document_count": 2,
-                        "quality_score": 0.6,
+                        "learning_signal_score": 0.16,
                         "variants": ["먹고"],
                     },
                 ],
@@ -490,7 +604,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "물",
                         "canonical_count": 47,
                         "canonical_document_count": 3,
-                        "quality_score": 0.9,
+                        "learning_signal_score": 0.4,
                         "variants": ["물"],
                     },
                 ],
@@ -502,7 +616,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "팀",
                         "display": "팀",
                         "variants": ["팀", "팀은"],
-                        "quality_score": 0.5,
+                        "learning_signal_score": 0.0,
                         "class_count": 99,
                         "class_printout_count": 99,
                         "source_tier": "supplemental_private",
@@ -514,7 +628,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                     {
                         "canonical_key": "사라짐",
                         "display": "사라짐",
-                        "quality_score": 0.4,
+                        "learning_signal_score": -0.1,
                         "class_count": 2,
                         "class_printout_count": 1,
                         "source_tier": "supplemental_private",
@@ -524,7 +638,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                     {
                         "canonical_key": "물",
                         "display": "물",
-                        "quality_score": 0.8,
+                        "learning_signal_score": 0.3,
                         "class_count": 4,
                         "class_printout_count": 2,
                         "source_tier": "supplemental_private",
@@ -542,7 +656,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "물",
                         "count": 7,
                         "document_count": 2,
-                        "quality_score": 0.6,
+                        "learning_signal_score": 0.1,
                         "variants": ["물을"],
                     },
                     {
@@ -552,7 +666,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "variants": ["팀", "팀을"],
                         "count": 4,
                         "document_count": 2,
-                        "quality_score": 0.82,
+                        "learning_signal_score": 0.32,
                         "example": "팀이 함께 실험했어요.",
                         "curation_status": "candidate",
                     },
@@ -563,7 +677,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "variants": ["새단어"],
                         "count": 3,
                         "document_count": 1,
-                        "quality_score": 0.7,
+                        "learning_signal_score": 0.2,
                         "example": "새단어를 배웠어요.",
                     },
                 ],
@@ -584,10 +698,14 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertEqual(result.supplemental_inactive_count, 1)
             self.assertEqual(result.supplemental_promoted_count, 1)
             self.assertEqual([row["canonical_key"] for row in read_jsonl(unmatched_output_path)], ["팀", "새단어"])
-            supplemental_by_key = {row["canonical_key"]: row for row in read_jsonl(supplemental_lexicon_path)}
+            supplemental_rows = read_jsonl(supplemental_lexicon_path)
+            self.assertEqual([row["canonical_key"] for row in supplemental_rows], ["팀", "새단어", "물", "사라짐"])
+            supplemental_by_key = {row["canonical_key"]: row for row in supplemental_rows}
             self.assertEqual(supplemental_by_key["팀"]["class_count"], 4)
             self.assertEqual(supplemental_by_key["팀"]["class_printout_count"], 2)
-            self.assertEqual(supplemental_by_key["팀"]["quality_score"], 0.82)
+            self.assertNotIn("quality_score", supplemental_by_key["팀"])
+            self.assertEqual(supplemental_by_key["팀"]["learning_signal_score"], 0.32)
+            self.assertEqual(supplemental_by_key["팀"]["roi_score"], 0.82)
             self.assertEqual(supplemental_by_key["팀"]["variants"], ["팀", "팀은", "팀을"])
             self.assertEqual(supplemental_by_key["팀"]["manual_note"], "keep")
             self.assertEqual(supplemental_by_key["팀"]["curation_status"], "reviewed")
@@ -601,6 +719,53 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertIs(supplemental_by_key["물"]["active"], False)
             self.assertEqual(supplemental_by_key["새단어"]["source_tier"], "supplemental_private")
             self.assertIs(supplemental_by_key["새단어"]["active"], True)
+
+    def test_update_live_lexicon_sorts_canonical_rows_by_roi(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
+            usage_summary_path = root / "usage-signal-build" / "00_summary.json"
+            unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
+            write_jsonl(
+                live_lexicon_path,
+                [
+                    {
+                        "canonical_key": "낮다",
+                        "canonical_count": 10,
+                        "canonical_document_count": 1,
+                        "learning_signal_score": -0.2,
+                    },
+                    {
+                        "canonical_key": "높다",
+                        "canonical_count": 10,
+                        "canonical_document_count": 1,
+                        "learning_signal_score": 0.4,
+                    },
+                    {
+                        "canonical_key": "같다",
+                        "canonical_count": 10,
+                        "canonical_document_count": 1,
+                        "learning_signal_score": 0.2,
+                    },
+                ],
+            )
+            usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            usage_summary_path.write_text(json.dumps({"document_count": 1}), encoding="utf-8")
+            write_jsonl(usage_candidates_path, [])
+
+            update_live_lexicon(
+                usage_candidates_path=usage_candidates_path,
+                usage_summary_path=usage_summary_path,
+                live_lexicon_path=live_lexicon_path,
+                supplemental_lexicon_path=supplemental_lexicon_path,
+                unmatched_usage_output_path=unmatched_output_path,
+            )
+
+            rows = read_jsonl(live_lexicon_path)
+            self.assertEqual([row["canonical_key"] for row in rows], ["높다", "같다", "낮다"])
+            self.assertEqual([row["roi_score"] for row in rows], [0.9, 0.7, 0.3])
 
     def test_update_live_lexicon_regeneration_is_idempotent_for_same_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -618,7 +783,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "먹다",
                         "count": 48,
                         "document_count": 3,
-                        "quality_score": 0.927,
+                        "learning_signal_score": 0.427,
                         "roi_score": 0.5,
                     },
                 ],
@@ -632,13 +797,13 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                         "canonical_key": "먹다",
                         "count": 7,
                         "document_count": 2,
-                        "quality_score": 0.876,
+                        "learning_signal_score": 0.376,
                     },
                     {
                         "canonical_key": "새단어",
                         "count": 3,
                         "document_count": 1,
-                        "quality_score": 0.7,
+                        "learning_signal_score": 0.2,
                     },
                 ],
             )

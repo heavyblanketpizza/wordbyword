@@ -220,37 +220,35 @@ class WholeDocumentRewriteTest(unittest.TestCase):
 
 
 class VocabularyGuidedRewriteTest(unittest.TestCase):
-    def test_dictionary_candidates_rank_by_roi_or_quality_and_cap_at_top_250(self) -> None:
+    def test_dictionary_candidates_rank_by_roi_or_learning_signal_and_cap_at_top_250(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             dictionary_path = Path(workspace) / "15_final_dictionary.jsonl"
             rows = [
                 {
                     "canonical_key": "missing-example",
                     "example": "",
-                    "quality_score": 1.0,
+                    "learning_signal_score": 0.5,
                     "roi_score": 1.0,
                     "count": 999,
                 },
                 {
                     "canonical_key": "roi-wins",
                     "example": "선물 예문입니다.",
-                    "quality_score": 0.1,
+                    "learning_signal_score": -0.4,
                     "roi_score": 1.0,
                     "count": 1,
                 },
                 {
-                    "canonical_key": "quality-only",
+                    "canonical_key": "learning-only",
                     "example": "학교 예문입니다.",
-                    "quality_score": 0.99,
-                    "roi_score": None,
+                    "learning_signal_score": 0.49,
                     "count": 1,
                 },
                 *[
                     {
                         "canonical_key": f"단어{index:03d}",
                         "example": f"단어{index:03d} 예문입니다.",
-                        "quality_score": round(0.8 - (index * 0.001), 3),
-                        "roi_score": None,
+                        "learning_signal_score": round(0.3 - (index * 0.001), 3),
                         "count": index,
                     }
                     for index in range(260)
@@ -262,7 +260,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
 
             self.assertEqual(len(candidates), 250)
             self.assertEqual(candidates[0].canonical_key, "roi-wins")
-            self.assertEqual(candidates[1].canonical_key, "quality-only")
+            self.assertEqual(candidates[1].canonical_key, "learning-only")
             self.assertNotIn("missing-example", {candidate.canonical_key for candidate in candidates})
 
     def test_dictionary_candidates_reject_invalid_roi_scores(self) -> None:
@@ -274,7 +272,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                     {
                         "canonical_key": "학교",
                         "example": "학교 예문입니다.",
-                        "quality_score": 0.9,
+                        "learning_signal_score": 0.4,
                         "roi_score": -0.1,
                     }
                 ],
@@ -286,8 +284,8 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
     def test_vocabulary_selection_response_validation_rejects_bad_shapes(self) -> None:
         context = minimal_context_packet()
         candidates = [
-            VocabularyCandidate("선물", "선물을 받았다.", 0.9, None, 0.9, 1),
-            VocabularyCandidate("학교", "학교에 갔다.", 0.8, None, 0.8, 1),
+            VocabularyCandidate("선물", "선물을 받았다.", 0.4, None, 0.9, 1),
+            VocabularyCandidate("학교", "학교에 갔다.", 0.3, None, 0.8, 1),
         ]
         scenarios = [
             ("wrong source", {"source_id": "other", "selected_vocabulary": ["선물", "학교"]}),
@@ -709,8 +707,7 @@ def write_dictionary_fixture(path: Path, *, count: int = 20) -> None:
             "canonical_key": key,
             "display": key,
             "example": f"{key} 예문입니다.",
-            "quality_score": round(0.95 - (index * 0.01), 3),
-            "roi_score": None,
+            "learning_signal_score": round(0.45 - (index * 0.01), 3),
             "count": 100 - index,
             "meaning": f"{key}의 뜻.",
         }

@@ -11,6 +11,7 @@ from wordbyword.dictionary_build.artifacts import (
     artifact_path,
     optional_artifacts_from,
 )
+from wordbyword.dictionary_build.candidates import migrated_vocabulary_score_row
 from wordbyword.dictionary_build.dictionary_cleanup import CleanedDictionaryOutputs, build_cleaned_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_assignment import LinkedDictionaryOutputs, build_linked_dictionary_candidate_outputs
 from wordbyword.dictionary_build.example_cleanup import (
@@ -327,7 +328,7 @@ def write_generated_dictionary_candidates_from_saved(
     write_jsonl(
         generated_output_path,
         [
-            {**dict(row), "example_generated_with_ollama": False}
+            {**migrated_vocabulary_score_row(row), "example_generated_with_ollama": False}
             for row in linked_rows
         ],
     )
@@ -510,7 +511,7 @@ def write_generated_meaning_dictionary_candidates_from_saved(
         generated_meaning_output_path,
         [
             {
-                **dict(row),
+                **migrated_vocabulary_score_row(row),
                 "curation_status": "confirmed",
                 "meaning": str(row.get("meaning", "") or ""),
                 "meaning_generated_with_ollama": False,

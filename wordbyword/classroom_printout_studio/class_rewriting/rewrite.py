@@ -21,7 +21,7 @@ from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
     parse_json_object,
 )
-from wordbyword.dictionary_build.candidates import parse_roi_score
+from wordbyword.dictionary_build.candidates import normalized_learning_signal_score, parse_roi_score, row_learning_signal_score
 from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, read_jsonl, write_jsonl
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
@@ -37,7 +37,7 @@ DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
 VOCABULARY_GUIDED_CANDIDATE_LIMIT = 250
 VOCABULARY_GUIDED_SELECTION_LIMIT = 20
 VOCABULARY_GUIDED_SCORING_POLICY = (
-    "selection_score=max(quality_score, roi_score); null roi_score falls back to quality_score"
+    "selection_score=roi_score when present; otherwise normalized learning_signal_score"
 )
 IMAGE_SRC_PATTERN = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -191,7 +191,7 @@ class SourceWholeRewriteBatchOutputs:
 class VocabularyCandidate:
     canonical_key: str
     example: str
-    quality_score: float
+    learning_signal_score: float
     roi_score: float | None
     selection_score: float
     count: int
@@ -206,7 +206,7 @@ class VocabularyCandidate:
         return {
             "canonical_key": self.canonical_key,
             "example": self.example,
-            "quality_score": self.quality_score,
+            "learning_signal_score": self.learning_signal_score,
             "roi_score": self.roi_score,
             "selection_score": self.selection_score,
             "count": self.count,
@@ -715,7 +715,7 @@ def load_vocabulary_guided_candidates(dictionary_path: Path) -> list[VocabularyC
     candidates.sort(
         key=lambda candidate: (
             -candidate.selection_score,
-            -candidate.quality_score,
+            -candidate.learning_signal_score,
             -candidate.count,
             candidate.canonical_key,
         )
@@ -733,44 +733,22 @@ def vocabulary_candidate_from_dictionary_row(
     example = str(row.get("example", "") or "").strip()
     if not canonical_key or not example:
         return None
-    quality_score = parse_selection_score(
-        row.get("quality_score"),
-        field_name="quality_score",
-        row_number=row_number,
-        dictionary_path=dictionary_path,
-    )
+    learning_signal_score = row_learning_signal_score(row)
+    normalized_signal_score = normalized_learning_signal_score(row)
     try:
         roi_score = parse_roi_score(row.get("roi_score"))
     except ValueError as exc:
         raise SourceRewriteError(f"Invalid roi_score in row {row_number} of {dictionary_path}: {exc}") from exc
     count = parse_nonnegative_int(row.get("count"), field_name="count", row_number=row_number, dictionary_path=dictionary_path)
-    selection_score = max(quality_score, roi_score) if roi_score is not None else quality_score
+    selection_score = roi_score if roi_score is not None else normalized_signal_score
     return VocabularyCandidate(
         canonical_key=canonical_key,
         example=example,
-        quality_score=quality_score,
+        learning_signal_score=learning_signal_score,
         roi_score=roi_score,
         selection_score=selection_score,
         count=count,
     )
-
-
-def parse_selection_score(
-    value: object,
-    *,
-    field_name: str,
-    row_number: int,
-    dictionary_path: Path,
-) -> float:
-    if value is None or (isinstance(value, str) and not value.strip()) or isinstance(value, bool):
-        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}")
-    try:
-        score = float(value)
-    except (TypeError, ValueError) as exc:
-        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}") from exc
-    if not 0.0 <= score <= 1.0:
-        raise SourceRewriteError(f"Invalid {field_name} in row {row_number} of {dictionary_path}: {value!r}")
-    return score
 
 
 def parse_nonnegative_int(

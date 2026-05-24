@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from wordbyword.dictionary_build.canonical_keys import row_covered_canonical_keys
+from wordbyword.dictionary_build.candidates import migrated_vocabulary_score_row, normalized_learning_signal_score
 
 STAGE_TWELVE_STRIPPED_FIELDS = {
     "original_example",
@@ -54,7 +55,7 @@ def build_linked_dictionary_candidate_outputs(
             IndexedDictionaryCandidate(
                 index=index,
                 row=row,
-                quality_score=safe_float(row.get("quality_score")),
+                quality_score=normalized_learning_signal_score(row),
             )
             for index, row in enumerate(dictionary_entries)
         ],
@@ -127,7 +128,7 @@ def build_linked_dictionary_row(
         if matched_sentence is not None
         else original_example
     )
-    for key, value in entry.items():
+    for key, value in migrated_vocabulary_score_row(entry).items():
         if key in STAGE_TWELVE_STRIPPED_FIELDS:
             continue
         if key == "example":

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
+from wordbyword.dictionary_build.candidates import normalized_learning_signal_score
 from wordbyword.dictionary_build.text import clean_example_text, strip_edge_curly_quotes
 
 FILTERED_EXAMPLE_SENTENCE_DENSITY_MINIMUM = 0.0135
@@ -17,7 +18,7 @@ def example_sentence_rows(
     candidate_terms: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
     quality_by_key = {
-        str(row["canonical_key"]): float(row["quality_score"])
+        str(row["canonical_key"]): normalized_learning_signal_score(row)
         for row in candidate_terms
         if row.get("canonical_key")
     }
