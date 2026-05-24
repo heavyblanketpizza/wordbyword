@@ -117,6 +117,33 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertTrue(args.include_punctuation)
         self.assertTrue(args.include_numbers)
 
+    def test_dictionary_source_archive_commands_default_to_dictionary_original(self) -> None:
+        rename_args = build_parser().parse_args(["--rename-dictionary-source-archive"])
+        resolve_args = build_parser().parse_args(["--resolve-dictionary-source-duplicates"])
+
+        self.assertEqual(rename_args.rename_dictionary_source_archive, Path("build-dictionary/original"))
+        self.assertFalse(rename_args.apply_dictionary_source_renames)
+        self.assertEqual(resolve_args.resolve_dictionary_source_duplicates, Path("build-dictionary/original"))
+
+    def test_apply_dictionary_source_renames_requires_rename_command(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--apply-dictionary-source-renames", "--show-distribution"])
+        stderr = io.StringIO()
+
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as context:
+            validate_args(parser, args)
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("--apply-dictionary-source-renames requires --rename-dictionary-source-archive", stderr.getvalue())
+
+    def test_yes_accepts_dictionary_source_duplicate_resolver(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--resolve-dictionary-source-duplicates", "--yes"])
+
+        validate_args(parser, args)
+
+        self.assertTrue(args.yes)
+
     def test_no_command_is_rejected(self) -> None:
         parser = build_parser()
         args = parser.parse_args([])
@@ -1144,6 +1171,43 @@ class BuildDictionaryCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("1 unresolved generated-example failure", stderr.getvalue())
         self.assertIn("13_generated_example_failures.jsonl", stderr.getvalue())
+
+
+class DictionarySourceArchiveCliTest(unittest.TestCase):
+    def test_main_routes_dictionary_source_rename(self) -> None:
+        with patch("sys.stdout", io.StringIO()), patch(
+            "wordbyword.cli.app.rename_dictionary_source_archive_cli",
+            return_value=0,
+        ) as rename_cli:
+            exit_code = main(
+                [
+                    "--rename-dictionary-source-archive",
+                    "sources",
+                    "--apply-dictionary-source-renames",
+                    "--ollama-model",
+                    "gemma4:31b",
+                    "--ollama-base-url",
+                    "http://localhost:11434",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        rename_cli.assert_called_once_with(
+            archive_root=Path("sources"),
+            model="gemma4:31b",
+            base_url="http://localhost:11434",
+            apply=True,
+        )
+
+    def test_main_routes_dictionary_source_duplicate_resolution(self) -> None:
+        with patch("sys.stdout", io.StringIO()), patch(
+            "wordbyword.cli.app.resolve_dictionary_source_duplicates_cli",
+            return_value=0,
+        ) as resolve_cli:
+            exit_code = main(["--resolve-dictionary-source-duplicates", "sources", "--yes"])
+
+        self.assertEqual(exit_code, 0)
+        resolve_cli.assert_called_once_with(archive_root=Path("sources"), yes=True)
 
 
 def wordbyword_cli_unresolved_generated_example_failures():

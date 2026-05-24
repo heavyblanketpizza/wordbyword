@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,9 +24,34 @@ from wordbyword.dictionary_build.resumable import (
     UnresolvedGeneratedExampleFailures,
     build_resumable_dictionary,
 )
+from wordbyword.dictionary_build.source_archive import (
+    DEFAULT_DICTIONARY_SOURCE_LEDGER_FILENAME,
+    DICTIONARY_SOURCE_ARCHIVE_SCHEMA_VERSION,
+    DictionarySourceArchiveError,
+)
 
 
 class ResumableDictionaryBuildTest(unittest.TestCase):
+    def test_unmanaged_source_fails_before_output_artifacts_are_written(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            input_dir = root / "original"
+            output_dir = root / "output"
+            input_dir.mkdir()
+            (input_dir / "sample.txt").write_text("학교에 갑니다.", encoding="utf-8")
+
+            with self.assertRaises(DictionarySourceArchiveError):
+                build_resumable_dictionary(
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    reference_dictionary_path=root / "reference.jsonl",
+                    include_punctuation=False,
+                    include_numbers=False,
+                    model="gemma4:31b",
+                )
+
+            self.assertFalse(output_dir.exists())
+
     def test_legacy_valid_artifacts_skip_all_checkpoints_and_write_cache(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             input_dir, output_dir, reference_path = prepare_workspace(Path(workspace))
@@ -263,13 +289,56 @@ def prepare_workspace(root: Path) -> tuple[Path, Path, Path]:
     output_dir = root / "output"
     input_dir.mkdir()
     output_dir.mkdir()
-    (input_dir / "sample.txt").write_text("학교에 갑니다.", encoding="utf-8")
+    source_name = "textbook_government_grade1_korean_2022_term1_sample.txt"
+    source_path = input_dir / source_name
+    source_path.write_text("학교에 갑니다.", encoding="utf-8")
+    write_dictionary_source_ledger(input_dir, source_path)
     reference_path = root / "reference.jsonl"
     reference_path.write_text(
         json.dumps({"canonical_key": "학교", "meaning": "배우는 곳."}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return input_dir, output_dir, reference_path
+
+
+def write_dictionary_source_ledger(input_dir: Path, source_path: Path) -> None:
+    digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    (input_dir / DEFAULT_DICTIONARY_SOURCE_LEDGER_FILENAME).write_text(
+        json.dumps(
+            {
+                "schema_version": DICTIONARY_SOURCE_ARCHIVE_SCHEMA_VERSION,
+                "entries": {
+                    f"sha256:{digest}": {
+                        "material_id": f"sha256:{digest}",
+                        "sha256": digest,
+                        "byte_size": source_path.stat().st_size,
+                        "extension": source_path.suffix.lower(),
+                        "original_path": source_path.name,
+                        "current_path": source_path.name,
+                        "first_seen_at": "2026-05-24T00:00:00+09:00",
+                        "last_seen_at": "2026-05-24T00:00:00+09:00",
+                        "classification": {
+                            "source_type": "textbook",
+                            "authority": "government",
+                            "grade_level": "grade1",
+                            "subject_slug": "korean",
+                            "curriculum_year": "2022",
+                            "term_slug": "term1",
+                            "title_slug": "sample",
+                            "korean_title": "샘플",
+                            "confidence": 0.95,
+                        },
+                        "rename_history": [],
+                        "status": "active",
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def checkpoint_keys() -> tuple[str, ...]:

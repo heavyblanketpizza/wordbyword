@@ -11,6 +11,7 @@ from wordbyword.dictionary_build.text import clean_layout_text
 
 SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md"}
 TEXT_ENCODINGS = ("utf-8-sig", "utf-8", "cp949", "euc-kr")
+IGNORED_DOCUMENT_DIRNAMES = {".wordbyword-dictionary-source-duplicates"}
 
 
 def discover_documents(input_dir: Path) -> list[Path]:
@@ -22,7 +23,16 @@ def discover_documents(input_dir: Path) -> list[Path]:
         path
         for path in input_dir.rglob("*")
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        and not is_ignored_document_path(path, input_dir)
     )
+
+
+def is_ignored_document_path(path: Path, input_dir: Path) -> bool:
+    try:
+        relative = path.relative_to(input_dir)
+    except ValueError:
+        return False
+    return any(part in IGNORED_DOCUMENT_DIRNAMES for part in relative.parts)
 
 
 def document_id_for(path: Path, input_dir: Path) -> str:

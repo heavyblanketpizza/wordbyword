@@ -41,6 +41,13 @@ from wordbyword.dictionary_build.resumable import (
     build_resumable_dictionary,
     generated_example_failure_count as resumable_generated_example_failure_count,
 )
+from wordbyword.dictionary_build.source_archive import (
+    DictionarySourceArchiveError,
+    DictionarySourceDuplicateResolutionResult,
+    apply_dictionary_source_duplicate_resolution_result,
+    rename_dictionary_source_archive,
+    resolve_dictionary_source_duplicates,
+)
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
     SourceMaterialBundle,
     SourceMaterialParseError,
@@ -301,12 +308,24 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
+    if args.resolve_dictionary_source_duplicates is not None:
+        return resolve_dictionary_source_duplicates_cli(
+            archive_root=args.resolve_dictionary_source_duplicates,
+            yes=args.yes,
+        )
     if args.rename_class_session_archive is not None:
         return rename_class_session_archive_cli(
             archive_root=args.rename_class_session_archive,
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             apply=args.apply_archive_renames,
+        )
+    if args.rename_dictionary_source_archive is not None:
+        return rename_dictionary_source_archive_cli(
+            archive_root=args.rename_dictionary_source_archive,
+            model=args.ollama_model,
+            base_url=args.ollama_base_url,
+            apply=args.apply_dictionary_source_renames,
         )
     if args.build_usage_signals:
         return build_usage_signals_cli(
@@ -399,7 +418,14 @@ def build_dictionary_cli(args: argparse.Namespace) -> int:
             "--add-reference-meanings and --generate-missing-meanings.\n"
         )
         return 1
-    except (ValueError, PipelineUsageError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+    except (
+        ValueError,
+        PipelineUsageError,
+        DictionarySourceArchiveError,
+        LLMConfigurationError,
+        LLMRequestError,
+        LLMResponseError,
+    ) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
@@ -437,7 +463,14 @@ def prep_dictionary_cli(args: argparse.Namespace) -> int:
             checkpoint_status=emit_dictionary_build_checkpoint_status,
             target_checkpoint="09",
         )
-    except (ValueError, PipelineUsageError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+    except (
+        ValueError,
+        PipelineUsageError,
+        DictionarySourceArchiveError,
+        LLMConfigurationError,
+        LLMRequestError,
+        LLMResponseError,
+    ) as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
@@ -2063,6 +2096,77 @@ def emit_live_lexicon_progress(phase: str, detail: str) -> None:
     emit_live_lexicon_progress_ui(phase, detail)
 
 
+def resolve_dictionary_source_duplicates_cli(
+    *,
+    archive_root: Path,
+    yes: bool,
+) -> int:
+    try:
+        preview = resolve_dictionary_source_duplicates(archive_root, apply=False)
+    except DictionarySourceArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    if preview.duplicate_group_count == 0:
+        sys.stdout.write(
+            "no duplicate dictionary source archive files found\n"
+            f"  archive_root: {preview.archive_root}\n"
+        )
+        sys.stdout.flush()
+        return 0
+
+    write_dictionary_source_duplicate_resolution_summary(preview, applied=False)
+    if not yes:
+        if not sys.stdin.isatty():
+            sys.stderr.write(
+                "wordbyword: dictionary source duplicate resolution requires an interactive terminal. "
+                "Rerun in a terminal, or pass --yes to apply the recommended quarantine plan.\n"
+            )
+            return 1
+        response = input("Apply this dictionary source duplicate quarantine plan? [y/N] ").strip().lower()
+        if response not in {"y", "yes"}:
+            sys.stderr.write("wordbyword: dictionary source duplicate resolution cancelled; no files were moved.\n")
+            return 1
+
+    try:
+        result = apply_dictionary_source_duplicate_resolution_result(preview)
+    except DictionarySourceArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    write_dictionary_source_duplicate_resolution_summary(result, applied=True)
+    return 0
+
+
+def write_dictionary_source_duplicate_resolution_summary(
+    result: DictionarySourceDuplicateResolutionResult,
+    *,
+    applied: bool,
+) -> None:
+    sys.stdout.write(
+        f"{'dictionary source duplicates resolved' if applied else 'dictionary source duplicate resolution plan'}\n"
+        f"  archive_root: {result.archive_root}\n"
+        f"  duplicate_groups: {result.duplicate_group_count}\n"
+        f"  quarantine_root: {result.quarantine_root}\n"
+        f"  manifest: {result.manifest_path}\n"
+    )
+    if result.batch_root is not None:
+        sys.stdout.write(f"  batch: {result.batch_root}\n")
+    for index, resolution in enumerate(result.resolutions, start=1):
+        sys.stdout.write(f"  group {index}:\n")
+        for evidence in resolution.group.evidences:
+            sys.stdout.write(f"    reason: {evidence.reason} {evidence.detail}\n")
+        sys.stdout.write(f"    keep: {resolution.keep_path.name}\n")
+        for source, destination in zip(
+            resolution.quarantine_paths,
+            resolution.quarantine_destination_paths,
+            strict=True,
+        ):
+            action = "quarantined" if applied else "quarantine"
+            sys.stdout.write(f"    {action}: {source.name} -> {destination.name}\n")
+    sys.stdout.flush()
+
+
 def resolve_archive_duplicates_cli(
     *,
     archive_root: Path,
@@ -2220,6 +2324,61 @@ def rename_class_session_archive_cli(
 
 def emit_archive_rename_progress(detail: str) -> None:
     sys.stdout.write(f"archive rename {detail}\n")
+    sys.stdout.flush()
+
+
+def rename_dictionary_source_archive_cli(
+    *,
+    archive_root: Path,
+    model: str,
+    base_url: str | None,
+    apply: bool,
+) -> int:
+    client = ollama_client(
+        model=model,
+        base_url=base_url,
+        timeout_seconds=300.0,
+        max_output_tokens=1024,
+    )
+    try:
+        try:
+            result = rename_dictionary_source_archive(
+                archive_root,
+                client=client,
+                model=model,
+                apply=apply,
+                progress=emit_dictionary_source_rename_progress,
+            )
+        finally:
+            warn_if_model_unload_fails(client)
+    except (DictionarySourceArchiveError, LLMConfigurationError, LLMRequestError, LLMResponseError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    sys.stdout.write(
+        "dictionary source archive rename complete\n"
+        f"  archive_root: {result.archive_root}\n"
+        f"  mode: {'apply' if apply else 'dry-run'}\n"
+        f"  files: {len(result.plans)}\n"
+        f"  planned: {result.planned_count}\n"
+        f"  renamed: {result.renamed_count}\n"
+        f"  registered: {result.registered_count}\n"
+        f"  skipped: {result.skipped_count}\n"
+        f"  blocked: {result.blocked_count}\n"
+        f"  ledger: {result.ledger_path}\n"
+    )
+    for plan in result.plans:
+        confidence = f"{plan.metadata.confidence:.2f}"
+        sys.stdout.write(
+            f"  - {plan.original_path} -> {plan.target_path_relative} "
+            f"({plan.status}, confidence: {confidence})\n"
+        )
+    sys.stdout.flush()
+    return 0 if not apply or result.blocked_count == 0 else 1
+
+
+def emit_dictionary_source_rename_progress(detail: str) -> None:
+    sys.stdout.write(f"dictionary source archive rename {detail}\n")
     sys.stdout.flush()
 
 

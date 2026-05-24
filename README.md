@@ -14,7 +14,14 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-Build the full dictionary from `build-dictionary/original/`:
+Manage dictionary source filenames after adding files to `build-dictionary/original/`:
+
+```bash
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --apply-dictionary-source-renames --ollama-model gemma4:31b
+```
+
+Build the full dictionary from the managed source archive:
 
 ```bash
 uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b
@@ -45,7 +52,7 @@ Tracked placeholders:
 
 Local ignored working folders:
 
-- `build-dictionary/`: generated dictionary artifacts plus local source/reference files.
+- `build-dictionary/`: generated dictionary artifacts plus local managed source/reference files.
 - `classroom-printout-studio/`: local class source materials, parsed bundles, rewritten bundles, and printouts.
 - `wbw-vocabulary-intelligence/`: local class archive, usage signals, live lexicon, and after-class reports.
 
@@ -54,6 +61,8 @@ Put dictionary source files in:
 ```text
 build-dictionary/original/
 ```
+
+Then run the dictionary source archive rename dry run and apply command before building. The archive ledger is local and ignored, like the source files themselves.
 
 Put the reference meaning dictionary at:
 
@@ -71,7 +80,25 @@ Generated stage outputs are replaceable. The full dictionary build records verif
 
 ## Dictionary Workflow
 
-The normal full workflow reads `.pdf`, `.txt`, and `.md` files from `build-dictionary/original/` and writes stages `00` through `15`:
+The normal full workflow reads managed `.pdf`, `.txt`, and `.md` files from `build-dictionary/original/` and writes stages `00` through `15`:
+
+```bash
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --apply-dictionary-source-renames --ollama-model gemma4:31b
+```
+
+The rename command is a dry run unless `--apply-dictionary-source-renames` is supplied. It writes `build-dictionary/original/.wordbyword-dictionary-source-ledger.json`, keyed by source SHA-256. Builds reject unmanaged, renamed, changed, or duplicate source files before writing dictionary artifacts.
+
+If the source archive contains exact duplicate files or cross-format exact text duplicates, quarantine duplicates first:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-dictionary-source-duplicates
+uv --no-cache run python -m wordbyword --resolve-dictionary-source-duplicates --yes
+```
+
+The resolver never deletes files. It moves duplicates into `build-dictionary/original/.wordbyword-dictionary-source-duplicates/` and writes an audit manifest.
+
+After sources are managed, build:
 
 ```bash
 uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b

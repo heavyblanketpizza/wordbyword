@@ -20,11 +20,12 @@ from wordbyword.class_archive.live_lexicon import (
 )
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
+from wordbyword.dictionary_build.source_archive import DEFAULT_DICTIONARY_SOURCE_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 DEFAULT_OUTPUT_DIR = Path("build-dictionary")
-DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_DIR / "original"
+DEFAULT_INPUT_DIR = DEFAULT_DICTIONARY_SOURCE_ROOT
 DEFAULT_REFERENCE_DICTIONARY_PATH = DEFAULT_OUTPUT_DIR / "references" / "reference-dictionary.jsonl"
 PIPELINE_CLEANUP_FLAGS = (
     "clean_example_sentences",
@@ -172,6 +173,40 @@ def build_parser() -> argparse.ArgumentParser:
             "Render the cyberpunk distribution panel for the latest saved "
             "dictionary JSONL and exit. Optional path; defaults to "
             "<output-dir>/15_final_dictionary.jsonl when available."
+        ),
+    )
+    parser.add_argument(
+        "--rename-dictionary-source-archive",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_DICTIONARY_SOURCE_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Classify and safely rename dictionary source files in a managed source archive. "
+            "Defaults to build-dictionary/original when no DIR is supplied. Dry-run unless "
+            "--apply-dictionary-source-renames is also supplied."
+        ),
+    )
+    parser.add_argument(
+        "--apply-dictionary-source-renames",
+        action="store_true",
+        help=(
+            "Apply --rename-dictionary-source-archive rename plans. Without this flag, "
+            "the command is a dry-run."
+        ),
+    )
+    parser.add_argument(
+        "--resolve-dictionary-source-duplicates",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_DICTIONARY_SOURCE_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Resolve duplicate .pdf/.txt/.md files in a dictionary source archive by moving "
+            "recommended duplicates to a hidden quarantine folder after confirmation. "
+            "Defaults to build-dictionary/original when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -605,6 +640,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.print_class_materials is not None,
         args.build_class_printouts is not None,
         args.generate_after_class_reading_report is not None,
+        args.rename_dictionary_source_archive is not None,
+        args.resolve_dictionary_source_duplicates is not None,
         args.rename_class_session_archive is not None,
         args.resolve_archive_duplicates is not None,
         args.build_usage_signals,
@@ -692,10 +729,15 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             2,
             "wordbyword: error: --apply-archive-renames requires --rename-class-session-archive.\n",
         )
-    if args.yes and args.resolve_archive_duplicates is None:
+    if args.apply_dictionary_source_renames and args.rename_dictionary_source_archive is None:
         parser.exit(
             2,
-            "wordbyword: error: --yes requires --resolve-archive-duplicates.\n",
+            "wordbyword: error: --apply-dictionary-source-renames requires --rename-dictionary-source-archive.\n",
+        )
+    if args.yes and args.resolve_archive_duplicates is None and args.resolve_dictionary_source_duplicates is None:
+        parser.exit(
+            2,
+            "wordbyword: error: --yes requires --resolve-archive-duplicates or --resolve-dictionary-source-duplicates.\n",
         )
     if args.include_near_duplicates and args.resolve_archive_duplicates is None:
         parser.exit(

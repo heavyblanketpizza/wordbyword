@@ -112,6 +112,7 @@ def run_pipeline(
         progress=progress,
         artifact_callback=artifact_callback,
         target_checkpoint="09",
+        enforce_managed_sources=False,
     )
     if progress is not None:
         progress("write", f"writing output bundle to {output_dir}")

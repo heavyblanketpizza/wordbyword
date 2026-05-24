@@ -16,6 +16,13 @@ Put dictionary source files here:
 build-dictionary/original/
 ```
 
+After adding files, preview and apply managed source names:
+
+```bash
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --ollama-model gemma4:31b
+uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --apply-dictionary-source-renames --ollama-model gemma4:31b
+```
+
 Supported dictionary files:
 
 ```text
@@ -53,7 +60,13 @@ For normal use, run one command:
 uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b
 ```
 
-This reads `build-dictionary/original/` and writes the finished dictionary files in `build-dictionary/`.
+This reads managed files in `build-dictionary/original/` and writes the finished dictionary files in `build-dictionary/`.
+
+If the dictionary build says a source file is unmanaged, run the rename preview and apply commands above first. If it reports duplicate source materials, quarantine the duplicate copies before continuing:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-dictionary-source-duplicates
+```
 
 It checks the saved numbered files first. If a saved step is still valid, it skips that step and continues from the next needed step.
 

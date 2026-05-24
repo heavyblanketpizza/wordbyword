@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -15,6 +14,16 @@ import fitz
 from docx import Document
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from wordbyword._archive_common import (
+    connected_path_components,
+    duplicate_resolution_timestamp,
+    ensure_inside_root,
+    file_first_seen_timestamp,
+    file_sha256,
+    natural_filename_sort_key,
+    relative_path,
+    safe_ascii_slug,
+)
 from wordbyword._json_io import read_json_object, write_json_atomic
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
@@ -51,7 +60,6 @@ DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW = "near_text_model_review"
 ARCHIVE_NAME_PATTERN = re.compile(
     r"^\d{4}-\d{2}-\d{2}_grade(?:[1-6]|-unknown)-[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
-NATURAL_SORT_TOKEN_PATTERN = re.compile(r"(\d+)")
 
 ARCHIVE_RENAME_SYSTEM_PROMPT = """You label archived Korean class printouts for safe filenames.
 Use only the supplied document text and file metadata.
@@ -495,40 +503,9 @@ def archive_duplicate_groups_from_evidences(
 ) -> tuple[ArchiveDuplicateGroup, ...]:
     if not evidences:
         return ()
-
     file_by_path = {file.path: file for file in files}
-
-    parent = {file.path: file.path for file in files}
-
-    def find(path: Path) -> Path:
-        while parent[path] != path:
-            parent[path] = parent[parent[path]]
-            path = parent[path]
-        return path
-
-    def union(left: Path, right: Path) -> None:
-        left_root = find(left)
-        right_root = find(right)
-        if left_root == right_root:
-            return
-        if natural_path_sort_key(right_root) < natural_path_sort_key(left_root):
-            left_root, right_root = right_root, left_root
-        parent[right_root] = left_root
-
-    for evidence in evidences:
-        first = evidence.paths[0]
-        for path in evidence.paths[1:]:
-            union(first, path)
-
-    component_paths: dict[Path, list[Path]] = {}
-    for file in files:
-        root = find(file.path)
-        component_paths.setdefault(root, []).append(file.path)
-
     groups: list[ArchiveDuplicateGroup] = []
-    for paths in component_paths.values():
-        if len(paths) < 2:
-            continue
+    for paths in connected_path_components((evidence.paths for evidence in evidences), sort_key=natural_path_sort_key):
         path_set = set(paths)
         component_evidences = tuple(
             sorted(
@@ -538,11 +515,10 @@ def archive_duplicate_groups_from_evidences(
         )
         if not component_evidences:
             continue
-        sorted_paths = tuple(sorted(paths, key=natural_path_sort_key))
         groups.append(
             ArchiveDuplicateGroup(
-                paths=sorted_paths,
-                files=tuple(file_by_path[path] for path in sorted_paths),
+                paths=paths,
+                files=tuple(file_by_path[path] for path in paths),
                 evidences=component_evidences,
             )
         )
@@ -1215,29 +1191,15 @@ def archive_duplicate_file_record(archive_root: Path, file: ArchiveDuplicateFile
 
 
 def archive_relative_path(root: Path, path: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return path.as_posix()
+    return relative_path(root, path)
 
 
 def archive_duplicate_resolution_timestamp(value: datetime) -> str:
-    return value.strftime("%Y%m%dT%H%M%S%z") or value.isoformat(timespec="seconds").replace(":", "")
+    return duplicate_resolution_timestamp(value)
 
 
 def natural_path_sort_key(path: Path) -> tuple[tuple[int, int | str], ...]:
-    tokens: list[tuple[int, int | str]] = []
-    for token in NATURAL_SORT_TOKEN_PATTERN.split(path.stem.lower()):
-        if not token:
-            continue
-        if token.isdigit():
-            tokens.append((1, int(token)))
-            continue
-        text = re.sub(r"[\s_.-]+", " ", token).strip()
-        if text:
-            tokens.append((0, text))
-    tokens.append((0, path.suffix.lower()))
-    return tuple(tokens)
+    return natural_filename_sort_key(path)
 
 
 def build_archived_material(
@@ -1446,38 +1408,14 @@ def normalize_grade_level(value: object) -> str:
 
 
 def safe_slug(value: object, *, fallback: str) -> str:
-    text = str(value or "").strip().lower()
-    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
-    slug = re.sub(r"-{2,}", "-", slug)
-    if not slug:
-        return fallback
-    if len(slug) <= MAX_FILENAME_SLUG_CHARS:
-        return slug
-    shortened = slug[:MAX_FILENAME_SLUG_CHARS].rstrip("-")
-    return shortened or fallback
-
-
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def file_first_seen_timestamp(path: Path) -> datetime:
-    stat = path.stat()
-    timestamp = getattr(stat, "st_birthtime", None)
-    if timestamp is None:
-        timestamp = min(stat.st_ctime, stat.st_mtime)
-    return datetime.fromtimestamp(float(timestamp)).astimezone()
+    return safe_ascii_slug(value, fallback=fallback, max_chars=MAX_FILENAME_SLUG_CHARS)
 
 
 def ensure_inside_archive(root: Path, path: Path, *, allow_equal: bool) -> None:
-    resolved_root = root.resolve()
-    resolved_path = path.resolve()
-    if allow_equal and resolved_path == resolved_root:
-        return
-    if resolved_root not in resolved_path.parents:
-        raise ClassSessionArchiveError(f"Refusing to write outside class-session archive: {path}")
+    ensure_inside_root(
+        root,
+        path,
+        allow_equal=allow_equal,
+        error_type=ClassSessionArchiveError,
+        label="class-session archive",
+    )

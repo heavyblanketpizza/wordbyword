@@ -61,6 +61,7 @@ from wordbyword.dictionary_build.saved_outputs import (
     write_linked_dictionary_candidates_from_saved,
     write_meaning_dictionary_candidates_from_saved,
 )
+from wordbyword.dictionary_build.source_archive import validate_managed_dictionary_source_archive
 from wordbyword.dictionary_build.output_metadata import RENAMED_SUMMARY_KEYS
 from wordbyword.dictionary_build.artifacts import output_filenames, pipeline_stage_rows
 
@@ -115,6 +116,7 @@ class SourceFingerprint:
 class BuildState:
     documents: list[Path]
     source_fingerprints: list[SourceFingerprint]
+    managed_source_metadata_by_sha256: dict[str, Mapping[str, object]]
     source_digest: str
     options: dict[str, object]
     options_digest: str
@@ -339,13 +341,19 @@ def build_resumable_dictionary(
     artifact_callback: ArtifactCallback | None = None,
     checkpoint_status: CheckpointStatusCallback | None = None,
     target_checkpoint: str = "15",
+    enforce_managed_sources: bool = True,
 ) -> ResumableDictionaryBuildResult:
     if target_checkpoint not in CHECKPOINT_BY_KEY:
         valid_targets = ", ".join(checkpoint.key for checkpoint in CHECKPOINTS)
         raise ValueError(f"Unknown dictionary build target checkpoint: {target_checkpoint}. Valid targets: {valid_targets}.")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     documents = discover_documents(input_dir)
+    managed_source_validation = (
+        validate_managed_dictionary_source_archive(input_dir, documents=documents)
+        if enforce_managed_sources
+        else None
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
     source_fingerprints = fingerprint_documents(documents, input_dir)
     options = build_options(
         input_dir=input_dir,
@@ -355,6 +363,11 @@ def build_resumable_dictionary(
     state = BuildState(
         documents=documents,
         source_fingerprints=source_fingerprints,
+        managed_source_metadata_by_sha256=(
+            dict(managed_source_validation.metadata_by_sha256)
+            if managed_source_validation is not None
+            else {}
+        ),
         source_digest=stable_hash([fingerprint.__dict__ for fingerprint in source_fingerprints]),
         options=options,
         options_digest=stable_hash(options),
@@ -967,7 +980,13 @@ def save_build_cache(output_dir: Path, state: BuildState) -> None:
         except json.JSONDecodeError:
             summary = {}
     state.cache["schema_version"] = CACHE_SCHEMA_VERSION
-    state.cache["source_documents"] = [fingerprint.__dict__ for fingerprint in state.source_fingerprints]
+    state.cache["source_documents"] = [
+        {
+            **fingerprint.__dict__,
+            "managed_source": state.managed_source_metadata_by_sha256.get(fingerprint.sha256, {}),
+        }
+        for fingerprint in state.source_fingerprints
+    ]
     state.cache["source_digest"] = state.source_digest
     state.cache["options"] = state.options
     state.cache["options_digest"] = state.options_digest
