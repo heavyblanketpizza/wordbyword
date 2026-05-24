@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, TextIO, cast
 
 if TYPE_CHECKING:
     from wordbyword.after_class_reports.report import AfterClassReportProgress
+    from wordbyword.class_archive.live_lexicon import LiveLexiconUpdateResult
+    from wordbyword.class_archive.usage_signals import UsageSignalBuildResult
     from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
     from wordbyword.dictionary_build.pipeline import PipelineResult
     from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
@@ -42,6 +44,7 @@ PHASE_COLORS = {
     "plan": TOKYO_NIGHT["purple"],
     "select": TOKYO_NIGHT["green"],
     "rewrite": TOKYO_NIGHT["cyan"],
+    "maintain": TOKYO_NIGHT["green"],
     "write": TOKYO_NIGHT["orange"],
     "complete": TOKYO_NIGHT["pink"],
     "skip": TOKYO_NIGHT["yellow"],
@@ -124,6 +127,34 @@ def emit_stage_update(phase: str, detail: str, stream: TextIO | None = None) -> 
     stream.write(render_stage_update(phase, detail, color=_supports_color(stream)))
     stream.write("\n")
     stream.flush()
+
+
+def emit_usage_signal_progress(phase: str, detail: str, stream: TextIO | None = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(render_usage_signal_progress(phase, detail, color=_supports_color(stream)))
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_usage_signal_progress(phase: str, detail: str, *, color: bool) -> str:
+    return render_stage_update(phase, f"usage signals :: {detail}", color=color)
+
+
+def emit_live_lexicon_progress(phase: str, detail: str, stream: TextIO | None = None) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(render_live_lexicon_progress(phase, detail, color=_supports_color(stream)))
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_live_lexicon_progress(phase: str, detail: str, *, color: bool) -> str:
+    return render_stage_update(phase, f"live lexicon :: {detail}", color=color)
 
 
 def emit_source_material_progress(
@@ -626,6 +657,119 @@ def emit_after_class_report_summary(
     stream.write("\n")
     stream.flush()
     return True
+
+
+def emit_usage_signal_summary(
+    result: "UsageSignalBuildResult",
+    *,
+    stream: TextIO | None = None,
+) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(
+        render_usage_signal_summary(
+            result,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_usage_signal_summary(
+    result: "UsageSignalBuildResult",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    return _render_lexicon_summary_panel(
+        banner_text="USAGE SIGNALS // CLASS ARCHIVE SCAN",
+        subtitle="  ▟▙ class usage signal bundle written ▟▙",
+        accent=TOKYO_NIGHT["blue"],
+        subtitle_color=TOKYO_NIGHT["cyan"],
+        summary=(
+            ("status", "written"),
+            ("archive", _shorten_path_end(str(result.archive_root), max_width=_summary_value_width(width))),
+            ("output", _shorten_path_end(str(result.output_root), max_width=_summary_value_width(width))),
+            ("documents", _format_number(result.documents)),
+            ("text units", _format_number(result.extracted_pages)),
+            ("sentences", _format_number(result.sentences)),
+            ("tokens", _format_number(result.token_occurrences)),
+            ("vocabulary", _format_number(result.vocabulary_terms)),
+            ("surface", _format_number(result.surface_words)),
+        ),
+        color=color,
+        width=width,
+    )
+
+
+def emit_live_lexicon_summary(
+    result: "LiveLexiconUpdateResult",
+    *,
+    stream: TextIO | None = None,
+) -> bool:
+    stream = sys.stdout if stream is None else stream
+    if not _is_interactive(stream):
+        return False
+    stream.write(
+        render_live_lexicon_summary(
+            result,
+            color=_supports_color(stream),
+            width=_terminal_width(),
+        )
+    )
+    stream.write("\n")
+    stream.flush()
+    return True
+
+
+def render_live_lexicon_summary(
+    result: "LiveLexiconUpdateResult",
+    *,
+    color: bool,
+    width: int = 100,
+) -> str:
+    value_width = _summary_value_width(width)
+    rule = _summary_rule(color=color, width=width)
+    lines = [
+        _render_lexicon_summary_panel(
+            banner_text="LIVE LEXICON // SIGNAL MAINTAINED",
+            subtitle="  ▟▙ canonical boundary kept // supplemental signal maintained ▟▙",
+            accent=TOKYO_NIGHT["green"],
+            subtitle_color=TOKYO_NIGHT["purple"],
+            summary=(
+                ("status", "updated"),
+                ("source", _live_lexicon_source_label(str(result.canonical_source))),
+                ("printouts", _format_number(result.total_class_printouts)),
+                ("canonical", _format_number(result.live_lexicon_rows)),
+                ("matched", _format_number(result.matched_count)),
+                ("unmatched", _format_number(result.unmatched_count)),
+                ("supp act", _format_number(result.supplemental_active_rows)),
+                ("supp add", _format_number(result.supplemental_added_count)),
+                ("supp upd", _format_number(result.supplemental_updated_count)),
+                ("supp off", _format_number(result.supplemental_inactive_count)),
+                ("promoted", _format_number(result.supplemental_promoted_count)),
+            ),
+            color=color,
+            width=width,
+        ),
+        _paint("┃ live files", fg=TOKYO_NIGHT["cyan"], bold=True, color=color),
+        _paint(
+            f"  - canonical  {_shorten_path_end(str(result.live_lexicon_path), max_width=value_width)}",
+            fg=TOKYO_NIGHT["fg"],
+            color=color,
+        ),
+        _paint(
+            f"  - supplement {_shorten_path_end(str(result.supplemental_lexicon_path), max_width=value_width)}",
+            fg=TOKYO_NIGHT["fg"],
+            color=color,
+        ),
+        rule,
+    ]
+    return "\n".join(lines)
 
 
 def render_after_class_report_summary(
@@ -1292,6 +1436,54 @@ def _compose_columns(left: list[str], right: list[str], *, width: int) -> str:
         pad = " " * max(0, left_width - _visible_len(left_line))
         lines.append(f"{left_line}{pad}{' ' * gap}{right_line}".rstrip())
     return "\n".join(lines)
+
+
+def _render_lexicon_summary_panel(
+    *,
+    banner_text: str,
+    subtitle: str,
+    accent: str,
+    subtitle_color: str,
+    summary: Sequence[tuple[str, str]],
+    color: bool,
+    width: int,
+) -> str:
+    banner = _paint(
+        f"  ░▒▓█  {banner_text}  █▓▒░  ",
+        fg=TOKYO_NIGHT["bg"],
+        bg=accent,
+        bold=True,
+        color=color,
+    )
+    rule = _summary_rule(color=color, width=width)
+    lines = [
+        banner,
+        _paint(subtitle, fg=subtitle_color, bold=True, color=color),
+        rule,
+    ]
+    lines.extend(_info_line(key, value, color=color, emphasis=key == "status") for key, value in summary)
+    lines.append(rule)
+    return "\n".join(lines)
+
+
+def _summary_rule(*, color: bool, width: int) -> str:
+    return _paint(
+        "░▒▓" + "─" * max(0, min(width, 72) - 6) + "▓▒░",
+        fg=TOKYO_NIGHT["comment"],
+        color=color,
+    )
+
+
+def _summary_value_width(width: int) -> int:
+    return max(20, min(64, width - 22))
+
+
+def _live_lexicon_source_label(value: str) -> str:
+    if value == "seeded_from_dictionary":
+        return "seeded from dictionary"
+    if value == "existing_live_lexicon":
+        return "existing live lexicon"
+    return value.replace("_", " ")
 
 
 def _info_line(key: str, value: str, *, color: bool, emphasis: bool = False) -> str:

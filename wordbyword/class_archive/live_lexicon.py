@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -22,6 +23,7 @@ SUPPLEMENTAL_SOURCE_TIER = "supplemental_private"
 SUPPLEMENTAL_STATUS_OBSERVED = "non_canonical_observed"
 SUPPLEMENTAL_STATUS_INACTIVE = "inactive_observed"
 SUPPLEMENTAL_STATUS_PROMOTED = "promoted_to_canonical"
+ProgressCallback = Callable[[str, str], None]
 REMOVED_CANONICAL_FIELDS = {
     "example_generated_with_ollama",
     "meaning_generated_with_ollama",
@@ -77,8 +79,10 @@ def update_live_lexicon(
     live_lexicon_path: Path = DEFAULT_LIVE_LEXICON_PATH,
     supplemental_lexicon_path: Path = DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
     unmatched_usage_output_path: Path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
+    progress: ProgressCallback | None = None,
 ) -> LiveLexiconUpdateResult:
     resolved_usage_summary_path = usage_summary_path or artifact_path(usage_candidates_path.parent, ArtifactId.SUMMARY)
+    _report(progress, "load", f"reading usage candidates from {usage_candidates_path}")
     usage_candidates = read_jsonl_objects(usage_candidates_path, label="usage candidates")
     usage_summary = read_json_object(resolved_usage_summary_path, label="usage summary")
     total_class_printouts = parse_nonnegative_int(
@@ -90,12 +94,26 @@ def update_live_lexicon(
         canonical_dictionary_path=canonical_dictionary_path,
         live_lexicon_path=live_lexicon_path,
     )
+    _report(
+        progress,
+        "load",
+        canonical_source_detail(
+            canonical_source=canonical_source,
+            canonical_dictionary_path=canonical_dictionary_path,
+            live_lexicon_path=live_lexicon_path,
+        ),
+    )
     usage_by_key = {
         canonical_key(row): row
         for row in usage_candidates
         if canonical_key(row)
     }
 
+    _report(
+        progress,
+        "analyze",
+        f"matching {len(usage_candidates):,} usage candidate(s) against {len(canonical_source_rows):,} canonical row(s)",
+    )
     updated_rows: list[dict[str, Any]] = []
     matched_count = 0
     for row in canonical_source_rows:
@@ -137,15 +155,26 @@ def update_live_lexicon(
         for row in usage_candidates
         if canonical_key(row) not in live_keys
     ]
+    _report(
+        progress,
+        "maintain",
+        f"maintaining supplemental rows from {len(unmatched_usage_candidates):,} unmatched usage candidate(s)",
+    )
     supplemental_result = update_supplemental_rows(
         supplemental_lexicon_path=supplemental_lexicon_path,
         unmatched_usage_candidates=unmatched_usage_candidates,
         active_live_keys=live_keys,
     )
 
+    _report(progress, "write", "writing canonical, supplemental, and unmatched usage outputs")
     write_jsonl_atomic(live_lexicon_path, updated_rows)
     write_jsonl_atomic(supplemental_lexicon_path, supplemental_result.rows)
     write_jsonl_atomic(unmatched_usage_output_path, unmatched_usage_candidates)
+    _report(
+        progress,
+        "complete",
+        f"matched {matched_count:,}; unmatched {len(unmatched_usage_candidates):,}; supplemental active {supplemental_result.active_rows:,}",
+    )
 
     return LiveLexiconUpdateResult(
         canonical_dictionary_path=canonical_dictionary_path,
@@ -205,6 +234,22 @@ def read_canonical_source_rows(
     if live_lexicon_path.is_file():
         return read_jsonl_objects(live_lexicon_path, label="canonical live lexicon"), CANONICAL_SOURCE_LIVE_LEXICON
     return read_jsonl_objects(canonical_dictionary_path, label="canonical dictionary"), CANONICAL_SOURCE_DICTIONARY_SEED
+
+
+def canonical_source_detail(
+    *,
+    canonical_source: str,
+    canonical_dictionary_path: Path,
+    live_lexicon_path: Path,
+) -> str:
+    if canonical_source == CANONICAL_SOURCE_LIVE_LEXICON:
+        return f"using existing canonical live lexicon from {live_lexicon_path}"
+    return f"seeding canonical live lexicon from {canonical_dictionary_path}"
+
+
+def _report(progress: ProgressCallback | None, phase: str, detail: str) -> None:
+    if progress is not None:
+        progress(phase, detail)
 
 
 def canonical_live_row(row: Mapping[str, Any], *, preserve_curation_status: bool = False) -> dict[str, Any]:

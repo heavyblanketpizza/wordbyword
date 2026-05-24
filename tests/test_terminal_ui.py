@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from wordbyword.after_class_reports import AfterClassReportProgress
 from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
@@ -17,12 +18,15 @@ from wordbyword.cli.terminal_ui import (
     render_cleanup_progress,
     render_completion_screen,
     render_dictionary_distribution,
+    render_live_lexicon_progress,
+    render_live_lexicon_summary,
     render_printable_progress,
     render_printable_summary,
     render_source_material_progress,
     render_source_rewrite_progress,
     render_source_rewrite_summary,
     render_stage_update,
+    render_usage_signal_summary,
 )
 
 
@@ -254,6 +258,117 @@ class TerminalUiTest(unittest.TestCase):
         self.assertIn("vocab 15", rendered)
         self.assertIn("written", rendered)
         self.assertNotIn("\x1b[", rendered)
+
+    def test_render_usage_signal_summary_plain_is_scan_friendly(self) -> None:
+        result = SimpleNamespace(
+            archive_root=Path("wbw-vocabulary-intelligence/class-session-archive"),
+            output_root=Path("wbw-vocabulary-intelligence/usage-signal-build"),
+            documents=3,
+            extracted_pages=3,
+            sentences=337,
+            token_occurrences=7809,
+            vocabulary_terms=947,
+            surface_words=1880,
+        )
+
+        rendered = render_usage_signal_summary(result, color=False, width=100)
+
+        self.assertIn("USAGE SIGNALS // CLASS ARCHIVE SCAN", rendered)
+        self.assertIn("status     :: written", rendered)
+        self.assertIn("documents  :: 3", rendered)
+        self.assertIn("tokens     :: 7,809", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_live_lexicon_summary_plain_is_scan_friendly(self) -> None:
+        result = SimpleNamespace(
+            canonical_source="existing_live_lexicon",
+            live_lexicon_path=Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl"),
+            supplemental_lexicon_path=Path(
+                "wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-supplemental.jsonl"
+            ),
+            unmatched_usage_output_path=Path(
+                "wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl"
+            ),
+            live_lexicon_rows=2160,
+            total_class_printouts=3,
+            matched_count=470,
+            unmatched_count=584,
+            supplemental_active_rows=584,
+            supplemental_added_count=11,
+            supplemental_updated_count=570,
+            supplemental_inactive_count=2,
+            supplemental_promoted_count=1,
+        )
+
+        rendered = render_live_lexicon_summary(result, color=False, width=100)
+
+        self.assertIn("LIVE LEXICON // SIGNAL MAINTAINED", rendered)
+        self.assertIn("source     :: existing live lexicon", rendered)
+        self.assertIn("canonical  :: 2,160", rendered)
+        self.assertIn("promoted   :: 1", rendered)
+        self.assertIn("live files", rendered)
+        self.assertNotIn("unmatched  .../10_unmatched_usage_candidates.jsonl", rendered)
+        self.assertNotIn("\x1b[", rendered)
+
+    def test_render_live_lexicon_summary_shortens_long_paths(self) -> None:
+        result = SimpleNamespace(
+            canonical_source="seeded_from_dictionary",
+            live_lexicon_path=Path(
+                "wbw-vocabulary-intelligence/live-grade-lexicon/very/deep/path/grade1-live-lexicon-canonical.jsonl"
+            ),
+            supplemental_lexicon_path=Path(
+                "wbw-vocabulary-intelligence/live-grade-lexicon/very/deep/path/grade1-live-lexicon-supplemental.jsonl"
+            ),
+            unmatched_usage_output_path=Path(
+                "wbw-vocabulary-intelligence/usage-signal-build/very/deep/path/10_unmatched_usage_candidates.jsonl"
+            ),
+            live_lexicon_rows=2160,
+            total_class_printouts=3,
+            matched_count=470,
+            unmatched_count=584,
+            supplemental_active_rows=584,
+            supplemental_added_count=11,
+            supplemental_updated_count=570,
+            supplemental_inactive_count=2,
+            supplemental_promoted_count=1,
+        )
+
+        rendered = render_live_lexicon_summary(result, color=False, width=72)
+
+        self.assertIn("...", rendered)
+        self.assertTrue(all(len(line) <= 72 for line in rendered.splitlines()))
+
+    def test_render_live_lexicon_summary_color_includes_ansi(self) -> None:
+        result = SimpleNamespace(
+            canonical_source="existing_live_lexicon",
+            live_lexicon_path=Path("live/canonical.jsonl"),
+            supplemental_lexicon_path=Path("live/supplemental.jsonl"),
+            unmatched_usage_output_path=Path("usage/unmatched.jsonl"),
+            live_lexicon_rows=2,
+            total_class_printouts=1,
+            matched_count=1,
+            unmatched_count=1,
+            supplemental_active_rows=1,
+            supplemental_added_count=1,
+            supplemental_updated_count=0,
+            supplemental_inactive_count=0,
+            supplemental_promoted_count=0,
+        )
+
+        rendered = render_live_lexicon_summary(result, color=True, width=100)
+
+        self.assertIn("\x1b[", rendered)
+        self.assertIn("LIVE LEXICON // SIGNAL MAINTAINED", rendered)
+
+    def test_render_live_lexicon_progress_includes_phase_label(self) -> None:
+        rendered = render_live_lexicon_progress(
+            "maintain",
+            "maintaining supplemental rows from 584 unmatched usage candidate(s)",
+            color=False,
+        )
+
+        self.assertIn("MAINTAIN", rendered)
+        self.assertIn("live lexicon :: maintaining supplemental rows", rendered)
 
     def test_render_completion_screen_plain_mode_keeps_run_stats(self) -> None:
         result = PipelineResult(

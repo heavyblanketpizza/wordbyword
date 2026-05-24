@@ -753,6 +753,23 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         mock_pipeline.assert_not_called()
         self.assertIn("usage signals built", stdout.getvalue())
 
+    def test_main_with_usage_signal_build_uses_interactive_summary_when_available(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            patch("wordbyword.cli.app.build_usage_signals") as mock_build,
+            patch("wordbyword.cli.app.emit_usage_signal_summary", return_value=True) as mock_summary,
+        ):
+            mock_build.return_value = FakeUsageSignalBuildResult()
+
+            exit_code = main(["--build-usage-signals"])
+
+        self.assertEqual(exit_code, 0)
+        mock_pipeline.assert_not_called()
+        mock_summary.assert_called_once_with(mock_build.return_value)
+        self.assertNotIn("usage signals built", stdout.getvalue())
+
     def test_main_with_live_lexicon_update_skips_pipeline(self) -> None:
         stdout = io.StringIO()
         with (
@@ -767,6 +784,23 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
         self.assertIn("live lexicon updated", stdout.getvalue())
+
+    def test_main_with_live_lexicon_update_uses_interactive_summary_when_available(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch("sys.stdout", stdout),
+            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+            patch("wordbyword.cli.app.update_live_lexicon") as mock_update,
+            patch("wordbyword.cli.app.emit_live_lexicon_summary", return_value=True) as mock_summary,
+        ):
+            mock_update.return_value = FakeLiveLexiconUpdateResult()
+
+            exit_code = main(["--update-live-lexicon"])
+
+        self.assertEqual(exit_code, 0)
+        mock_pipeline.assert_not_called()
+        mock_summary.assert_called_once_with(mock_update.return_value)
+        self.assertNotIn("live lexicon updated", stdout.getvalue())
 
 
 class RecordingArchiveClient:

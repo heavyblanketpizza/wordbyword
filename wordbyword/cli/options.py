@@ -501,8 +501,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--update-live-lexicon",
         action="store_true",
         help=(
-            "Regenerate the canonical live grade lexicon from build-dictionary/15_final_dictionary.jsonl "
-            "and overlay class usage counts and ROI from "
+            "Maintain canonical and supplemental live grade lexicons with class usage counts and ROI from "
             "wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
         ),
     )

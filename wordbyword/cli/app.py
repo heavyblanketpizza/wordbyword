@@ -75,12 +75,16 @@ from wordbyword.cli.terminal_ui import (
     emit_boot_screen,
     emit_cleanup_progress,
     emit_completion_screen,
+    emit_live_lexicon_progress as emit_live_lexicon_progress_ui,
+    emit_live_lexicon_summary,
     emit_printable_progress,
     emit_printable_summary,
     emit_source_material_progress,
     emit_source_rewrite_progress,
     emit_source_rewrite_summary,
     emit_stage_update,
+    emit_usage_signal_progress as emit_usage_signal_progress_ui,
+    emit_usage_signal_summary,
     render_artifact_drop,
 )
 from wordbyword.cli.options import (
@@ -1436,6 +1440,9 @@ def build_usage_signals_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
+    if emit_usage_signal_summary(result):
+        return 0
+
     sys.stdout.write(
         "usage signals built\n"
         f"  archive_root: {result.archive_root}\n"
@@ -1452,6 +1459,8 @@ def build_usage_signals_cli(
 
 
 def emit_usage_signal_progress(phase: str, detail: str) -> None:
+    if emit_usage_signal_progress_ui(phase, detail):
+        return
     sys.stdout.write(f"usage signals [{phase}] {detail}\n")
     sys.stdout.flush()
 
@@ -1473,10 +1482,14 @@ def update_live_lexicon_cli(
             live_lexicon_path=live_lexicon_path,
             supplemental_lexicon_path=supplemental_lexicon_path,
             unmatched_usage_output_path=unmatched_usage_output_path,
+            progress=emit_live_lexicon_progress,
         )
     except LiveLexiconUpdateError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
+
+    if emit_live_lexicon_summary(result):
+        return 0
 
     sys.stdout.write(
         "live lexicon updated\n"
@@ -1502,6 +1515,10 @@ def update_live_lexicon_cli(
     )
     sys.stdout.flush()
     return 0
+
+
+def emit_live_lexicon_progress(phase: str, detail: str) -> None:
+    emit_live_lexicon_progress_ui(phase, detail)
 
 
 def rename_class_session_archive_cli(
