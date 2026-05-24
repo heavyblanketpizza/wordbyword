@@ -6,6 +6,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from docx import Document
@@ -64,6 +65,10 @@ class AfterClassReportInputTest(unittest.TestCase):
         self.assertEqual(after_class_grade_level("2026-05-10_grade6-quantum-reading"), "grade6")
         self.assertEqual(after_class_grade_label("grade6"), "6학년")
         self.assertEqual(after_class_prompt_target_profile("grade6"), "grade6-ko-a4-adult-report")
+        self.assertEqual(after_class_grade_level("2026-05-10_grade7-chemistry-reading"), "grade7")
+        self.assertEqual(after_class_grade_label("grade7"), "중학교 1학년")
+        self.assertEqual(after_class_prompt_target_profile("grade7"), "grade7-ko-a4-adult-report")
+        self.assertEqual(after_class_grade_label("grade12"), "고등학교 3학년")
         self.assertEqual(after_class_grade_level("2026-05-10_grade-unknown-topic"), "grade-unknown")
         self.assertEqual(after_class_grade_label("grade-unknown"), "초등학생")
         self.assertEqual(after_class_prompt_target_profile("grade-unknown"), "elementary-ko-a4-adult-report")
@@ -368,6 +373,33 @@ class AfterClassReportGenerationTest(unittest.TestCase):
             self.assertIn("standalone student worksheet", contract["not_allowed"])
             self.assertNotIn("student worksheet as the primary document", contract["not_allowed"])
             self.assertIn("English glosses such as How vs Why", contract["not_allowed"])
+
+    def test_prompt_supports_middle_school_grade_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            archive.mkdir()
+            source = archive / "2026-05-10_grade7-chemistry-reading.docx"
+            write_docx(source, korean_fixture_text())
+            heuristic_dir = root / "reports" / source.stem / "heuristic-analysis"
+            build_isolated_heuristic_analysis(source, heuristic_analysis_dir=heuristic_dir)
+
+            context = build_after_class_report_context(
+                source,
+                output_dir=heuristic_dir.parent,
+                heuristic_analysis_dir=heuristic_dir,
+            )
+            prompt = build_after_class_report_prompt(context)
+            system_prompt = prompt.messages[0].content
+            packet = prompt_packet_from_message(prompt.user_prompt)
+            contract = packet["report_contract"]
+            combined_prompt = f"{system_prompt}\n{prompt.user_prompt}"
+
+            self.assertEqual(context.grade_level, "grade7")
+            self.assertEqual(context.grade_label, "중학교 1학년")
+            self.assertEqual(context.prompt_target_profile, "grade7-ko-a4-adult-report")
+            self.assertIn("중학교 1학년", prompt.user_prompt)
+            self.assertNotIn("1학년 학생", prompt.user_prompt)
             self.assertIn("unnecessary Hanja character breakdowns", contract["not_allowed"])
             self.assertIn("LaTeX or math markup", contract["not_allowed"])
             self.assertIn("specialist subject-mastery framing", contract["not_allowed"])
@@ -383,6 +415,35 @@ class AfterClassReportCliTest(unittest.TestCase):
         self.assertEqual(args.generate_after_class_reading_report, Path("2026-05-10_grade1-reading-apples.docx"))
         self.assertEqual(args.after_class_report_output_root, DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT)
         self.assertIsNone(args.after_class_report_font_path)
+
+    def test_report_output_root_defaults_to_archived_printout_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            source = Path(workspace) / "2026-05-10_grade7-chemistry-reading.docx"
+            write_docx(source, korean_fixture_text())
+            outputs = SimpleNamespace(
+                source_id=source.stem,
+                output_dir=Path("/tmp/reports") / source.stem,
+                heuristic_analysis_dir=Path("/tmp/reports") / source.stem / "heuristic-analysis",
+                accepted=True,
+                failure_reason="",
+                selected_vocabulary_count=12,
+                docx_path=Path("/tmp/reports") / source.stem / "after_class_report.docx",
+                attempt_rows=[],
+                failure_rows=[],
+            )
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=outputs) as generate,
+            ):
+                self.assertEqual(main(["--generate-after-class-reading-report", str(source)]), 0)
+
+        self.assertEqual(
+            generate.call_args.kwargs["output_root"],
+            Path("wbw-vocabulary-intelligence/after-class-reports/grade7-ko-a4-ollama"),
+        )
 
     def test_validate_resolves_bare_after_class_report_filename_to_default_archive_root(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

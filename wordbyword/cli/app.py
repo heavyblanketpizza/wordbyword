@@ -113,6 +113,20 @@ from wordbyword.dictionary_build.saved_outputs import (
     write_generated_meaning_dictionary_candidates_from_saved,
     write_meaning_dictionary_candidates_from_saved,
 )
+from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
+    default_after_class_report_output_root,
+    default_live_lexicon_path,
+    default_print_output_root,
+    default_supplemental_lexicon_path,
+    default_unmatched_usage_output_path,
+    default_usage_signal_output_root,
+    default_vocabulary_guided_rewrite_output_root,
+    default_whole_rewrite_output_root,
+    extract_grade_from_source_id,
+    normalize_target_grade,
+    target_profile_for_grade,
+)
 
 PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
 PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON"
@@ -154,6 +168,90 @@ class LazyOllamaCompletionClient:
                 max_output_tokens=self.max_output_tokens,
             )
         return self.client.complete(*args, **kwargs)  # type: ignore[arg-type]
+
+
+def target_grade_from_args(args: argparse.Namespace) -> str:
+    return normalize_target_grade(getattr(args, "target_grade", DEFAULT_TARGET_GRADE))
+
+
+def target_grade_was_explicit(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "target_grade_explicit", False)) or target_grade_from_args(args) != DEFAULT_TARGET_GRADE
+
+
+def option_was_explicit(args: argparse.Namespace, dest: str) -> bool:
+    return bool(getattr(args, f"{dest}_explicit", False))
+
+
+def resolved_whole_rewrite_output_root(args: argparse.Namespace) -> Path:
+    if args.rewrite_output_root is not None:
+        return args.rewrite_output_root
+    if target_grade_was_explicit(args):
+        return default_whole_rewrite_output_root(target_grade_from_args(args))
+    return DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT
+
+
+def resolved_vocabulary_rewrite_output_root(args: argparse.Namespace) -> Path:
+    if args.rewrite_output_root is not None:
+        return args.rewrite_output_root
+    if target_grade_was_explicit(args):
+        return default_vocabulary_guided_rewrite_output_root(target_grade_from_args(args))
+    return DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT
+
+
+def resolved_print_output_root(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "print_output_root"):
+        return default_print_output_root(target_grade_from_args(args))
+    return args.print_output_root
+
+
+def resolve_print_class_materials_root(args: argparse.Namespace) -> Path:
+    if (
+        target_grade_was_explicit(args)
+        and args.print_class_materials == DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT
+    ):
+        return default_vocabulary_guided_rewrite_output_root(target_grade_from_args(args))
+    return args.print_class_materials
+
+
+def resolved_usage_signal_output_root(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "usage_signal_output_root"):
+        return default_usage_signal_output_root(target_grade_from_args(args), explicit_target=True)
+    return args.usage_signal_output_root
+
+
+def resolved_live_lexicon_path(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "live_lexicon"):
+        return default_live_lexicon_path(target_grade_from_args(args))
+    return args.live_lexicon
+
+
+def resolved_supplemental_lexicon_path(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "supplemental_lexicon"):
+        return default_supplemental_lexicon_path(target_grade_from_args(args))
+    return args.supplemental_lexicon
+
+
+def resolved_usage_candidates_path(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "usage_candidates"):
+        return artifact_path(resolved_usage_signal_output_root(args), ArtifactId.DICTIONARY_CANDIDATES)
+    return args.usage_candidates
+
+
+def resolved_unmatched_usage_output_path(args: argparse.Namespace) -> Path:
+    if target_grade_was_explicit(args) and not option_was_explicit(args, "unmatched_usage_output"):
+        return default_unmatched_usage_output_path(target_grade_from_args(args), explicit_target=True)
+    return args.unmatched_usage_output
+
+
+def resolved_after_class_report_output_root(args: argparse.Namespace) -> Path:
+    if option_was_explicit(args, "after_class_report_output_root"):
+        return args.after_class_report_output_root
+    if target_grade_was_explicit(args):
+        return default_after_class_report_output_root(target_grade_from_args(args))
+    if args.generate_after_class_reading_report is not None:
+        source_grade = extract_grade_from_source_id(args.generate_after_class_reading_report.stem)
+        return default_after_class_report_output_root(source_grade)
+    return args.after_class_report_output_root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -204,14 +302,16 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.rewrite_whole_source_material is not None:
         return rewrite_whole_source_material_cli(
             parsed_bundle_dir=args.rewrite_whole_source_material,
-            output_root=args.rewrite_output_root or DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+            output_root=resolved_whole_rewrite_output_root(args),
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
     if args.rewrite_whole_source_materials is not None:
         return rewrite_whole_source_materials_cli(
             parsed_root=args.rewrite_whole_source_materials,
-            output_root=args.rewrite_output_root or DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
+            output_root=resolved_whole_rewrite_output_root(args),
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
@@ -219,8 +319,9 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
         vocabulary_source = rewrite_vocabulary_source_from_args(args)
         return rewrite_vocabulary_guided_source_material_cli(
             parsed_bundle_dir=args.rewrite_vocabulary_guided_source_material,
-            output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            output_root=resolved_vocabulary_rewrite_output_root(args),
             vocabulary_source=vocabulary_source,
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
@@ -228,15 +329,17 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
         vocabulary_source = rewrite_vocabulary_source_from_args(args)
         return rewrite_vocabulary_guided_source_materials_cli(
             parsed_root=args.rewrite_vocabulary_guided_source_materials,
-            output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            output_root=resolved_vocabulary_rewrite_output_root(args),
             vocabulary_source=vocabulary_source,
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
     if args.print_class_material is not None:
         return print_class_material_cli(
             rewritten_bundle_dir=args.print_class_material,
-            output_root=args.print_output_root,
+            output_root=resolved_print_output_root(args),
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
@@ -244,8 +347,9 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
         )
     if args.print_class_materials is not None:
         return print_class_materials_cli(
-            rewritten_root=args.print_class_materials,
-            output_root=args.print_output_root,
+            rewritten_root=resolve_print_class_materials_root(args),
+            output_root=resolved_print_output_root(args),
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
@@ -260,9 +364,10 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             parse_pdf=options.parse_pdf,
             render_dpi=options.render_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
-            rewrite_output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
+            rewrite_output_root=resolved_vocabulary_rewrite_output_root(args),
             vocabulary_source=vocabulary_source,
-            print_output_root=args.print_output_root,
+            print_output_root=resolved_print_output_root(args),
+            target_grade=target_grade_from_args(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
@@ -272,7 +377,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.generate_after_class_reading_report is not None:
         return generate_after_class_reading_report_cli(
             printout_path=args.generate_after_class_reading_report,
-            output_root=args.after_class_report_output_root,
+            output_root=resolved_after_class_report_output_root(args),
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.after_class_report_font_path,
@@ -307,7 +412,8 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.build_usage_signals:
         return build_usage_signals_cli(
             archive_root=args.usage_signal_input_root,
-            output_root=args.usage_signal_output_root,
+            output_root=resolved_usage_signal_output_root(args),
+            target_grade=target_grade_from_args(args) if target_grade_was_explicit(args) else None,
             include_punctuation=args.include_punctuation,
             include_numbers=args.include_numbers,
             model=args.ollama_model,
@@ -316,11 +422,11 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
     if args.update_live_lexicon:
         return update_live_lexicon_cli(
             canonical_dictionary_path=args.canonical_dictionary,
-            usage_candidates_path=args.usage_candidates,
+            usage_candidates_path=resolved_usage_candidates_path(args),
             usage_summary_path=args.usage_summary,
-            live_lexicon_path=args.live_lexicon,
-            supplemental_lexicon_path=args.supplemental_lexicon,
-            unmatched_usage_output_path=args.unmatched_usage_output,
+            live_lexicon_path=resolved_live_lexicon_path(args),
+            supplemental_lexicon_path=resolved_supplemental_lexicon_path(args),
+            unmatched_usage_output_path=resolved_unmatched_usage_output_path(args),
         )
     if args.show_distribution is not None:
         return show_distribution(
@@ -532,7 +638,7 @@ def rewrite_vocabulary_source_from_args(args: argparse.Namespace) -> RewriteVoca
     if args.rewrite_dictionary is not None:
         path = args.rewrite_dictionary
         return RewriteVocabularySource(path=path, kind="explicit", sha256=file_sha256_if_present(path))
-    live_lexicon_path = DEFAULT_LIVE_LEXICON_PATH
+    live_lexicon_path = default_live_lexicon_path(target_grade_from_args(args)) if target_grade_was_explicit(args) else DEFAULT_LIVE_LEXICON_PATH
     if live_lexicon_path.is_file():
         return RewriteVocabularySource(
             path=live_lexicon_path,
@@ -923,6 +1029,7 @@ def rewrite_whole_source_material_cli(
     *,
     parsed_bundle_dir: Path,
     output_root: Path,
+    target_grade: str,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -939,6 +1046,7 @@ def rewrite_whole_source_material_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 progress=emit_source_rewrite_progress,
             )
         finally:
@@ -977,6 +1085,7 @@ def rewrite_whole_source_materials_cli(
     *,
     parsed_root: Path,
     output_root: Path,
+    target_grade: str,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -993,6 +1102,7 @@ def rewrite_whole_source_materials_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 progress=emit_source_rewrite_progress,
             )
         finally:
@@ -1044,6 +1154,7 @@ def rewrite_vocabulary_guided_source_material_cli(
     parsed_bundle_dir: Path,
     output_root: Path,
     vocabulary_source: RewriteVocabularySource,
+    target_grade: str,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -1063,6 +1174,7 @@ def rewrite_vocabulary_guided_source_material_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 progress=emit_source_rewrite_progress,
             )
         finally:
@@ -1106,6 +1218,7 @@ def rewrite_vocabulary_guided_source_materials_cli(
     parsed_root: Path,
     output_root: Path,
     vocabulary_source: RewriteVocabularySource,
+    target_grade: str,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -1125,6 +1238,7 @@ def rewrite_vocabulary_guided_source_materials_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 progress=emit_source_rewrite_progress,
             )
         finally:
@@ -1181,6 +1295,7 @@ def print_class_material_cli(
     *,
     rewritten_bundle_dir: Path,
     output_root: Path,
+    target_grade: str,
     model: str,
     base_url: str | None,
     font_path: Path | None,
@@ -1199,6 +1314,7 @@ def print_class_material_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 font_path=font_path,
                 body_font_size=body_font_size,
                 progress=emit_printable_progress,
@@ -1250,6 +1366,7 @@ def print_class_materials_cli(
     *,
     rewritten_root: Path,
     output_root: Path,
+    target_grade: str,
     model: str,
     base_url: str | None,
     font_path: Path | None,
@@ -1268,6 +1385,7 @@ def print_class_materials_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 font_path=font_path,
                 body_font_size=body_font_size,
                 progress=emit_printable_progress,
@@ -1326,6 +1444,7 @@ def build_class_printouts_cli(
     rewrite_output_root: Path,
     vocabulary_source: RewriteVocabularySource,
     print_output_root: Path,
+    target_grade: str,
     model: str,
     base_url: str | None,
     font_path: Path | None,
@@ -1342,6 +1461,8 @@ def build_class_printouts_cli(
             rewrite_output_root=rewrite_output_root,
             vocabulary_source=vocabulary_source,
             print_output_root=print_output_root,
+            target_grade=target_grade,
+            target_profile=target_profile_for_grade(target_grade),
             model=model,
             base_url=base_url,
             font_path=font_path,
@@ -1569,6 +1690,7 @@ def build_usage_signals_cli(
     *,
     archive_root: Path,
     output_root: Path,
+    target_grade: str | None,
     include_punctuation: bool,
     include_numbers: bool,
     model: str,
@@ -1585,6 +1707,7 @@ def build_usage_signals_cli(
             result = build_usage_signals(
                 archive_root=archive_root,
                 output_root=output_root,
+                target_grade=target_grade,
                 include_punctuation=include_punctuation,
                 include_numbers=include_numbers,
                 near_duplicate_client=near_duplicate_client,

@@ -377,6 +377,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
                 output_root=root / "rewritten-vocabulary",
                 client=client,
                 model="fake-vision",
+                target_grade="grade7",
                 progress=progress_events.append,
             )
 
@@ -395,8 +396,11 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             self.assertIn("candidate_vocabulary", selection_prompt)
             self.assertIn('"canonical_key": "선물"', selection_prompt)
             self.assertNotIn("selection_score", selection_prompt)
+            self.assertIn("중학교 1학년 학생", selection_prompt)
+            self.assertNotIn("Korean 1학년", selection_prompt)
             self.assertIn("selected_vocabulary", rewrite_prompt)
             self.assertIn('"canonical_key": "선물"', rewrite_prompt)
+            self.assertIn("중학교 1학년 학생", rewrite_prompt)
 
             content = (outputs.output_dir / "content.md").read_text(encoding="utf-8")
             self.assertIn("<!-- page:1 -->", content)
@@ -404,6 +408,8 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             self.assertIn('<img src="assets/fig1.png"', content)
             self.assertTrue((outputs.output_dir / "selection_attempts.jsonl").is_file())
             selected = json.loads((outputs.output_dir / "selected_vocabulary.json").read_text(encoding="utf-8"))
+            self.assertEqual(selected["target_grade"], "grade7")
+            self.assertEqual(selected["target_profile"], "grade7-ko")
             self.assertEqual(selected["selected_count"], 20)
             self.assertEqual(
                 selected["vocabulary_source"],
@@ -415,6 +421,8 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             )
             self.assertEqual(selected["selected_vocabulary"][0]["canonical_key"], "선물")
             manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["rewrite"]["target_grade"], "grade7")
+            self.assertEqual(manifest["rewrite"]["target_profile"], "grade7-ko")
             self.assertEqual(manifest["rewrite"]["mode"], "vocabulary_guided")
             self.assertEqual(manifest["rewrite"]["vocabulary_guidance"]["vocabulary_source_kind"], "live_lexicon")
             self.assertEqual(manifest["rewrite"]["vocabulary_guidance"]["vocabulary_source_sha256"], "abc123")

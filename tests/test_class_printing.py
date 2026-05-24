@@ -85,6 +85,7 @@ class PrintableMaterialTest(unittest.TestCase):
                 output_root=output_root,
                 client=client,
                 model="fake-ollama",
+                target_grade="grade10",
                 font_path=font_path,
                 progress=progress_events.append,
             )
@@ -119,6 +120,8 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertGreaterEqual(len(docx.inline_shapes), 1)
 
             quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(quality["target_grade"], "grade10")
+            self.assertEqual(quality["target_profile"], "grade10-ko")
             self.assertEqual(quality["status"], "written")
             self.assertEqual(quality["selected_image_count"], 1)
             self.assertEqual(quality["output_formats"], ["docx"])
@@ -131,10 +134,14 @@ class PrintableMaterialTest(unittest.TestCase):
             manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertNotIn("pdf", manifest["files"])
             self.assertEqual(manifest["files"]["docx"], "material.docx")
+            self.assertEqual(manifest["printable"]["target_grade"], "grade10")
+            self.assertEqual(manifest["printable"]["target_profile"], "grade10-ko")
             self.assertTrue(manifest["printable"]["requires_human_revision"])
             self.assertEqual(manifest["printable"]["asset_mode"], "vision-candidate-images")
             attempts = read_jsonl(output_dir / "attempts.jsonl")
             self.assertTrue(attempts[0]["accepted"])
+            self.assertEqual(attempts[0]["target_grade"], "grade10")
+            self.assertIn("고등학교 1학년", attempts[0]["system_prompt"])
             self.assertEqual(attempts[0]["selected_asset_ids"], ["fig1"])
             self.assertEqual(attempts[0]["attached_asset_ids"], ["fig1"])
             self.assertEqual(attempts[0]["visual_candidate_count"], 1)

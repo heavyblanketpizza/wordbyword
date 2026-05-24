@@ -32,6 +32,7 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.dictionary_build.readers import SUPPORTED_EXTENSIONS, read_text_file
 from wordbyword.dictionary_build.text import clean_layout_text
+from wordbyword.grade_profiles import GRADE_WITH_UNKNOWN_PATTERN, normalize_grade_level as normalize_shared_grade_level
 
 DICTIONARY_SOURCE_ARCHIVE_SCHEMA_VERSION = "wordbyword.dictionary_source_archive.v1"
 DICTIONARY_SOURCE_DUPLICATE_MANIFEST_SCHEMA_VERSION = "wordbyword.dictionary_source_archive_duplicates.v1"
@@ -56,7 +57,7 @@ FORMAT_RANK = {".pdf": 0, ".md": 1, ".txt": 2}
 MANAGED_DICTIONARY_SOURCE_NAME_PATTERN = re.compile(
     r"^(?:textbook|official-reading-list|test|worksheet|assessment|reference|other)_"
     r"(?:government|school|publisher|teacher|unknown)_"
-    r"grade(?:[1-6]|-unknown)_"
+    rf"{GRADE_WITH_UNKNOWN_PATTERN}_"
     r"[a-z0-9]+(?:-[a-z0-9]+)*_"
     r"(?:\d{4}|year-unknown)_"
     r"[a-z0-9]+(?:-[a-z0-9]+)*_"
@@ -68,7 +69,7 @@ Use only the supplied document text and file metadata.
 Return exactly one JSON object with these keys:
 - source_type: one of textbook, official-reading-list, test, worksheet, assessment, reference, other
 - authority: one of government, school, publisher, teacher, unknown
-- grade_level: one of grade1, grade2, grade3, grade4, grade5, grade6, grade-unknown
+- grade_level: one of grade1 through grade12, or grade-unknown
 - subject_slug: lowercase ASCII hyphen slug, broad subject, 1 to 4 words
 - curriculum_year: four digit year if clearly present, otherwise year-unknown
 - term_slug: lowercase ASCII hyphen slug such as term1, term2, semester1, unit3, or term-unknown
@@ -1166,15 +1167,7 @@ def dictionary_source_relative_path(root: Path, path: Path) -> str:
 
 
 def normalize_grade_level(value: object) -> str:
-    text = str(value or "").strip().lower().replace(" ", "")
-    if text in {"", "unknown", "gradeunknown", "grade-unknown", "학년모름", "미상"}:
-        return "grade-unknown"
-    digit_match = re.search(r"([1-6])", text)
-    if digit_match and ("grade" in text or "학년" in text or text == digit_match.group(1)):
-        return f"grade{digit_match.group(1)}"
-    if text in {f"grade{grade}" for grade in range(1, 7)}:
-        return text
-    return "grade-unknown"
+    return normalize_shared_grade_level(value)
 
 
 def safe_slug(value: object, *, fallback: str) -> str:

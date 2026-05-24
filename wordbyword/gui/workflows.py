@@ -30,6 +30,7 @@ from wordbyword.dictionary_build.resumable import (
     UnresolvedGeneratedExampleFailures,
     build_resumable_dictionary,
 )
+from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade, target_profile_for_grade
 from wordbyword.gui.job_events import (
     GuiJobEvent,
     after_class_report_event,
@@ -147,6 +148,7 @@ def run_class_printouts(values: Mapping[str, object], emit: EmitEvent) -> GuiJob
     workflow = "class_printouts"
     emit(event(workflow, "start", "building class printouts"))
     parse_pdf = not _bool(values, "skip_pdf_parse")
+    target_grade = _target_grade(values)
     result = class_printout_workflow.build_class_printouts_workflow(
         source_dir=_path(values, "class_source_dir"),
         parse_output_root=_path(values, "source_output_root"),
@@ -156,6 +158,8 @@ def run_class_printouts(values: Mapping[str, object], emit: EmitEvent) -> GuiJob
         rewrite_output_root=_path(values, "rewrite_output_root"),
         vocabulary_source=_rewrite_vocabulary_source(values),
         print_output_root=_path(values, "print_output_root"),
+        target_grade=target_grade,
+        target_profile=target_profile_for_grade(target_grade),
         model=_text(values, "model"),
         base_url=_optional_text(values, "base_url"),
         font_path=_optional_path(values, "print_font_path"),
@@ -248,6 +252,7 @@ def run_usage_signals(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEv
         result = build_usage_signals(
             archive_root=_path(values, "archive_root"),
             output_root=_path(values, "usage_signal_output_root"),
+            target_grade=_target_grade(values),
             include_punctuation=_bool(values, "include_punctuation"),
             include_numbers=_bool(values, "include_numbers"),
             near_duplicate_client=lazy_client,
@@ -403,6 +408,10 @@ def _text(values: Mapping[str, object], key: str) -> str:
 def _optional_text(values: Mapping[str, object], key: str) -> str | None:
     text = _text(values, key).strip()
     return text or None
+
+
+def _target_grade(values: Mapping[str, object]) -> str:
+    return normalize_target_grade(_optional_text(values, "target_grade") or DEFAULT_TARGET_GRADE)
 
 
 def _bool(values: Mapping[str, object], key: str) -> bool:

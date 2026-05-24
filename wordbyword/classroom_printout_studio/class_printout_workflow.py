@@ -26,6 +26,7 @@ from wordbyword.classroom_printout_studio.source_parsing.materials import (
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
+from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade, target_profile_for_grade
 
 CLASS_PRINTOUT_LEDGER_FILENAME = ".wordbyword-class-printout-ledger.json"
 CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION = "wordbyword.class_printout_workflow.v1"
@@ -98,6 +99,8 @@ def build_class_printouts_workflow(
     font_path: Path | None,
     body_font_size: int | None,
     force_class_printouts: bool,
+    target_grade: str = DEFAULT_TARGET_GRADE,
+    target_profile: str | None = None,
     parse_source_material_func: ParseSourceMaterial = parse_source_material,
     rewrite_source_material_func: RewriteSourceMaterial = rewrite_vocabulary_guided_source_material,
     print_class_material_func: PrintClassMaterial = print_class_material,
@@ -107,6 +110,8 @@ def build_class_printouts_workflow(
     source_rewrite_progress: SourceRewriteProgressCallback | None = None,
     printable_progress: PrintableProgressCallback | None = None,
 ) -> ClassPrintoutWorkflowResult:
+    resolved_target_grade = normalize_target_grade(target_grade)
+    resolved_target_profile = target_profile or target_profile_for_grade(resolved_target_grade)
     ledger_path = class_printout_ledger_path(parse_output_root)
     ledger = load_class_printout_ledger(ledger_path)
     discovered_sources = discover_class_printout_sources(
@@ -120,6 +125,8 @@ def build_class_printouts_workflow(
         discovered_sources,
         ledger=ledger,
         force=force_class_printouts,
+        target_grade=resolved_target_grade,
+        target_profile=resolved_target_profile,
     )
 
     if not discovered_sources:
@@ -197,6 +204,8 @@ def build_class_printouts_workflow(
                     output_root=rewrite_output_root,
                     client=rewrite_client,
                     model=model,
+                    target_grade=resolved_target_grade,
+                    target_profile=resolved_target_profile,
                     progress=source_rewrite_progress,
                     source_index=source_index,
                     total_sources=len(rewritable_bundles),
@@ -223,6 +232,8 @@ def build_class_printouts_workflow(
             rewrite_model=model,
             print_model=model,
             vocabulary_source=vocabulary_source,
+            target_grade=resolved_target_grade,
+            target_profile=resolved_target_profile,
         )
     if failed_rewrites:
         write_class_printout_ledger(ledger_path, ledger)
@@ -260,6 +271,8 @@ def build_class_printouts_workflow(
                     output_root=print_output_root,
                     client=print_client,
                     model=model,
+                    target_grade=resolved_target_grade,
+                    target_profile=resolved_target_profile,
                     font_path=font_path,
                     body_font_size=body_font_size,
                     progress=printable_progress,
@@ -287,6 +300,8 @@ def build_class_printouts_workflow(
             rewrite_model=model,
             print_model=model,
             vocabulary_source=vocabulary_source,
+            target_grade=resolved_target_grade,
+            target_profile=resolved_target_profile,
         )
     write_class_printout_ledger(ledger_path, ledger)
 
@@ -383,7 +398,13 @@ def unique_class_printout_source_id(source_path: Path, source_dir: Path, used_so
     return source_id
 
 
-def valid_printed_class_printout_entry(entry: object, *, source_sha256: str) -> bool:
+def valid_printed_class_printout_entry(
+    entry: object,
+    *,
+    source_sha256: str,
+    target_grade: str,
+    target_profile: str,
+) -> bool:
     if not isinstance(entry, Mapping):
         return False
     if entry.get("status") != CLASS_PRINTOUT_STATUS_PRINTED:
@@ -408,6 +429,10 @@ def valid_printed_class_printout_entry(entry: object, *, source_sha256: str) -> 
         return False
     if not isinstance(manifest_printable, Mapping) or manifest_printable.get("status") != "written":
         return False
+    if str(manifest_printable.get("target_grade") or "") not in {"", target_grade}:
+        return False
+    if str(manifest_printable.get("target_profile") or "") not in {"", target_profile}:
+        return False
     return True
 
 
@@ -416,6 +441,8 @@ def filter_new_class_printout_sources(
     *,
     ledger: Mapping[str, Any],
     force: bool,
+    target_grade: str,
+    target_profile: str,
 ) -> tuple[list[BuildClassPrintoutSource], list[dict[str, object]]]:
     entries = ledger.get("entries", {})
     if not isinstance(entries, Mapping):
@@ -423,7 +450,12 @@ def filter_new_class_printout_sources(
     new_sources: list[BuildClassPrintoutSource] = []
     skipped: list[dict[str, object]] = []
     for source in sources:
-        if not force and valid_printed_class_printout_entry(entries.get(source.sha256), source_sha256=source.sha256):
+        if not force and valid_printed_class_printout_entry(
+            entries.get(source.sha256),
+            source_sha256=source.sha256,
+            target_grade=target_grade,
+            target_profile=target_profile,
+        ):
             skipped.append(
                 {
                     "source_id": source.source_id,
@@ -562,6 +594,8 @@ def update_class_printout_ledger_entry(
     rewrite_model: str,
     print_model: str,
     vocabulary_source: RewriteVocabularySource,
+    target_grade: str,
+    target_profile: str,
 ) -> None:
     entries = ledger.setdefault("entries", {})
     if not isinstance(entries, dict):
@@ -584,6 +618,8 @@ def update_class_printout_ledger_entry(
             "manifest_path": str(parsed_bundle.manifest_path) if parsed_bundle is not None else "",
         },
         "rewrite": {
+            "target_grade": target_grade,
+            "target_profile": target_profile,
             "model": rewrite_model,
             "bundle_dir": str(getattr(rewrite_output, "output_dir", "")) if rewrite_output is not None else "",
             "vocabulary_source": {
@@ -593,6 +629,8 @@ def update_class_printout_ledger_entry(
             },
         },
         "printable": {
+            "target_grade": target_grade,
+            "target_profile": target_profile,
             "model": print_model,
             "bundle_dir": str(print_output_dir or ""),
             "manifest_path": str(printable_manifest or ""),

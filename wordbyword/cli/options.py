@@ -23,6 +23,7 @@ from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_
 from wordbyword.dictionary_build.source_archive import DEFAULT_DICTIONARY_SOURCE_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
+from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, VALID_TARGET_GRADES, normalize_target_grade
 
 DEFAULT_OUTPUT_DIR = Path("build-dictionary")
 DEFAULT_INPUT_DIR = DEFAULT_DICTIONARY_SOURCE_ROOT
@@ -43,10 +44,48 @@ class SourceParseOptions:
     paddleocr_vl_settings: PaddleOCRVLSettings | None
 
 
+class ExplicitPathAction(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f"{self.dest}_explicit", True)
+
+
+class TargetGradeAction(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        try:
+            target_grade = normalize_target_grade(values)
+        except ValueError as error:
+            parser.error(str(error))
+        setattr(namespace, self.dest, target_grade)
+        setattr(namespace, "target_grade_explicit", True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wordbyword",
         description="Extract Korean vocabulary candidates from PDFs and text documents.",
+    )
+    parser.set_defaults(
+        target_grade_explicit=False,
+        print_output_root_explicit=False,
+        usage_signal_output_root_explicit=False,
+        usage_candidates_explicit=False,
+        live_lexicon_explicit=False,
+        supplemental_lexicon_explicit=False,
+        unmatched_usage_output_explicit=False,
+        after_class_report_output_root_explicit=False,
     )
     parser.add_argument(
         "--input",
@@ -162,6 +201,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--ollama-base-url",
         default=None,
         help="Optional Ollama base URL override. Defaults to WORDBYWORD_OLLAMA_BASE_URL or http://localhost:11434.",
+    )
+    parser.add_argument(
+        "--target-grade",
+        "--grade",
+        action=TargetGradeAction,
+        default=DEFAULT_TARGET_GRADE,
+        metavar="GRADE",
+        help=(
+            "Korean K-12 target grade for class printouts, usage signals, live lexicons, and reports. "
+            f"Use one of {', '.join(VALID_TARGET_GRADES)}. Defaults to {DEFAULT_TARGET_GRADE}."
+        ),
     )
     parser.add_argument(
         "--show-distribution",
@@ -449,6 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--print-output-root",
         type=Path,
         default=DEFAULT_PRINT_OUTPUT_ROOT,
+        action=ExplicitPathAction,
         help=(
             "Root folder for printable class-material outputs. "
             f"Defaults to {DEFAULT_PRINT_OUTPUT_ROOT}."
@@ -481,6 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--after-class-report-output-root",
         type=Path,
         default=DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT,
+        action=ExplicitPathAction,
         help=(
             "Root folder for after-class reading report outputs. "
             f"Defaults to {DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT}."
@@ -558,6 +610,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--usage-signal-output-root",
         type=Path,
         default=DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
+        action=ExplicitPathAction,
         help=(
             "Output folder for --build-usage-signals artifacts. "
             "Defaults to wbw-vocabulary-intelligence/usage-signal-build."
@@ -584,6 +637,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--usage-candidates",
         type=Path,
         default=DEFAULT_USAGE_CANDIDATES_PATH,
+        action=ExplicitPathAction,
         help=(
             "Usage candidate JSONL for --update-live-lexicon. "
             "Defaults to wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
@@ -602,6 +656,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--live-lexicon",
         type=Path,
         default=DEFAULT_LIVE_LEXICON_PATH,
+        action=ExplicitPathAction,
         help=(
             "Canonical live lexicon JSONL to maintain with class usage signals. "
             "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl."
@@ -611,6 +666,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--supplemental-lexicon",
         type=Path,
         default=DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
+        action=ExplicitPathAction,
         help=(
             "Supplemental non-canonical live lexicon JSONL to maintain from unmatched class usage. "
             "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-supplemental.jsonl."
@@ -620,6 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--unmatched-usage-output",
         type=Path,
         default=DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
+        action=ExplicitPathAction,
         help=(
             "Output JSONL for usage candidates not found in the live lexicon. "
             "Defaults to wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl."

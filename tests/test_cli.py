@@ -238,6 +238,142 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(print_args.print_class_materials, DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT)
         self.assertEqual(workflow_args.build_class_printouts, DEFAULT_SOURCE_MATERIAL_ROOT)
 
+    def test_target_grade_argument_normalizes_korean_school_shorthand(self) -> None:
+        args = build_parser().parse_args(["--target-grade", "중1", "--build-usage-signals"])
+
+        self.assertEqual(args.target_grade, "grade7")
+        self.assertTrue(args.target_grade_explicit)
+
+    def test_target_grade_resolves_class_printout_defaults_without_overriding_custom_paths(self) -> None:
+        result = SimpleNamespace(
+            status="no_sources",
+            exit_code=1,
+            source_dir=Path("sources"),
+            parse_output_root=Path("parsed"),
+            rewrite_output_root=Path("rewritten"),
+            print_output_root=Path("print"),
+            vocabulary_source=SimpleNamespace(kind="dictionary_seed", path=Path("build-dictionary/15_final_dictionary.jsonl")),
+            ledger_path=Path("parsed/.wordbyword-class-printout-ledger.json"),
+            discovered_sources=0,
+            skipped_sources=[],
+            parser_skipped_sources=[],
+            parsed_sources=0,
+            rewritten=0,
+            failed_rewrites=0,
+            docx_written=0,
+            failed_prints=0,
+            print_outputs=[],
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+            patch("wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow", return_value=result) as workflow,
+        ):
+            exit_code = main(["--build-class-printouts", "sources", "--target-grade", "grade7", "--skip-pdf-parse"])
+
+        self.assertEqual(exit_code, 1)
+        kwargs = workflow.call_args.kwargs
+        self.assertEqual(kwargs["target_grade"], "grade7")
+        self.assertEqual(kwargs["target_profile"], "grade7-ko")
+        self.assertEqual(
+            kwargs["rewrite_output_root"],
+            Path("classroom-printout-studio/rewritten-for-class/grade7-ko-ollama-vocabulary-guided"),
+        )
+        self.assertEqual(
+            kwargs["print_output_root"],
+            Path("classroom-printout-studio/printable-for-class/grade7-ko-a4-ollama"),
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+            patch("wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow", return_value=result) as custom_workflow,
+        ):
+            main(
+                [
+                    "--build-class-printouts",
+                    "sources",
+                    "--target-grade",
+                    "grade7",
+                    "--rewrite-output-root",
+                    "custom-rewrite",
+                    "--print-output-root",
+                    "custom-print",
+                    "--skip-pdf-parse",
+                ]
+            )
+
+        custom_kwargs = custom_workflow.call_args.kwargs
+        self.assertEqual(custom_kwargs["rewrite_output_root"], Path("custom-rewrite"))
+        self.assertEqual(custom_kwargs["print_output_root"], Path("custom-print"))
+
+    def test_target_grade_resolves_usage_and_live_lexicon_defaults(self) -> None:
+        usage_result = SimpleNamespace(
+            archive_root=Path("archive"),
+            output_root=Path("unused"),
+            documents=0,
+            extracted_pages=0,
+            sentences=0,
+            token_occurrences=0,
+            vocabulary_terms=0,
+            surface_words=0,
+        )
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("wordbyword.cli.app.build_usage_signals", return_value=usage_result) as usage,
+        ):
+            self.assertEqual(main(["--build-usage-signals", "--target-grade", "grade7"]), 0)
+
+        usage_kwargs = usage.call_args.kwargs
+        self.assertEqual(usage_kwargs["target_grade"], "grade7")
+        self.assertEqual(usage_kwargs["output_root"], Path("wbw-vocabulary-intelligence/usage-signal-build/grade7"))
+
+        live_result = SimpleNamespace(
+            canonical_dictionary_path=Path("build-dictionary/15_final_dictionary.jsonl"),
+            usage_candidates_path=Path("usage"),
+            usage_summary_path=Path("summary"),
+            live_lexicon_path=Path("live"),
+            supplemental_lexicon_path=Path("supplemental"),
+            unmatched_usage_output_path=Path("unmatched"),
+            canonical_source="seeded_from_dictionary",
+            canonical_rows=0,
+            live_lexicon_rows=0,
+            usage_candidate_rows=0,
+            total_class_printouts=0,
+            matched_count=0,
+            unmatched_count=0,
+            supplemental_rows=0,
+            supplemental_active_rows=0,
+            supplemental_added_count=0,
+            supplemental_updated_count=0,
+            supplemental_inactive_count=0,
+            supplemental_promoted_count=0,
+        )
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("wordbyword.cli.app.update_live_lexicon", return_value=live_result) as live,
+        ):
+            self.assertEqual(main(["--update-live-lexicon", "--target-grade", "grade7"]), 0)
+
+        live_kwargs = live.call_args.kwargs
+        self.assertEqual(
+            live_kwargs["usage_candidates_path"],
+            Path("wbw-vocabulary-intelligence/usage-signal-build/grade7/08_dictionary_candidates.jsonl"),
+        )
+        self.assertEqual(
+            live_kwargs["live_lexicon_path"],
+            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7-live-lexicon-canonical.jsonl"),
+        )
+        self.assertEqual(
+            live_kwargs["supplemental_lexicon_path"],
+            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7-live-lexicon-supplemental.jsonl"),
+        )
+        self.assertEqual(
+            live_kwargs["unmatched_usage_output_path"],
+            Path("wbw-vocabulary-intelligence/usage-signal-build/grade7/10_unmatched_usage_candidates.jsonl"),
+        )
+
     def test_removed_pdf_parser_option_is_rejected(self) -> None:
         parser = build_parser()
 

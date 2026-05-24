@@ -13,14 +13,35 @@ ApplicationWindow {
     color: "#f7f7f4"
 
     property int currentSection: 0
-    property string uiFontFamily: "Arial"
-    property string monoFontFamily: "Menlo"
+    property string uiFontFamily: (typeof guiUiFontFamily === "undefined" || guiUiFontFamily.length === 0) ? "Pretendard Variable" : guiUiFontFamily
+    property string monoFontFamily: (typeof guiMonoFontFamily === "undefined" || guiMonoFontFamily.length === 0) ? "JetBrains Mono" : guiMonoFontFamily
+    property int fontSizeBadge: 10
+    property int fontSizeTiny: 11
+    property int fontSizeLabel: 12
+    property int fontSizeBody: 13
+    property int fontSizePurpose: 14
+    property int fontSizeBrand: 22
+    property int fontSizeSection: 28
+    property int fontWeightRegular: Font.Normal
+    property int fontWeightMedium: Font.Medium
+    property int fontWeightSemibold: Font.DemiBold
+    property int fontWeightBold: Font.Bold
     property var backend: (typeof bridge === "undefined" || bridge === null) ? null : bridge
+    property var safeLanguageState: backend ? backend.languageState : ({
+        "selected": "system",
+        "resolved": "en",
+        "options": [
+            {"value": "system", "label": "System"},
+            {"value": "en", "label": "English"},
+            {"value": "ko", "label": "Korean"}
+        ]
+    })
+    property var textMap: backend ? backend.texts : ({})
     property var defaultJobState: ({
         "busy": false,
         "workflow": "",
         "phase": "idle",
-        "detail": "Ready. Select a workflow and run the next action.",
+        "detail": root.tr("app.ready_detail"),
         "status": "idle",
         "current": 0,
         "total": 0,
@@ -29,16 +50,36 @@ ApplicationWindow {
     property var safeSettings: backend ? backend.settings : ({})
     property var safeJobState: backend ? backend.jobState : defaultJobState
     property string safeLogText: backend ? backend.logText : ""
-    property string safeArtifactText: backend ? backend.artifactText : "No artifacts yet."
+    property string safeArtifactText: backend ? backend.artifactText : root.tr("run.no_artifacts")
     property bool busy: Boolean(safeJobState.busy)
     property bool runDrawerOpen: false
     property var definitions: backend ? backend.workflowDefinitions : []
     property var readinessMap: backend ? backend.workflowReadiness : ({})
     property var currentDefinition: definitions.length > currentSection ? definitions[currentSection] : ({})
     property var currentReadiness: readinessMap[currentDefinition.key] || ({})
+    property var gradeOptions: [
+        {"value": "grade1", "label": "초1 / grade1"},
+        {"value": "grade2", "label": "초2 / grade2"},
+        {"value": "grade3", "label": "초3 / grade3"},
+        {"value": "grade4", "label": "초4 / grade4"},
+        {"value": "grade5", "label": "초5 / grade5"},
+        {"value": "grade6", "label": "초6 / grade6"},
+        {"value": "grade7", "label": "중1 / grade7"},
+        {"value": "grade8", "label": "중2 / grade8"},
+        {"value": "grade9", "label": "중3 / grade9"},
+        {"value": "grade10", "label": "고1 / grade10"},
+        {"value": "grade11", "label": "고2 / grade11"},
+        {"value": "grade12", "label": "고3 / grade12"}
+    ]
+
+    function tr(key) {
+        var value = textMap[key]
+        return value === undefined || value === null || String(value).length === 0 ? String(key) : String(value)
+    }
 
     function commonValues() {
         return {
+            "target_grade": root.selectedTargetGrade(),
             "model": modelField.text,
             "base_url": baseUrlField.text
         }
@@ -136,6 +177,36 @@ ApplicationWindow {
         return backend.runJob(workflowId, values)
     }
 
+    function setLanguage(value) {
+        if (!backend)
+            return false
+        return backend.setLanguage(value)
+    }
+
+    function languageOptionIndex(value) {
+        var options = safeLanguageState.options || []
+        for (var i = 0; i < options.length; i++) {
+            if (String(options[i].value || "") === value)
+                return i
+        }
+        return 0
+    }
+
+    function gradeOptionIndex(value) {
+        for (var i = 0; i < gradeOptions.length; i++) {
+            if (String(gradeOptions[i].value || "") === value)
+                return i
+        }
+        return 0
+    }
+
+    function selectedTargetGrade() {
+        var index = targetGradeCombo.currentIndex
+        if (index >= 0 && index < gradeOptions.length)
+            return String(gradeOptions[index].value || "grade1")
+        return String(root.safeSettings.target_grade || "grade1")
+    }
+
     function choosePath(current, directory) {
         if (!backend)
             return current
@@ -148,16 +219,30 @@ ApplicationWindow {
         return backend.pathForKey(key)
     }
 
+    function iconSource(iconName, inverted) {
+        if (!iconName || iconName.length === 0)
+            return ""
+        return "../assets/icons/" + (inverted ? "white" : "black") + "/" + iconName + ".svg"
+    }
+
+    function actionIcon(workflowId) {
+        if (!workflowId || workflowId.length === 0)
+            return "list-checks"
+        return "play"
+    }
+
     function statusLabel(status) {
         if (status === "missing_input")
-            return "MISSING"
+            return root.tr("status.missing_input")
         if (status === "done")
-            return "DONE"
+            return root.tr("status.done")
         if (status === "running")
-            return "RUNNING"
+            return root.tr("status.running")
         if (status === "failed")
-            return "FAILED"
-        return "READY"
+            return root.tr("status.failed")
+        if (status === "idle")
+            return root.tr("status.idle")
+        return root.tr("status.ready")
     }
 
     function statusTone(status) {
@@ -215,16 +300,33 @@ ApplicationWindow {
     component LabelText: Text {
         color: "#111111"
         font.family: root.uiFontFamily
-        font.pixelSize: 12
-        font.bold: true
+        font.pixelSize: root.fontSizeLabel
+        font.weight: root.fontWeightBold
     }
 
     component BodyText: Text {
         color: "#111111"
         font.family: root.uiFontFamily
-        font.pixelSize: 13
+        font.pixelSize: root.fontSizeBody
+        font.weight: root.fontWeightRegular
         wrapMode: Text.WordWrap
         lineHeight: 1.15
+    }
+
+    component WIcon: Image {
+        id: icon
+        property string iconName: ""
+        property bool inverted: false
+        property int iconSize: 18
+        visible: iconName.length > 0
+        source: root.iconSource(iconName, inverted)
+        fillMode: Image.PreserveAspectFit
+        sourceSize.width: iconSize
+        sourceSize.height: iconSize
+        width: iconSize
+        height: iconSize
+        Layout.preferredWidth: iconSize
+        Layout.preferredHeight: iconSize
     }
 
     component WTextField: TextField {
@@ -233,7 +335,8 @@ ApplicationWindow {
         selectedTextColor: "#ffffff"
         selectionColor: "#111111"
         font.family: root.uiFontFamily
-        font.pixelSize: 13
+        font.pixelSize: root.fontSizeBody
+        font.weight: root.fontWeightRegular
         padding: 9
         background: Rectangle {
             color: "#ffffff"
@@ -246,24 +349,50 @@ ApplicationWindow {
     component WButton: Button {
         id: control
         property bool primary: false
+        property string iconName: ""
+        property bool iconOnly: false
+        property string toolTipText: ""
         Layout.preferredHeight: 38
         enabled: !root.busy
         font.family: root.uiFontFamily
-        font.pixelSize: 12
-        font.bold: true
+        font.pixelSize: root.fontSizeLabel
+        font.weight: root.fontWeightBold
+        ToolTip.text: toolTipText
+        ToolTip.visible: hovered && toolTipText.length > 0
+        ToolTip.delay: 600
         background: Rectangle {
             color: control.down || control.primary ? "#111111" : (control.enabled ? "#ffffff" : "#e7e7e2")
             border.color: "#111111"
             border.width: control.primary ? 2 : 1
             radius: 0
         }
-        contentItem: Text {
-            text: control.text
-            color: control.down || control.primary ? "#ffffff" : "#111111"
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-            font: control.font
-            elide: Text.ElideRight
+        contentItem: RowLayout {
+            anchors.fill: parent
+            anchors.margins: control.iconOnly ? 9 : 10
+            spacing: control.iconOnly ? 0 : 8
+            Item {
+                visible: control.iconOnly
+                Layout.fillWidth: true
+            }
+            WIcon {
+                iconName: control.iconName
+                inverted: control.down || control.primary
+                Layout.alignment: Qt.AlignCenter
+            }
+            Text {
+                visible: !control.iconOnly
+                text: control.text
+                color: control.down || control.primary ? "#ffffff" : "#111111"
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                font: control.font
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+            Item {
+                visible: control.iconOnly
+                Layout.fillWidth: true
+            }
         }
     }
 
@@ -271,7 +400,8 @@ ApplicationWindow {
         id: control
         spacing: 10
         font.family: root.uiFontFamily
-        font.pixelSize: 13
+        font.pixelSize: root.fontSizeBody
+        font.weight: root.fontWeightRegular
         indicator: Rectangle {
             implicitWidth: 18
             implicitHeight: 18
@@ -286,8 +416,8 @@ ApplicationWindow {
                 text: control.checked ? "X" : ""
                 color: "#111111"
                 font.family: root.uiFontFamily
-                font.pixelSize: 12
-                font.bold: true
+                font.pixelSize: root.fontSizeLabel
+                font.weight: root.fontWeightBold
             }
         }
         contentItem: Text {
@@ -315,8 +445,8 @@ ApplicationWindow {
             text: pill.label
             color: root.statusInk(pill.status)
             font.family: root.uiFontFamily
-            font.pixelSize: 10
-            font.bold: true
+            font.pixelSize: root.fontSizeBadge
+            font.weight: root.fontWeightBold
         }
     }
 
@@ -324,16 +454,22 @@ ApplicationWindow {
         id: header
         property string title: ""
         property string purpose: ""
+        property string iconName: ""
         spacing: 8
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
+            WIcon {
+                iconName: header.iconName
+                iconSize: 20
+                Layout.alignment: Qt.AlignVCenter
+            }
             Text {
                 text: header.title
                 color: "#111111"
                 font.family: root.uiFontFamily
-                font.pixelSize: 28
-                font.bold: true
+                font.pixelSize: root.fontSizeSection
+                font.weight: root.fontWeightBold
                 Layout.fillWidth: true
             }
             StatusPill {
@@ -344,7 +480,7 @@ ApplicationWindow {
         BodyText {
             text: header.purpose
             color: "#333333"
-            font.pixelSize: 14
+            font.pixelSize: root.fontSizePurpose
             Layout.fillWidth: true
         }
     }
@@ -367,7 +503,9 @@ ApplicationWindow {
                 Layout.preferredHeight: 38
             }
             WButton {
-                text: "..."
+                iconName: pathField.directory ? "folder-open" : "file-search"
+                iconOnly: true
+                toolTipText: pathField.directory ? root.tr("dialog.choose_folder") : root.tr("dialog.choose_file")
                 Layout.preferredWidth: 44
                 Layout.minimumWidth: 44
                 Layout.maximumWidth: 44
@@ -400,9 +538,13 @@ ApplicationWindow {
                 text: String(control.definition.number || "")
                 color: root.currentSection === index ? "#ffffff" : "#111111"
                 font.family: root.uiFontFamily
-                font.pixelSize: 12
-                font.bold: true
-                Layout.preferredWidth: 26
+                font.pixelSize: root.fontSizeLabel
+                font.weight: root.fontWeightBold
+                Layout.preferredWidth: 22
+            }
+            WIcon {
+                iconName: String(control.definition.icon_name || "")
+                inverted: root.currentSection === index
             }
             ColumnLayout {
                 spacing: 4
@@ -411,8 +553,8 @@ ApplicationWindow {
                     text: String(control.definition.title || "")
                     color: root.currentSection === index ? "#ffffff" : "#111111"
                     font.family: root.uiFontFamily
-                    font.pixelSize: 13
-                    font.bold: true
+                    font.pixelSize: root.fontSizeBody
+                    font.weight: root.fontWeightBold
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -420,8 +562,8 @@ ApplicationWindow {
                     text: root.statusLabel(String(control.readiness.status || "ready"))
                     color: root.currentSection === index ? "#ffffff" : "#555555"
                     font.family: root.uiFontFamily
-                    font.pixelSize: 10
-                    font.bold: true
+                    font.pixelSize: root.fontSizeBadge
+                    font.weight: root.fontWeightBold
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
@@ -448,19 +590,19 @@ ApplicationWindow {
 
     component AdvancedBlock: ColumnLayout {
         id: block
-        property string title: "Advanced"
+        property string title: root.tr("advanced.default")
         property bool open: false
         default property alias content: body.data
         Layout.fillWidth: true
         spacing: 12
         Button {
             id: advancedButton
-            text: (block.open ? "- " : "+ ") + block.title
+            text: block.title
             Layout.preferredHeight: 34
-            Layout.preferredWidth: 160
+            Layout.preferredWidth: 190
             font.family: root.uiFontFamily
-            font.pixelSize: 12
-            font.bold: true
+            font.pixelSize: root.fontSizeLabel
+            font.weight: root.fontWeightBold
             onClicked: block.open = !block.open
             background: Rectangle {
                 color: "#ffffff"
@@ -468,12 +610,22 @@ ApplicationWindow {
                 border.width: 1
                 radius: 0
             }
-            contentItem: Text {
-                text: advancedButton.text
-                color: "#111111"
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font: advancedButton.font
+            contentItem: RowLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 8
+                WIcon {
+                    iconName: block.open ? "chevron-down" : "chevron-right"
+                }
+                Text {
+                    text: advancedButton.text
+                    color: "#111111"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font: advancedButton.font
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
             }
         }
         ColumnLayout {
@@ -504,15 +656,15 @@ ApplicationWindow {
                     text: "wordbyword"
                     color: "#111111"
                     font.family: root.uiFontFamily
-                    font.pixelSize: 22
-                    font.bold: true
+                    font.pixelSize: root.fontSizeBrand
+                    font.weight: root.fontWeightBold
                     Layout.bottomMargin: 8
                 }
 
                 BodyText {
-                    text: "Beginner's Guide flow"
+                    text: root.tr("sidebar.guide_flow")
                     color: "#555555"
-                    font.pixelSize: 12
+                    font.pixelSize: root.fontSizeLabel
                     Layout.bottomMargin: 4
                 }
 
@@ -528,6 +680,95 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
+                    implicitHeight: languageBody.implicitHeight + 28
+                    color: "#ffffff"
+                    border.color: "#111111"
+                    border.width: 1
+                    ColumnLayout {
+                        id: languageBody
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 10
+                        LabelText { text: root.tr("language.label") }
+                        ComboBox {
+                            id: languageCombo
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            model: root.safeLanguageState.options || []
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: root.languageOptionIndex(String(root.safeLanguageState.selected || "system"))
+                            font.family: root.uiFontFamily
+                            font.pixelSize: root.fontSizeBody
+                            font.weight: root.fontWeightRegular
+                            onActivated: function(index) {
+                                var options = root.safeLanguageState.options || []
+                                if (index >= 0 && index < options.length)
+                                    root.setLanguage(String(options[index].value || "system"))
+                            }
+                            background: Rectangle {
+                                color: "#ffffff"
+                                border.color: "#111111"
+                                border.width: 1
+                                radius: 0
+                            }
+                            contentItem: Text {
+                                text: languageCombo.displayText
+                                color: "#111111"
+                                font: languageCombo.font
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 10
+                                rightPadding: 34
+                                elide: Text.ElideRight
+                            }
+                            indicator: WIcon {
+                                iconName: "chevron-down"
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            popup: Popup {
+                                y: languageCombo.height - 1
+                                width: languageCombo.width
+                                implicitHeight: contentItem.implicitHeight
+                                padding: 0
+                                contentItem: ListView {
+                                    clip: true
+                                    implicitHeight: contentHeight
+                                    model: languageCombo.popup.visible ? languageCombo.delegateModel : null
+                                    currentIndex: languageCombo.highlightedIndex
+                                }
+                                background: Rectangle {
+                                    color: "#ffffff"
+                                    border.color: "#111111"
+                                    border.width: 1
+                                    radius: 0
+                                }
+                            }
+                            delegate: ItemDelegate {
+                                width: languageCombo.width
+                                height: 34
+                                highlighted: languageCombo.highlightedIndex === index
+                                background: Rectangle {
+                                    color: highlighted ? "#111111" : "#ffffff"
+                                }
+                                contentItem: Text {
+                                    text: modelData.label
+                                    color: highlighted ? "#ffffff" : "#111111"
+                                    font.family: root.uiFontFamily
+                                    font.pixelSize: root.fontSizeBody
+                                    font.weight: root.fontWeightRegular
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: 10
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
                     implicitHeight: runtimeBody.implicitHeight + 28
                     color: "#f7f7f4"
                     border.color: "#111111"
@@ -537,7 +778,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         anchors.margins: 14
                         spacing: 10
-                        LabelText { text: "RUNTIME" }
+                        LabelText { text: root.tr("runtime.label") }
                         WTextField {
                             id: modelField
                             Layout.fillWidth: true
@@ -547,9 +788,44 @@ ApplicationWindow {
                         WTextField {
                             id: baseUrlField
                             Layout.fillWidth: true
-                            placeholderText: "Ollama base URL"
+                            placeholderText: root.tr("placeholder.ollama_base_url")
                             text: String(root.safeSettings.base_url || "")
                             onEditingFinished: root.saveSettings(root.workflowValues())
+                        }
+                        LabelText { text: "Target grade" }
+                        ComboBox {
+                            id: targetGradeCombo
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            model: root.gradeOptions
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: root.gradeOptionIndex(String(root.safeSettings.target_grade || "grade1"))
+                            font.family: root.uiFontFamily
+                            font.pixelSize: root.fontSizeBody
+                            font.weight: root.fontWeightRegular
+                            onActivated: root.saveSettings(root.workflowValues())
+                            background: Rectangle {
+                                color: "#ffffff"
+                                border.color: "#111111"
+                                border.width: 1
+                                radius: 0
+                            }
+                            contentItem: Text {
+                                text: targetGradeCombo.displayText
+                                color: "#111111"
+                                font: targetGradeCombo.font
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: 10
+                                rightPadding: 34
+                                elide: Text.ElideRight
+                            }
+                            indicator: WIcon {
+                                iconName: "chevron-down"
+                                anchors.right: parent.right
+                                anchors.rightMargin: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                         }
                     }
                 }
@@ -580,6 +856,7 @@ ApplicationWindow {
                     SectionTitle {
                         title: String(root.currentDefinition.number || "") + " / " + String(root.currentDefinition.title || "")
                         purpose: String(root.currentDefinition.purpose || "")
+                        iconName: String(root.currentDefinition.icon_name || "")
                         Layout.fillWidth: true
                     }
 
@@ -587,7 +864,7 @@ ApplicationWindow {
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 14
-                            LabelText { text: "END-TO-END FLOW" }
+                            LabelText { text: root.tr("panel.end_to_end_flow") }
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
@@ -599,17 +876,26 @@ ApplicationWindow {
                                         color: root.currentSection === index ? "#111111" : "#f7f7f4"
                                         border.color: "#111111"
                                         border.width: root.currentSection === index ? 2 : 1
-                                        Text {
+                                        ColumnLayout {
                                             anchors.fill: parent
                                             anchors.margins: 10
-                                            text: String(modelData.number || "") + "\n" + String(modelData.title || "")
-                                            color: root.currentSection === index ? "#ffffff" : "#111111"
-                                            font.family: root.uiFontFamily
-                                            font.pixelSize: 11
-                                            font.bold: true
-                                            wrapMode: Text.WordWrap
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
+                                            spacing: 5
+                                            WIcon {
+                                                iconName: String(modelData.icon_name || "")
+                                                inverted: root.currentSection === index
+                                                Layout.alignment: Qt.AlignHCenter
+                                            }
+                                            Text {
+                                                text: String(modelData.number || "") + " / " + String(modelData.title || "")
+                                                color: root.currentSection === index ? "#ffffff" : "#111111"
+                                                font.family: root.uiFontFamily
+                                                font.pixelSize: root.fontSizeTiny
+                                                font.weight: root.fontWeightBold
+                                                wrapMode: Text.WordWrap
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                                Layout.fillWidth: true
+                                            }
                                         }
                                     }
                                 }
@@ -625,7 +911,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 spacing: 12
                                 LabelText {
-                                    text: "PIPELINE STAGES"
+                                    text: root.tr("panel.pipeline_stages")
                                     Layout.fillWidth: true
                                 }
                                 BodyText {
@@ -659,17 +945,24 @@ ApplicationWindow {
                                                 text: (index + 1 < 10 ? "0" : "") + String(index + 1)
                                                 color: "#111111"
                                                 font.family: root.uiFontFamily
-                                                font.pixelSize: 11
-                                                font.bold: true
+                                                font.pixelSize: root.fontSizeTiny
+                                                font.weight: root.fontWeightBold
                                             }
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
                                             spacing: 5
-                                            LabelText {
-                                                text: String(modelData.label || "")
-                                                font.pixelSize: 13
+                                            RowLayout {
                                                 Layout.fillWidth: true
+                                                spacing: 8
+                                                WIcon {
+                                                    iconName: String(modelData.icon_name || "")
+                                                }
+                                                LabelText {
+                                                    text: String(modelData.label || "")
+                                                    font.pixelSize: root.fontSizeBody
+                                                    Layout.fillWidth: true
+                                                }
                                             }
                                             BodyText {
                                                 text: String(modelData.detail || "")
@@ -683,13 +976,13 @@ ApplicationWindow {
                                                     var outputPath = root.pathForStageKey(String(modelData.output_path_key || ""))
                                                     var pieces = []
                                                     if (inputPath)
-                                                        pieces.push(String(modelData.input_label || "Input") + ": " + inputPath)
+                                                        pieces.push(String(modelData.input_label || root.tr("common.input")) + ": " + inputPath)
                                                     if (outputPath)
-                                                        pieces.push(String(modelData.output_label || "Output") + ": " + outputPath)
+                                                        pieces.push(String(modelData.output_label || root.tr("common.output")) + ": " + outputPath)
                                                     return pieces.join("    ")
                                                 }
                                                 color: "#666666"
-                                                font.pixelSize: 11
+                                                font.pixelSize: root.fontSizeTiny
                                                 Layout.fillWidth: true
                                             }
                                         }
@@ -709,7 +1002,7 @@ ApplicationWindow {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 6
-                                    LabelText { text: "NEXT ACTION" }
+                                    LabelText { text: root.tr("panel.next_action") }
                                     BodyText {
                                         text: String(root.currentReadiness.detail || "")
                                         color: "#333333"
@@ -734,88 +1027,88 @@ ApplicationWindow {
 
                                 ColumnLayout {
                                     spacing: 12
-                                    PathField { id: setupDictionaryInput; label: "Dictionary source folder"; text: String(root.safeSettings.dictionary_input_dir || "") }
-                                    PathField { id: setupClassSource; label: "Class source folder"; text: String(root.safeSettings.class_source_dir || "") }
+                                    PathField { id: setupDictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
+                                    PathField { id: setupClassSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
                                 }
 
                                 ColumnLayout {
                                     spacing: 12
-                                    PathField { id: dictionaryInput; label: "Dictionary source folder"; text: String(root.safeSettings.dictionary_input_dir || "") }
-                                    PathField { id: referenceDictionary; label: "Reference dictionary"; directory: false; text: String(root.safeSettings.reference_dictionary_path || "") }
+                                    PathField { id: dictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
+                                    PathField { id: referenceDictionary; label: root.tr("dictionary.reference_dictionary"); directory: false; text: String(root.safeSettings.reference_dictionary_path || "") }
                                     AdvancedBlock {
-                                        title: "Advanced dictionary options"
-                                        PathField { id: dictionaryOutput; label: "Dictionary output folder"; text: String(root.safeSettings.dictionary_output_dir || "") }
+                                        title: root.tr("dictionary.advanced_title")
+                                        PathField { id: dictionaryOutput; label: root.tr("dictionary.output_folder"); text: String(root.safeSettings.dictionary_output_dir || "") }
                                         RowLayout {
                                             spacing: 18
-                                            WCheckBox { id: dictionaryForce; text: "Force rebuild"; checked: Boolean(root.safeSettings.dictionary_force) }
-                                            WCheckBox { id: dictionaryNumbers; text: "Include numbers"; checked: Boolean(root.safeSettings.include_numbers) }
-                                            WCheckBox { id: dictionaryPunctuation; text: "Include punctuation"; checked: Boolean(root.safeSettings.include_punctuation) }
+                                            WCheckBox { id: dictionaryForce; text: root.tr("dictionary.force_rebuild"); checked: Boolean(root.safeSettings.dictionary_force) }
+                                            WCheckBox { id: dictionaryNumbers; text: root.tr("dictionary.include_numbers"); checked: Boolean(root.safeSettings.include_numbers) }
+                                            WCheckBox { id: dictionaryPunctuation; text: root.tr("dictionary.include_punctuation"); checked: Boolean(root.safeSettings.include_punctuation) }
                                         }
                                     }
                                 }
 
                                 ColumnLayout {
                                     spacing: 12
-                                    PathField { id: classSource; label: "Class source folder"; text: String(root.safeSettings.class_source_dir || "") }
+                                    PathField { id: classSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
                                     AdvancedBlock {
-                                        title: "Advanced printout options"
-                                        PathField { id: parsedRoot; label: "Parsed output folder"; text: String(root.safeSettings.source_output_root || "") }
-                                        PathField { id: rewriteRoot; label: "Rewrite output folder"; text: String(root.safeSettings.rewrite_output_root || "") }
-                                        PathField { id: printRoot; label: "Print output folder"; text: String(root.safeSettings.print_output_root || "") }
-                                        PathField { id: rewriteDictionary; label: "Override rewrite dictionary"; directory: false; text: String(root.safeSettings.rewrite_dictionary_path || "") }
+                                        title: root.tr("class.advanced_title")
+                                        PathField { id: parsedRoot; label: root.tr("class.parsed_output_folder"); text: String(root.safeSettings.source_output_root || "") }
+                                        PathField { id: rewriteRoot; label: root.tr("class.rewrite_output_folder"); text: String(root.safeSettings.rewrite_output_root || "") }
+                                        PathField { id: printRoot; label: root.tr("class.print_output_folder"); text: String(root.safeSettings.print_output_root || "") }
+                                        PathField { id: rewriteDictionary; label: root.tr("class.override_rewrite_dictionary"); directory: false; text: String(root.safeSettings.rewrite_dictionary_path || "") }
                                         GridLayout {
                                             columns: 2
                                             columnSpacing: 18
                                             rowSpacing: 12
-                                            WCheckBox { id: forcePrintouts; text: "Force printouts"; checked: Boolean(root.safeSettings.force_class_printouts) }
-                                            WCheckBox { id: skipPdfParse; text: "Skip PDF parse"; checked: Boolean(root.safeSettings.skip_pdf_parse) }
-                                            LabelText { text: "PDF render DPI" }
+                                            WCheckBox { id: forcePrintouts; text: root.tr("class.force_printouts"); checked: Boolean(root.safeSettings.force_class_printouts) }
+                                            WCheckBox { id: skipPdfParse; text: root.tr("class.skip_pdf_parse"); checked: Boolean(root.safeSettings.skip_pdf_parse) }
+                                            LabelText { text: root.tr("class.pdf_render_dpi") }
                                             WTextField { id: pdfDpi; text: String(root.safeSettings.pdf_render_dpi || "144"); Layout.preferredWidth: 140 }
-                                            LabelText { text: "Body font size" }
+                                            LabelText { text: root.tr("class.body_font_size") }
                                             WTextField { id: bodyFontSize; text: String(root.safeSettings.print_body_font_size || ""); Layout.preferredWidth: 140 }
                                         }
-                                        PathField { id: printFont; label: "Print font"; directory: false; text: String(root.safeSettings.print_font_path || "") }
+                                        PathField { id: printFont; label: root.tr("class.print_font"); directory: false; text: String(root.safeSettings.print_font_path || "") }
                                     }
                                 }
 
                                 ColumnLayout {
                                     spacing: 12
-                                    PathField { id: archiveRoot; label: "Class-session archive folder"; text: String(root.safeSettings.archive_root || "") }
+                                    PathField { id: archiveRoot; label: root.tr("archive.archive_folder"); text: String(root.safeSettings.archive_root || "") }
                                     AdvancedBlock {
-                                        title: "Archive maintenance and lexicon outputs"
+                                        title: root.tr("archive.advanced_title")
                                         RowLayout {
                                             spacing: 12
-                                            WButton { text: "Preview Rename"; Layout.preferredWidth: 150; onClicked: root.runJob("archive_rename_preview", root.archiveValues()) }
-                                            WButton { text: "Apply Rename"; Layout.preferredWidth: 140; onClicked: root.runJob("archive_rename_apply", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.preview_rename"); Layout.preferredWidth: 150; onClicked: root.runJob("archive_rename_preview", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.apply_rename"); Layout.preferredWidth: 140; onClicked: root.runJob("archive_rename_apply", root.archiveValues()) }
                                         }
-                                        WCheckBox { id: includeNearDuplicates; text: "Review near duplicates"; checked: Boolean(root.safeSettings.include_near_duplicates) }
+                                        WCheckBox { id: includeNearDuplicates; text: root.tr("archive.include_near_duplicates"); checked: Boolean(root.safeSettings.include_near_duplicates) }
                                         RowLayout {
                                             spacing: 12
-                                            WButton { text: "Preview Duplicates"; Layout.preferredWidth: 170; onClicked: root.runJob("archive_duplicates_preview", root.archiveValues()) }
-                                            WButton { text: "Apply Duplicates"; Layout.preferredWidth: 160; onClicked: root.runJob("archive_duplicates_apply", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.preview_duplicates"); Layout.preferredWidth: 170; onClicked: root.runJob("archive_duplicates_preview", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.apply_duplicates"); Layout.preferredWidth: 160; onClicked: root.runJob("archive_duplicates_apply", root.archiveValues()) }
                                         }
-                                        PathField { id: usageOutputRoot; label: "Usage output folder"; text: String(root.safeSettings.usage_signal_output_root || "") }
+                                        PathField { id: usageOutputRoot; label: root.tr("archive.usage_output_folder"); text: String(root.safeSettings.usage_signal_output_root || "") }
                                         RowLayout {
                                             spacing: 18
-                                            WCheckBox { id: usageNumbers; text: "Include numbers"; checked: Boolean(root.safeSettings.include_numbers) }
-                                            WCheckBox { id: usagePunctuation; text: "Include punctuation"; checked: Boolean(root.safeSettings.include_punctuation) }
+                                            WCheckBox { id: usageNumbers; text: root.tr("dictionary.include_numbers"); checked: Boolean(root.safeSettings.include_numbers) }
+                                            WCheckBox { id: usagePunctuation; text: root.tr("dictionary.include_punctuation"); checked: Boolean(root.safeSettings.include_punctuation) }
                                         }
-                                        PathField { id: canonicalDictionary; label: "Canonical dictionary"; directory: false; text: String(root.safeSettings.canonical_dictionary_path || "") }
-                                        PathField { id: usageCandidates; label: "Usage candidates"; directory: false; text: String(root.safeSettings.usage_candidates_path || "") }
-                                        PathField { id: usageSummary; label: "Usage summary"; directory: false; text: String(root.safeSettings.usage_summary_path || "") }
-                                        PathField { id: liveLexicon; label: "Live lexicon"; directory: false; text: String(root.safeSettings.live_lexicon_path || "") }
-                                        PathField { id: supplementalLexicon; label: "Supplemental lexicon"; directory: false; text: String(root.safeSettings.supplemental_lexicon_path || "") }
-                                        PathField { id: unmatchedUsage; label: "Unmatched usage"; directory: false; text: String(root.safeSettings.unmatched_usage_output_path || "") }
+                                        PathField { id: canonicalDictionary; label: root.tr("archive.canonical_dictionary"); directory: false; text: String(root.safeSettings.canonical_dictionary_path || "") }
+                                        PathField { id: usageCandidates; label: root.tr("archive.usage_candidates"); directory: false; text: String(root.safeSettings.usage_candidates_path || "") }
+                                        PathField { id: usageSummary; label: root.tr("archive.usage_summary"); directory: false; text: String(root.safeSettings.usage_summary_path || "") }
+                                        PathField { id: liveLexicon; label: root.tr("archive.live_lexicon"); directory: false; text: String(root.safeSettings.live_lexicon_path || "") }
+                                        PathField { id: supplementalLexicon; label: root.tr("archive.supplemental_lexicon"); directory: false; text: String(root.safeSettings.supplemental_lexicon_path || "") }
+                                        PathField { id: unmatchedUsage; label: root.tr("archive.unmatched_usage"); directory: false; text: String(root.safeSettings.unmatched_usage_output_path || "") }
                                     }
                                 }
 
                                 ColumnLayout {
                                     spacing: 12
-                                    PathField { id: reportPrintout; label: "Archived printout"; directory: false; text: String(root.safeSettings.after_class_printout_path || "") }
-                                    PathField { id: reportOutputRoot; label: "Report output folder"; text: String(root.safeSettings.after_class_report_output_root || "") }
+                                    PathField { id: reportPrintout; label: root.tr("reports.archived_printout"); directory: false; text: String(root.safeSettings.after_class_printout_path || "") }
+                                    PathField { id: reportOutputRoot; label: root.tr("reports.output_folder"); text: String(root.safeSettings.after_class_report_output_root || "") }
                                     AdvancedBlock {
-                                        title: "Advanced report options"
-                                        PathField { id: reportFont; label: "Report font"; directory: false; text: String(root.safeSettings.after_class_report_font_path || "") }
+                                        title: root.tr("reports.advanced_title")
+                                        PathField { id: reportFont; label: root.tr("reports.report_font"); directory: false; text: String(root.safeSettings.after_class_report_font_path || "") }
                                     }
                                 }
                             }
@@ -824,7 +1117,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 spacing: 12
                                 WButton {
-                                    text: String(root.currentDefinition.primary_action_label || "Save")
+                                    text: String(root.currentDefinition.primary_action_label || root.tr("button.save"))
+                                    iconName: root.actionIcon(String(root.currentDefinition.primary_workflow_id || ""))
                                     primary: true
                                     Layout.preferredWidth: 220
                                     onClicked: root.runWorkflow(String(root.currentDefinition.primary_workflow_id || ""))
@@ -832,11 +1126,13 @@ ApplicationWindow {
                                 WButton {
                                     visible: Boolean(root.currentDefinition.secondary_workflow_id)
                                     text: String(root.currentDefinition.secondary_action_label || "")
+                                    iconName: root.actionIcon(String(root.currentDefinition.secondary_workflow_id || ""))
                                     Layout.preferredWidth: 190
                                     onClicked: root.runWorkflow(String(root.currentDefinition.secondary_workflow_id || ""))
                                 }
                                 WButton {
-                                    text: "Refresh Status"
+                                    text: root.tr("button.refresh_status")
+                                    iconName: "refresh-cw"
                                     Layout.preferredWidth: 140
                                     onClicked: root.saveSettings(root.workflowValues())
                                 }
@@ -863,17 +1159,18 @@ ApplicationWindow {
                         spacing: 12
                         StatusPill {
                             status: String(root.safeJobState.status || "idle")
-                            label: String(root.safeJobState.status || "idle").toUpperCase()
+                            label: root.statusLabel(String(root.safeJobState.status || "idle"))
                         }
                         BodyText {
-                            text: String(root.safeJobState.detail || "Ready. Select a workflow and run the next action.")
+                            text: String(root.safeJobState.detail || root.tr("app.ready_detail"))
                             color: "#333333"
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                             maximumLineCount: 1
                         }
                         WButton {
-                            text: root.runDrawerOpen ? "Hide Run Details" : "Show Run Details"
+                            text: root.runDrawerOpen ? root.tr("run.hide_details") : root.tr("run.show_details")
+                            iconName: root.runDrawerOpen ? "panel-bottom-close" : "panel-bottom-open"
                             Layout.preferredWidth: 160
                             enabled: true
                             onClicked: root.runDrawerOpen = !root.runDrawerOpen
@@ -909,11 +1206,11 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             readOnly: true
-                            text: root.safeLogText || "No run log yet."
+                            text: root.safeLogText || root.tr("run.no_log")
                             wrapMode: TextArea.Wrap
                             color: "#111111"
                             font.family: root.monoFontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: root.fontSizeTiny
                             background: Rectangle {
                                 color: "#ffffff"
                                 border.color: "#111111"
@@ -930,7 +1227,7 @@ ApplicationWindow {
                             wrapMode: TextArea.Wrap
                             color: "#111111"
                             font.family: root.monoFontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: root.fontSizeTiny
                             background: Rectangle {
                                 color: "#ffffff"
                                 border.color: "#111111"

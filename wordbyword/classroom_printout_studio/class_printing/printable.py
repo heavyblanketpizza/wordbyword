@@ -31,10 +31,18 @@ from wordbyword.dictionary_build.llm import (
     parse_json_object,
 )
 from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, write_jsonl
+from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
+    default_print_output_root,
+    grade_from_target_profile,
+    grade_profile,
+    normalize_target_grade,
+    target_profile_for_grade,
+)
 
 PRINTABLE_SCHEMA_VERSION = "wordbyword.printable_material.v1"
-DEFAULT_PRINT_OUTPUT_ROOT = Path("classroom-printout-studio/printable-for-class") / "grade1-ko-a4-ollama"
-DEFAULT_TARGET_PROFILE = "grade1-ko"
+DEFAULT_PRINT_OUTPUT_ROOT = default_print_output_root()
+DEFAULT_TARGET_PROFILE = target_profile_for_grade()
 DEFAULT_BODY_FONT_SIZE_PT = 13
 MIN_BODY_FONT_SIZE_PT = 11
 MAX_BODY_FONT_SIZE_PT = 15
@@ -76,6 +84,23 @@ Do not invent image filenames or use external images.
 Return only the requested JSON object."""
 
 
+def printable_system_prompt_for_grade(target_grade: str) -> str:
+    profile = grade_profile(target_grade)
+    if profile.target_grade == DEFAULT_TARGET_GRADE:
+        return PRINTABLE_SYSTEM_PROMPT
+    return f"""You design printable Korean reading material for {profile.reader_description}.
+Use the rewritten class material as the only source.
+Preserve the full rewritten reading content; do not summarize or shorten it to fit on one page.
+The output may span multiple A4 pages. A4 is the paper size, not a one-page length target.
+Write reading material only: no worksheet, quiz, comprehension questions, answers, or vocabulary activity sections.
+Keep Korean natural, clear, and appropriate for {profile.korean_label} readers.
+Choose at most two images only from the offered visual_candidate_asset_ids by asset_id.
+Use selected_images[].asset_id exactly as written in visual_candidate_asset_ids.
+Never use an asset path, image filename, or asset_id with an added file extension.
+Do not invent image filenames or use external images.
+Return only the requested JSON object."""
+
+
 class PrintableMaterialError(RuntimeError):
     """Raised when printable class material cannot be generated safely."""
 
@@ -98,6 +123,18 @@ class PrintableProgress:
 
 
 ProgressCallback = Callable[[PrintableProgress], None]
+
+
+def resolve_target_grade_and_profile(
+    *,
+    target_grade: str | None,
+    target_profile: str,
+) -> tuple[str, str]:
+    resolved_grade = normalize_target_grade(
+        target_grade if target_grade is not None else grade_from_target_profile(target_profile)
+    )
+    resolved_profile = target_profile_for_grade(resolved_grade) if target_grade is not None else target_profile
+    return resolved_grade, resolved_profile
 
 
 class PrintableImageSelection(BaseModel):
@@ -212,12 +249,17 @@ def print_class_material(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     font_path: Path | None = None,
     body_font_size: int | None = None,
     progress: ProgressCallback | None = None,
     source_index: int = 1,
     total_sources: int = 1,
 ) -> PrintableMaterialOutputs:
+    resolved_target_grade, target_profile = resolve_target_grade_and_profile(
+        target_grade=target_grade,
+        target_profile=target_profile,
+    )
     context = build_printable_context(rewritten_bundle_dir)
     validate_body_font_size_override(body_font_size)
     output_dir = output_root / context.source_id
@@ -240,7 +282,7 @@ def print_class_material(
     initialize_jsonl_file(attempts_path)
     initialize_jsonl_file(failures_path)
 
-    prompt = build_printable_prompt(context, body_font_size=body_font_size)
+    prompt = build_printable_prompt(context, body_font_size=body_font_size, target_grade=resolved_target_grade)
     result: CompletionResult | None = None
     document: PrintableDocument | None = None
     try:
@@ -286,6 +328,7 @@ def print_class_material(
             document=document,
             model=model,
             target_profile=target_profile,
+            target_grade=resolved_target_grade,
             font_path=resolved_font_path,
             font_name=resolved_font_name,
         )
@@ -293,6 +336,7 @@ def print_class_material(
             context=context,
             prompt=prompt,
             model=model,
+            target_grade=resolved_target_grade,
             response=result.content,
             document=document,
             accepted=True,
@@ -313,6 +357,7 @@ def print_class_material(
             context=context,
             prompt=prompt,
             model=model,
+            target_grade=resolved_target_grade,
             response=result.content if result is not None else "",
             document=None,
             accepted=False,
@@ -336,6 +381,7 @@ def print_class_material(
             prompt=prompt,
             model=model,
             target_profile=target_profile,
+            target_grade=resolved_target_grade,
             failure_reason=failure_reason,
         )
 
@@ -376,6 +422,7 @@ def print_class_materials(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     font_path: Path | None = None,
     body_font_size: int | None = None,
     progress: ProgressCallback | None = None,
@@ -404,6 +451,7 @@ def print_class_materials(
                 client=client,
                 model=model,
                 target_profile=target_profile,
+                target_grade=target_grade,
                 font_path=font_path,
                 body_font_size=body_font_size,
                 progress=progress,
@@ -454,7 +502,9 @@ def build_printable_prompt(
     context: PrintableContext,
     *,
     body_font_size: int | None = None,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> PrintablePrompt:
+    profile = grade_profile(target_grade)
     required_shape = {
         "source_id": context.source_id,
         "title": "...",
@@ -488,7 +538,7 @@ def build_printable_prompt(
             "Printable-material request:",
             f"source_id: {context.source_id}",
             f"source_filename: {context.source_filename}",
-            "Output is for A4 classroom handouts for young Korean students.",
+            f"Output is for A4 classroom handouts for {profile.reader_description}.",
             "A4 is the paper size. Do not treat this as a one-page limit.",
             "Preserve the full rewritten reading content across as many A4 pages as needed.",
             "Do not summarize, shorten, or omit reading content just to make the handout shorter.",
@@ -515,7 +565,7 @@ def build_printable_prompt(
             json.dumps(required_shape, ensure_ascii=False),
         ]
     )
-    system_message = ChatMessage(role="system", content=PRINTABLE_SYSTEM_PROMPT)
+    system_message = ChatMessage(role="system", content=printable_system_prompt_for_grade(target_grade))
     user_message = ChatMessage(role="user", content=user_prompt)
     messages: list[ChatMessage] = [system_message]
     prompt_messages: list[dict[str, object]] = [printable_prompt_message_row(system_message)]
@@ -666,6 +716,7 @@ def write_printable_artifacts(
     document: PrintableDocument,
     model: str,
     target_profile: str,
+    target_grade: str,
     font_path: Path,
     font_name: str,
 ) -> None:
@@ -690,6 +741,7 @@ def write_printable_artifacts(
         document=document,
         model=model,
         target_profile=target_profile,
+        target_grade=target_grade,
         accepted=True,
         failure_reason="",
         font_path=font_path,
@@ -704,6 +756,7 @@ def write_failed_printable_artifacts(
     prompt: PrintablePrompt,
     model: str,
     target_profile: str,
+    target_grade: str,
     failure_reason: str,
 ) -> None:
     write_quality_and_manifest(
@@ -713,6 +766,7 @@ def write_failed_printable_artifacts(
         document=None,
         model=model,
         target_profile=target_profile,
+        target_grade=target_grade,
         accepted=False,
         failure_reason=failure_reason,
         font_path=None,
@@ -1041,6 +1095,7 @@ def printable_attempt_row(
     context: PrintableContext,
     prompt: PrintablePrompt,
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     response: str,
     document: PrintableDocument | None,
     accepted: bool,
@@ -1048,8 +1103,9 @@ def printable_attempt_row(
 ) -> dict[str, object]:
     return {
         "source_id": context.source_id,
+        "target_grade": target_grade,
         "model": model,
-        "system_prompt": PRINTABLE_SYSTEM_PROMPT,
+        "system_prompt": str(prompt.prompt_messages[0].get("content") or printable_system_prompt_for_grade(target_grade)),
         "user_prompt": prompt.user_prompt,
         "prompt_messages": list(prompt.prompt_messages),
         "response": response,
@@ -1071,6 +1127,7 @@ def write_quality_and_manifest(
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
+    target_grade: str,
     accepted: bool,
     failure_reason: str,
     font_path: Path | None,
@@ -1082,6 +1139,7 @@ def write_quality_and_manifest(
         document=document,
         model=model,
         target_profile=target_profile,
+        target_grade=target_grade,
         accepted=accepted,
         failure_reason=failure_reason,
         font_path=font_path,
@@ -1093,6 +1151,7 @@ def write_quality_and_manifest(
         document=document,
         model=model,
         target_profile=target_profile,
+        target_grade=target_grade,
         accepted=accepted,
         failure_reason=failure_reason,
         font_path=font_path,
@@ -1115,6 +1174,7 @@ def build_quality_report(
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
+    target_grade: str,
     accepted: bool,
     failure_reason: str,
     font_path: Path | None,
@@ -1123,6 +1183,7 @@ def build_quality_report(
     return {
         "schema_version": PRINTABLE_SCHEMA_VERSION,
         "source_id": context.source_id,
+        "target_grade": target_grade,
         "target_profile": target_profile,
         "model": model,
         "status": "written" if accepted else "failed",
@@ -1149,6 +1210,7 @@ def build_printable_manifest(
     document: PrintableDocument | None,
     model: str,
     target_profile: str,
+    target_grade: str,
     accepted: bool,
     failure_reason: str,
     font_path: Path | None,
@@ -1183,6 +1245,7 @@ def build_printable_manifest(
             else {},
         },
         "printable": {
+            "target_grade": target_grade,
             "target_profile": target_profile,
             "model": model,
             "status": "written" if accepted else "failed",

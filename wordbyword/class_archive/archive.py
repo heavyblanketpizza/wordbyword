@@ -34,6 +34,7 @@ from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
     parse_json_object,
 )
+from wordbyword.grade_profiles import GRADE_WITH_UNKNOWN_PATTERN, normalize_grade_level as normalize_shared_grade_level
 
 ARCHIVE_SCHEMA_VERSION = "wordbyword.class_session_archive.v1"
 DEFAULT_VOCABULARY_INTELLIGENCE_ROOT = Path("wbw-vocabulary-intelligence")
@@ -58,14 +59,14 @@ DUPLICATE_REASON_SAME_FORMAT_SHA256 = "same_format_sha256"
 DUPLICATE_REASON_CROSS_FORMAT_TEXT = "cross_format_text_fingerprint"
 DUPLICATE_REASON_NEAR_TEXT_MODEL_REVIEW = "near_text_model_review"
 ARCHIVE_NAME_PATTERN = re.compile(
-    r"^\d{4}-\d{2}-\d{2}_grade(?:[1-6]|-unknown)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+    rf"^\d{{4}}-\d{{2}}-\d{{2}}_{GRADE_WITH_UNKNOWN_PATTERN}-[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
 
 ARCHIVE_RENAME_SYSTEM_PROMPT = """You label archived Korean class printouts for safe filenames.
 Use only the supplied document text and file metadata.
-Infer the Korean elementary grade difficulty when possible.
+Infer the Korean K-12 grade difficulty when possible.
 Return exactly one JSON object with these keys:
-- grade_level: one of grade1, grade2, grade3, grade4, grade5, grade6, grade-unknown
+- grade_level: one of grade1 through grade12, or grade-unknown
 - topic_slug: lowercase ASCII hyphen slug, broad topic, 1 to 5 words
 - short_title_slug: lowercase ASCII hyphen slug, specific material title, 2 to 8 words
 - korean_title: compact Korean title for audit only
@@ -1396,15 +1397,7 @@ def is_managed_archive_name(stem: str) -> bool:
 
 
 def normalize_grade_level(value: object) -> str:
-    text = str(value or "").strip().lower().replace(" ", "")
-    if text in {"", "unknown", "gradeunknown", "grade-unknown", "학년모름", "미상"}:
-        return "grade-unknown"
-    digit_match = re.search(r"([1-6])", text)
-    if digit_match and ("grade" in text or "학년" in text or text == digit_match.group(1)):
-        return f"grade{digit_match.group(1)}"
-    if text in {f"grade{grade}" for grade in range(1, 7)}:
-        return text
-    return "grade-unknown"
+    return normalize_shared_grade_level(value)
 
 
 def safe_slug(value: object, *, fallback: str) -> str:

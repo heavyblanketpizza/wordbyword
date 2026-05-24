@@ -82,6 +82,21 @@ class DictionarySourceArchiveTest(unittest.TestCase):
             self.assertEqual(entry["current_path"], target.name)
             self.assertEqual(entry["classification"]["source_type"], "textbook")
 
+    def test_managed_dictionary_source_names_accept_middle_and_high_school_grades(self) -> None:
+        middle = DictionarySourceMetadata.model_validate({**metadata_response(), "grade_level": "중1"})
+        high = DictionarySourceMetadata.model_validate({**metadata_response(), "grade_level": "고등학교 3학년"})
+
+        self.assertEqual(middle.grade_level, "grade7")
+        self.assertEqual(high.grade_level, "grade12")
+        self.assertEqual(
+            dictionary_source_filename(middle, ".txt"),
+            "textbook_government_grade7_korean_2022_term1_reading-basics.txt",
+        )
+        self.assertEqual(
+            dictionary_source_filename(high, ".txt"),
+            "textbook_government_grade12_korean_2022_term1_reading-basics.txt",
+        )
+
     def test_apply_blocks_low_confidence_without_renaming_or_writing_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace) / "original"

@@ -53,11 +53,16 @@ from wordbyword.dictionary_build.output_files import (
 )
 from wordbyword.dictionary_build.text import clean_example_text
 from wordbyword.dictionary_build.writers import write_outputs
+from wordbyword.grade_profiles import (
+    UNKNOWN_GRADE,
+    default_after_class_report_output_root,
+    extract_grade_from_source_id,
+    grade_label,
+    report_target_profile_for_grade,
+)
 
 AFTER_CLASS_REPORT_SCHEMA_VERSION = "wordbyword.after_class_report.v1"
-DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT = (
-    DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "after-class-reports" / "grade1-ko-a4-ollama"
-)
+DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT = default_after_class_report_output_root()
 RESERVED_MAINTENANCE_OUTPUT_ROOTS = (
     DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "usage-signal-build",
     DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "live-grade-lexicon",
@@ -71,7 +76,7 @@ FAILURES_FILENAME = "failures.jsonl"
 QUALITY_REPORT_FILENAME = "quality_report.json"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_TARGET_PROFILE = "elementary-ko-a4-adult-report"
-UNKNOWN_GRADE_LEVEL = "grade-unknown"
+UNKNOWN_GRADE_LEVEL = UNKNOWN_GRADE
 UNKNOWN_GRADE_LABEL = "초등학생"
 AFTER_CLASS_INSTRUCTIONAL_GOAL = (
     "학생이 본문을 읽고 핵심 낱말을 사용해 자기 말로 설명하고 질문에 답하며 "
@@ -1705,26 +1710,15 @@ def optional_float(value: object) -> float | None:
 
 
 def after_class_grade_level(source_id: str) -> str:
-    match = re.search(r"(?:^|_)grade(?P<grade>[1-6]|-unknown)(?:-|$)", source_id)
-    if match is None:
-        return UNKNOWN_GRADE_LEVEL
-    grade = match.group("grade")
-    if grade == "-unknown":
-        return UNKNOWN_GRADE_LEVEL
-    return f"grade{grade}"
+    return extract_grade_from_source_id(source_id)
 
 
 def after_class_grade_label(grade_level: str) -> str:
-    match = re.fullmatch(r"grade([1-6])", grade_level)
-    if match is None:
-        return UNKNOWN_GRADE_LABEL
-    return f"{match.group(1)}학년"
+    return grade_label(grade_level, unknown_label=UNKNOWN_GRADE_LABEL)
 
 
 def after_class_prompt_target_profile(grade_level: str) -> str:
-    if grade_level == UNKNOWN_GRADE_LEVEL:
-        return "elementary-ko-a4-adult-report"
-    return f"{grade_level}-ko-a4-adult-report"
+    return report_target_profile_for_grade(grade_level)
 
 
 def _report(

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from wordbyword.class_archive.archive import DEFAULT_VOCABULARY_INTELLIGENCE_ROOT
 from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.candidates import (
@@ -18,13 +17,17 @@ from wordbyword.dictionary_build.candidates import (
     row_learning_signal_score,
 )
 from wordbyword.dictionary_build.output_files import read_jsonl, write_jsonl
+from wordbyword.grade_profiles import (
+    default_live_lexicon_path,
+    default_supplemental_lexicon_path,
+    default_unmatched_usage_output_path,
+)
 
 DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(Path("build-dictionary"), ArtifactId.FINAL_DICTIONARY)
-DEFAULT_LIVE_GRADE_LEXICON_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "live-grade-lexicon"
-DEFAULT_LIVE_LEXICON_PATH = DEFAULT_LIVE_GRADE_LEXICON_ROOT / "grade1-live-lexicon-canonical.jsonl"
-DEFAULT_SUPPLEMENTAL_LEXICON_PATH = DEFAULT_LIVE_GRADE_LEXICON_ROOT / "grade1-live-lexicon-supplemental.jsonl"
+DEFAULT_LIVE_LEXICON_PATH = default_live_lexicon_path()
+DEFAULT_SUPPLEMENTAL_LEXICON_PATH = default_supplemental_lexicon_path()
 DEFAULT_USAGE_CANDIDATES_PATH = artifact_path(DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT, ArtifactId.DICTIONARY_CANDIDATES)
-DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT / "10_unmatched_usage_candidates.jsonl"
+DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH = default_unmatched_usage_output_path()
 CANONICAL_SOURCE_DICTIONARY_SEED = "seeded_from_dictionary"
 CANONICAL_SOURCE_LIVE_LEXICON = "existing_live_lexicon"
 SUPPLEMENTAL_SOURCE_TIER = "supplemental_private"

@@ -7,9 +7,10 @@ from PySide6.QtCore import QObject, Property, QThread, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFileDialog
 
+from wordbyword.gui.i18n import catalog, language_state, normalize_language, resolve_language, text as localized_text
 from wordbyword.gui.job_events import error_event
 from wordbyword.gui.pipeline import path_for_key, readiness_payload, workflow_definition_payload
-from wordbyword.gui.settings import load_settings, save_settings
+from wordbyword.gui.settings import load_settings, save_settings, settings_with_target_grade_defaults
 from wordbyword.gui.workflows import run_with_error_event
 
 
@@ -42,6 +43,7 @@ class WordByWordBridge(QObject):
     readinessChanged = Signal()
     logTextChanged = Signal()
     artifactTextChanged = Signal()
+    languageChanged = Signal()
 
     def __init__(self, *, settings_path: Path | None = None) -> None:
         super().__init__()
@@ -51,7 +53,7 @@ class WordByWordBridge(QObject):
             "busy": False,
             "workflow": "",
             "phase": "idle",
-            "detail": "No job running.",
+            "detail": self._text("run.no_job_running"),
             "status": "idle",
             "current": 0,
             "total": 0,
@@ -66,13 +68,21 @@ class WordByWordBridge(QObject):
     def settings(self) -> dict[str, object]:
         return dict(self._settings)
 
-    @Property("QVariantList", constant=True)
+    @Property("QVariantMap", notify=languageChanged)
+    def languageState(self) -> dict[str, object]:
+        return language_state(self._selected_language())
+
+    @Property("QVariantMap", notify=languageChanged)
+    def texts(self) -> dict[str, str]:
+        return catalog(self._resolved_language())
+
+    @Property("QVariantList", notify=languageChanged)
     def workflowDefinitions(self) -> list[dict[str, object]]:
-        return workflow_definition_payload()
+        return workflow_definition_payload(language=self._resolved_language())
 
     @Property("QVariantMap", notify=readinessChanged)
     def workflowReadiness(self) -> dict[str, dict[str, object]]:
-        return readiness_payload(self._settings, job_state=self._job_state)
+        return readiness_payload(self._settings, job_state=self._job_state, language=self._resolved_language())
 
     @Property("QVariantMap", notify=jobStateChanged)
     def jobState(self) -> dict[str, object]:
@@ -85,12 +95,15 @@ class WordByWordBridge(QObject):
     @Property(str, notify=artifactTextChanged)
     def artifactText(self) -> str:
         if not self._artifacts:
-            return "No artifacts yet."
+            return self._text("run.no_artifacts")
         return "\n".join(f"{key}: {value}" for key, value in sorted(self._artifacts.items()))
 
     @Slot("QVariantMap", result=bool)
     def saveSettings(self, values: Mapping[str, object]) -> bool:
+        old_target_grade = self._settings.get("target_grade")
         self._settings.update(_plain_mapping(values))
+        self._settings = settings_with_target_grade_defaults(self._settings, old_target_grade=old_target_grade)
+        self._settings["gui_language"] = normalize_language(self._settings.get("gui_language"))
         save_settings(self._settings, self._settings_path)
         self.settingsChanged.emit()
         self.readinessChanged.emit()
@@ -101,7 +114,10 @@ class WordByWordBridge(QObject):
         if bool(self._job_state.get("busy")):
             return False
         merged = dict(self._settings)
+        old_target_grade = merged.get("target_grade")
         merged.update(_plain_mapping(values))
+        merged = settings_with_target_grade_defaults(merged, old_target_grade=old_target_grade)
+        merged["gui_language"] = normalize_language(merged.get("gui_language"))
         save_settings(merged, self._settings_path)
         self._settings = merged
         self.settingsChanged.emit()
@@ -113,7 +129,7 @@ class WordByWordBridge(QObject):
                 "busy": True,
                 "workflow": workflow,
                 "phase": "start",
-                "detail": "Starting job.",
+                "detail": self._text("run.starting_job"),
                 "status": "running",
                 "current": 0,
                 "total": 0,
@@ -140,12 +156,12 @@ class WordByWordBridge(QObject):
 
     @Slot(str, result=str)
     def chooseDirectory(self, current: str) -> str:
-        selected = QFileDialog.getExistingDirectory(None, "Choose folder", current or str(Path.cwd()))
+        selected = QFileDialog.getExistingDirectory(None, self._text("dialog.choose_folder"), current or str(Path.cwd()))
         return selected or current
 
     @Slot(str, result=str)
     def chooseFile(self, current: str) -> str:
-        selected, _ = QFileDialog.getOpenFileName(None, "Choose file", current or str(Path.cwd()))
+        selected, _ = QFileDialog.getOpenFileName(None, self._text("dialog.choose_file"), current or str(Path.cwd()))
         return selected or current
 
     @Slot(str, result=bool)
@@ -160,6 +176,22 @@ class WordByWordBridge(QObject):
     @Slot(str, result=str)
     def pathForKey(self, key: str) -> str:
         return path_for_key(self._settings, key)
+
+    @Slot(str, result=bool)
+    def setLanguage(self, value: str) -> bool:
+        selected = normalize_language(value)
+        if selected == self._selected_language():
+            return True
+        self._settings["gui_language"] = selected
+        save_settings(self._settings, self._settings_path)
+        if self._is_idle():
+            self._job_state = {**self._job_state, "detail": self._text("run.no_job_running")}
+            self.jobStateChanged.emit()
+        self.settingsChanged.emit()
+        self.languageChanged.emit()
+        self.readinessChanged.emit()
+        self.artifactTextChanged.emit()
+        return True
 
     @Slot(object)
     def _on_event(self, payload: Mapping[str, object]) -> None:
@@ -203,6 +235,18 @@ class WordByWordBridge(QObject):
         self._job_state = dict(state)
         self.jobStateChanged.emit()
         self.readinessChanged.emit()
+
+    def _selected_language(self) -> str:
+        return normalize_language(self._settings.get("gui_language"))
+
+    def _resolved_language(self) -> str:
+        return resolve_language(self._selected_language())
+
+    def _text(self, key: str) -> str:
+        return localized_text(self._resolved_language(), key)
+
+    def _is_idle(self) -> bool:
+        return not bool(self._job_state.get("busy")) and str(self._job_state.get("status") or "") == "idle"
 
 
 def _plain_mapping(values: Mapping[str, object]) -> dict[str, object]:

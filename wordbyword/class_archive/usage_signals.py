@@ -22,6 +22,7 @@ from wordbyword.dictionary_build.analyzer import KoreanAnalyzer
 from wordbyword.dictionary_build.models import PageText
 from wordbyword.dictionary_build.readers import normalize_text
 from wordbyword.dictionary_build.writers import ArtifactCallback, write_outputs
+from wordbyword.grade_profiles import extract_grade_from_source_id, normalize_target_grade
 
 DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "usage-signal-build"
 SUPPORTED_USAGE_SIGNAL_EXTENSIONS = {".docx", ".pdf"}
@@ -49,6 +50,7 @@ def build_usage_signals(
     *,
     archive_root: Path = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     output_root: Path = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
+    target_grade: str | None = None,
     include_punctuation: bool = False,
     include_numbers: bool = False,
     near_duplicate_client: SupportsCompletion | None = None,
@@ -74,7 +76,8 @@ def build_usage_signals(
         raise UsageSignalBuildError(format_archive_duplicate_message(archive_root, duplicates))
 
     _report(progress, "scan", f"discovering named class printouts in {archive_root}")
-    documents = discover_usage_signal_documents(archive_root)
+    normalized_target_grade = normalize_target_grade(target_grade) if target_grade is not None else None
+    documents = discover_usage_signal_documents(archive_root, target_grade=normalized_target_grade)
     kiwi = Kiwi()
     analyzer = KoreanAnalyzer(
         include_punctuation=include_punctuation,
@@ -116,9 +119,10 @@ def build_usage_signals(
     )
 
 
-def discover_usage_signal_documents(archive_root: Path) -> list[Path]:
+def discover_usage_signal_documents(archive_root: Path, *, target_grade: str | None = None) -> list[Path]:
     if not archive_root.exists():
         return []
+    normalized_target_grade = normalize_target_grade(target_grade) if target_grade is not None else None
     return sorted(
         (
             path
@@ -127,6 +131,7 @@ def discover_usage_signal_documents(archive_root: Path) -> list[Path]:
             and not path.name.startswith("~$")
             and path.suffix.lower() in SUPPORTED_USAGE_SIGNAL_EXTENSIONS
             and is_managed_archive_name(path.stem)
+            and (normalized_target_grade is None or extract_grade_from_source_id(path.stem) == normalized_target_grade)
         ),
         key=natural_path_sort_key,
     )

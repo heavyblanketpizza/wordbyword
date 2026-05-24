@@ -31,6 +31,19 @@ python_files = ["test_*.py"]
 line-length = 120
 target-version = "py314"
 
+[tool.setuptools.package-data]
+"wordbyword.gui" = [
+    "qml/*.qml",
+    "assets/i18n/*.json",
+    "assets/icons/*.txt",
+    "assets/icons/black/*.svg",
+    "assets/icons/white/*.svg",
+    "assets/fonts/pretendard/*.ttf",
+    "assets/fonts/pretendard/*.txt",
+    "assets/fonts/jetbrains-mono/*.ttf",
+    "assets/fonts/jetbrains-mono/*.txt",
+]
+
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"

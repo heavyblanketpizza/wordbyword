@@ -416,6 +416,8 @@ class ClassSessionArchiveHelpersTest(unittest.TestCase):
     def test_grade_and_slug_normalization(self) -> None:
         self.assertEqual(normalize_grade_level("1학년"), "grade1")
         self.assertEqual(normalize_grade_level("Grade 3"), "grade3")
+        self.assertEqual(normalize_grade_level("중1"), "grade7")
+        self.assertEqual(normalize_grade_level("고등학교 1학년"), "grade10")
         self.assertEqual(normalize_grade_level("중학생"), "grade-unknown")
         self.assertEqual(safe_slug("Light & Atoms!", fallback="material"), "light-atoms")
         self.assertEqual(safe_slug("빛과 원자", fallback="material"), "material")
@@ -514,6 +516,11 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
 
             documents = discover_usage_signal_documents(archive)
             self.assertEqual([path.name for path in documents], [named_docx.name, named_pdf.name])
+            self.assertEqual(
+                [path.name for path in discover_usage_signal_documents(archive, target_grade="grade1")],
+                [named_docx.name, named_pdf.name],
+            )
+            self.assertEqual(discover_usage_signal_documents(archive, target_grade="grade7"), [])
             summary = json.loads((output / "00_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["document_count"], 2)
             self.assertEqual(summary["documents"], [named_docx.name, named_pdf.name])

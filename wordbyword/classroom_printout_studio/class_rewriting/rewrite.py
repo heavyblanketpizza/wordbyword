@@ -24,17 +24,22 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.dictionary_build.candidates import normalized_learning_signal_score, parse_roi_score, row_learning_signal_score
 from wordbyword.dictionary_build.output_files import append_jsonl, initialize_jsonl_file, read_jsonl, write_jsonl
+from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
+    default_vocabulary_guided_rewrite_output_root,
+    default_whole_rewrite_output_root,
+    grade_from_target_profile,
+    grade_profile,
+    normalize_target_grade,
+    target_profile_for_grade,
+)
 
 SOURCE_REWRITE_SCHEMA_VERSION = "wordbyword.source_rewrite.v1"
-DEFAULT_TARGET_PROFILE = "grade1-ko"
+DEFAULT_TARGET_PROFILE = target_profile_for_grade()
 REWRITE_MODE_WHOLE_DOCUMENT = "whole_document"
 REWRITE_MODE_VOCABULARY_GUIDED = "vocabulary_guided"
-DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = (
-    Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-whole-document"
-)
-DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
-    Path("classroom-printout-studio/rewritten-for-class") / "grade1-ko-ollama-vocabulary-guided"
-)
+DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT = default_whole_rewrite_output_root()
+DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = default_vocabulary_guided_rewrite_output_root()
 VOCABULARY_GUIDED_CANDIDATE_LIMIT = 250
 VOCABULARY_GUIDED_SELECTION_LIMIT = 20
 VOCABULARY_GUIDED_SCORING_POLICY = (
@@ -73,6 +78,45 @@ Preserve the original page markers and every image or asset markdown/html block 
 Return only the requested JSON object."""
 
 
+def rewrite_system_prompt_for_grade(target_grade: str) -> str:
+    profile = grade_profile(target_grade)
+    if profile.target_grade == DEFAULT_TARGET_GRADE:
+        return GRADE_ONE_REWRITE_SYSTEM_PROMPT
+    return f"""You rewrite mature class-source materials into Korean for {profile.reader_description}.
+Use Korean sentence length, vocabulary, and explanation density appropriate for {profile.korean_label}.
+Keep the meaning faithful to the source.
+Use the whole document and figures for context.
+Do not add facts that are not present in the source.
+Do not use any built vocabulary, dictionary artifact, vocabulary list, or external glossary.
+Preserve the original page's image and asset markdown/html blocks exactly.
+Return only the requested JSON object."""
+
+
+def vocabulary_selection_system_prompt_for_grade(target_grade: str) -> str:
+    profile = grade_profile(target_grade)
+    if profile.target_grade == DEFAULT_TARGET_GRADE:
+        return VOCABULARY_SELECTION_SYSTEM_PROMPT
+    return f"""You choose Korean learner-dictionary vocabulary to guide a rewrite.
+Read the full class-source material and figures for context.
+Choose vocabulary that helps {profile.reader_description} understand the source ideas.
+You may choose concrete familiar words for metaphors when the source concept is too abstract.
+Choose only from the offered vocabulary list.
+Return only the requested JSON object."""
+
+
+def vocabulary_guided_rewrite_system_prompt_for_grade(target_grade: str) -> str:
+    profile = grade_profile(target_grade)
+    if profile.target_grade == DEFAULT_TARGET_GRADE:
+        return VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT
+    return f"""You rewrite mature class-source materials into Korean for {profile.reader_description}.
+Use Korean sentence length, vocabulary, and explanation density appropriate for {profile.korean_label}.
+Keep the source concepts faithful, but use narrative or explanatory flow when it helps readers.
+Use the selected vocabulary naturally as a guide, including metaphor when useful.
+Do not add facts that are not present in the source.
+Preserve the original page markers and every image or asset markdown/html block exactly.
+Return only the requested JSON object."""
+
+
 class SourceRewriteError(RuntimeError):
     """Raised when parsed source material cannot be rewritten safely."""
 
@@ -99,6 +143,18 @@ class SourceRewriteProgress:
 
 
 ProgressCallback = Callable[[SourceRewriteProgress], None]
+
+
+def resolve_target_grade_and_profile(
+    *,
+    target_grade: str | None,
+    target_profile: str,
+) -> tuple[str, str]:
+    resolved_grade = normalize_target_grade(
+        target_grade if target_grade is not None else grade_from_target_profile(target_profile)
+    )
+    resolved_profile = target_profile_for_grade(resolved_grade) if target_grade is not None else target_profile
+    return resolved_grade, resolved_profile
 
 
 @dataclass(frozen=True)
@@ -257,11 +313,16 @@ def rewrite_whole_source_material(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
     source_index: int = 1,
     total_sources: int = 1,
 ) -> SourceWholeRewriteOutputs:
+    resolved_target_grade, target_profile = resolve_target_grade_and_profile(
+        target_grade=target_grade,
+        target_profile=target_profile,
+    )
     context = build_context_packet(parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
@@ -316,6 +377,7 @@ def rewrite_whole_source_material(
         failed_whole_document_attempt(
             context=context,
             model=model,
+            target_grade=resolved_target_grade,
             image_payloads_by_path=image_payloads_by_path,
             failure_reason=preflight_error,
         )
@@ -325,6 +387,7 @@ def rewrite_whole_source_material(
             context=context,
             image_payloads_by_path=image_payloads_by_path,
             model=model,
+            target_grade=resolved_target_grade,
         )
     )
     attempt_rows = [attempt]
@@ -360,6 +423,7 @@ def rewrite_whole_source_material(
         failure_rows=failure_rows,
         model=model,
         target_profile=target_profile,
+        target_grade=resolved_target_grade,
         attached_assets=attached_assets,
         content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
         rewrite_mode=REWRITE_MODE_WHOLE_DOCUMENT,
@@ -397,6 +461,7 @@ def rewrite_whole_source_materials(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
 ) -> SourceWholeRewriteBatchOutputs:
@@ -425,6 +490,7 @@ def rewrite_whole_source_materials(
                 client=client,
                 model=model,
                 target_profile=target_profile,
+                target_grade=target_grade,
                 require_images=require_images,
                 progress=progress,
                 source_index=source_index,
@@ -449,11 +515,16 @@ def rewrite_vocabulary_guided_source_material(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
     source_index: int = 1,
     total_sources: int = 1,
 ) -> SourceVocabularyGuidedRewriteOutputs:
+    resolved_target_grade, target_profile = resolve_target_grade_and_profile(
+        target_grade=target_grade,
+        target_profile=target_profile,
+    )
     context = build_context_packet(parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
@@ -523,6 +594,7 @@ def rewrite_vocabulary_guided_source_material(
             candidate_pool=candidate_pool,
             image_payloads_by_path=image_payloads_by_path,
             model=model,
+            target_grade=resolved_target_grade,
             failure_reason=preflight_error,
         )
     elif not candidate_pool:
@@ -531,6 +603,7 @@ def rewrite_vocabulary_guided_source_material(
             candidate_pool=candidate_pool,
             image_payloads_by_path=image_payloads_by_path,
             model=model,
+            target_grade=resolved_target_grade,
             failure_reason=f"No eligible vocabulary rows found in {dictionary_path}.",
         )
     else:
@@ -540,6 +613,7 @@ def rewrite_vocabulary_guided_source_material(
             candidate_pool=candidate_pool,
             image_payloads_by_path=image_payloads_by_path,
             model=model,
+            target_grade=resolved_target_grade,
         )
 
     selection_attempt_rows = [selection_attempt]
@@ -549,6 +623,8 @@ def rewrite_vocabulary_guided_source_material(
         output_dir / "selected_vocabulary.json",
         context=context,
         dictionary_path=dictionary_path,
+        target_grade=resolved_target_grade,
+        target_profile=target_profile,
         vocabulary_source_kind=vocabulary_source_kind,
         vocabulary_source_sha256=vocabulary_source_sha256,
         candidate_pool=candidate_pool,
@@ -574,11 +650,13 @@ def rewrite_vocabulary_guided_source_material(
             selected_vocabulary=selected,
             image_payloads_by_path=image_payloads_by_path,
             model=model,
+            target_grade=resolved_target_grade,
         )
     else:
         attempt = failed_vocabulary_guided_document_attempt(
             context=context,
             model=model,
+            target_grade=resolved_target_grade,
             failure_reason="Vocabulary selection failed: " + str(selection_attempt["failure_reason"]),
         )
 
@@ -616,11 +694,14 @@ def rewrite_vocabulary_guided_source_material(
         failure_rows=failure_rows,
         model=model,
         target_profile=target_profile,
+        target_grade=resolved_target_grade,
         attached_assets=attached_assets,
         content_markdown=str(attempt["rewritten_markdown"]) if bool(attempt["accepted"]) else None,
         rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
         vocabulary_guidance=vocabulary_guidance_metadata(
             dictionary_path=dictionary_path,
+            target_grade=resolved_target_grade,
+            target_profile=target_profile,
             vocabulary_source_kind=vocabulary_source_kind,
             vocabulary_source_sha256=vocabulary_source_sha256,
             candidate_pool=candidate_pool,
@@ -666,6 +747,7 @@ def rewrite_vocabulary_guided_source_materials(
     client: SupportsCompletion,
     model: str,
     target_profile: str = DEFAULT_TARGET_PROFILE,
+    target_grade: str | None = None,
     require_images: bool = True,
     progress: ProgressCallback | None = None,
 ) -> SourceVocabularyGuidedRewriteBatchOutputs:
@@ -697,6 +779,7 @@ def rewrite_vocabulary_guided_source_materials(
                 client=client,
                 model=model,
                 target_profile=target_profile,
+                target_grade=target_grade,
                 require_images=require_images,
                 progress=progress,
                 source_index=source_index,
@@ -1249,8 +1332,10 @@ def rewrite_whole_document_with_full_context(
     context: ContextPacket,
     image_payloads_by_path: Mapping[str, str],
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> dict[str, object]:
-    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path)
+    system_prompt = rewrite_system_prompt_for_grade(target_grade)
+    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path, target_grade=target_grade)
     metrics: dict[str, object] = source_document_metrics(context)
     result: CompletionResult | None = None
     try:
@@ -1276,7 +1361,7 @@ def rewrite_whole_document_with_full_context(
             "page": None,
             "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
             "model": model,
-            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "user_prompt": prompt.user_prompt,
             "prompt_messages": list(prompt.prompt_messages),
             "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1292,7 +1377,7 @@ def rewrite_whole_document_with_full_context(
             "page": None,
             "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
             "model": model,
-            "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "user_prompt": prompt.user_prompt,
             "prompt_messages": list(prompt.prompt_messages),
             "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1308,16 +1393,18 @@ def failed_whole_document_attempt(
     *,
     context: ContextPacket,
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     image_payloads_by_path: Mapping[str, str],
     failure_reason: str,
 ) -> dict[str, object]:
-    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path)
+    system_prompt = rewrite_system_prompt_for_grade(target_grade)
+    prompt = build_whole_document_rewrite_prompt(context, image_payloads_by_path, target_grade=target_grade)
     return {
         "source_id": context.source_id,
         "page": None,
         "rewrite_mode": REWRITE_MODE_WHOLE_DOCUMENT,
         "model": model,
-        "system_prompt": GRADE_ONE_REWRITE_SYSTEM_PROMPT,
+        "system_prompt": system_prompt,
         "user_prompt": prompt.user_prompt,
         "prompt_messages": list(prompt.prompt_messages),
         "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1336,11 +1423,13 @@ def select_vocabulary_for_rewrite(
     candidate_pool: Sequence[VocabularyCandidate],
     image_payloads_by_path: Mapping[str, str],
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> tuple[dict[str, object], list[SelectedVocabulary]]:
     prompt = build_vocabulary_selection_prompt(
         context,
         candidate_pool,
         image_payloads_by_path,
+        target_grade=target_grade,
     )
     result: CompletionResult | None = None
     try:
@@ -1395,12 +1484,13 @@ def vocabulary_selection_attempt_row(
     accepted: bool,
     failure_reason: str,
 ) -> dict[str, object]:
+    system_prompt = str(prompt.prompt_messages[0].get("content") or VOCABULARY_SELECTION_SYSTEM_PROMPT)
     return {
         "source_id": context.source_id,
         "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
         "attempt_kind": "vocabulary_selection",
         "model": model,
-        "system_prompt": VOCABULARY_SELECTION_SYSTEM_PROMPT,
+        "system_prompt": system_prompt,
         "user_prompt": prompt.user_prompt,
         "prompt_messages": list(prompt.prompt_messages),
         "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1419,12 +1509,14 @@ def failed_vocabulary_selection_attempt(
     candidate_pool: Sequence[VocabularyCandidate],
     image_payloads_by_path: Mapping[str, str],
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     failure_reason: str,
 ) -> tuple[dict[str, object], list[SelectedVocabulary]]:
     prompt = build_vocabulary_selection_prompt(
         context,
         candidate_pool,
         image_payloads_by_path,
+        target_grade=target_grade,
     )
     return (
         vocabulary_selection_attempt_row(
@@ -1448,12 +1540,15 @@ def rewrite_vocabulary_guided_document_with_full_context(
     selected_vocabulary: Sequence[SelectedVocabulary],
     image_payloads_by_path: Mapping[str, str],
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> dict[str, object]:
     prompt = build_vocabulary_guided_rewrite_prompt(
         context,
         selected_vocabulary,
         image_payloads_by_path,
+        target_grade=target_grade,
     )
+    system_prompt = vocabulary_guided_rewrite_system_prompt_for_grade(target_grade)
     metrics: dict[str, object] = {
         **source_document_metrics(context),
         "selected_vocabulary_count": len(selected_vocabulary),
@@ -1484,7 +1579,7 @@ def rewrite_vocabulary_guided_document_with_full_context(
             "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
             "attempt_kind": "rewrite",
             "model": model,
-            "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "user_prompt": prompt.user_prompt,
             "prompt_messages": list(prompt.prompt_messages),
             "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1502,7 +1597,7 @@ def rewrite_vocabulary_guided_document_with_full_context(
             "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
             "attempt_kind": "rewrite",
             "model": model,
-            "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "user_prompt": prompt.user_prompt,
             "prompt_messages": list(prompt.prompt_messages),
             "attached_asset_ids": [asset.asset_id for asset in prompt.attached_assets],
@@ -1519,6 +1614,7 @@ def failed_vocabulary_guided_document_attempt(
     *,
     context: ContextPacket,
     model: str,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     failure_reason: str,
 ) -> dict[str, object]:
     return {
@@ -1527,7 +1623,7 @@ def failed_vocabulary_guided_document_attempt(
         "rewrite_mode": REWRITE_MODE_VOCABULARY_GUIDED,
         "attempt_kind": "rewrite",
         "model": model,
-        "system_prompt": VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+        "system_prompt": vocabulary_guided_rewrite_system_prompt_for_grade(target_grade),
         "user_prompt": "",
         "prompt_messages": [],
         "attached_asset_ids": [],
@@ -1544,7 +1640,10 @@ def build_vocabulary_selection_prompt(
     context: ContextPacket,
     candidate_pool: Sequence[VocabularyCandidate],
     image_payloads_by_path: Mapping[str, str],
+    *,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> RewritePrompt:
+    profile = grade_profile(target_grade)
     required_shape = {
         "source_id": context.source_id,
         "selected_vocabulary": [
@@ -1562,7 +1661,10 @@ def build_vocabulary_selection_prompt(
             f"source_id: {context.source_id}",
             f"Choose exactly {expected_selected_vocabulary_count(candidate_pool)} vocabulary items.",
             "Choose only from the offered candidate_vocabulary array.",
-            "Use the parsed source material above to decide which words best support a story-style 1학년 rewrite.",
+            (
+                "Use the parsed source material above to decide which words best support "
+                f"a rewrite for {profile.reader_description}."
+            ),
             "The offered rows contain only canonical_key and example.",
             "",
             "candidate_vocabulary:",
@@ -1576,7 +1678,7 @@ def build_vocabulary_selection_prompt(
         context,
         final_instruction=instruction,
         image_payloads_by_path=image_payloads_by_path,
-        system_prompt=VOCABULARY_SELECTION_SYSTEM_PROMPT,
+        system_prompt=vocabulary_selection_system_prompt_for_grade(target_grade),
     )
 
 
@@ -1584,7 +1686,10 @@ def build_vocabulary_guided_rewrite_prompt(
     context: ContextPacket,
     selected_vocabulary: Sequence[SelectedVocabulary],
     image_payloads_by_path: Mapping[str, str],
+    *,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> RewritePrompt:
+    profile = grade_profile(target_grade)
     required_shape = {
         "source_id": context.source_id,
         "rewritten_markdown": "...",
@@ -1595,7 +1700,7 @@ def build_vocabulary_guided_rewrite_prompt(
         [
             "Vocabulary-guided whole-document rewrite request:",
             f"source_id: {context.source_id}",
-            "Rewrite the entire parsed content.md above as a faithful story-style text for Korean 1학년 readers.",
+            f"Rewrite the entire parsed content.md above as faithful Korean reading material for {profile.reader_description}.",
             "Use the selected vocabulary as the learner-friendly word palette.",
             "Use each selected vocabulary item naturally when it can fit without distorting the source concepts.",
             "Concrete selected words may be used as metaphors for difficult source concepts.",
@@ -1614,7 +1719,7 @@ def build_vocabulary_guided_rewrite_prompt(
         context,
         final_instruction=instruction,
         image_payloads_by_path=image_payloads_by_path,
-        system_prompt=VOCABULARY_GUIDED_REWRITE_SYSTEM_PROMPT,
+        system_prompt=vocabulary_guided_rewrite_system_prompt_for_grade(target_grade),
     )
 
 
@@ -1673,6 +1778,8 @@ def write_selected_vocabulary_artifact(
     *,
     context: ContextPacket,
     dictionary_path: Path,
+    target_grade: str = DEFAULT_TARGET_GRADE,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
     vocabulary_source_kind: str = "explicit",
     vocabulary_source_sha256: str | None = None,
     candidate_pool: Sequence[VocabularyCandidate],
@@ -1684,6 +1791,8 @@ def write_selected_vocabulary_artifact(
         json.dumps(
             {
                 "source_id": context.source_id,
+                "target_grade": target_grade,
+                "target_profile": target_profile,
                 "dictionary_path": str(dictionary_path),
                 "vocabulary_source": {
                     "kind": vocabulary_source_kind,
@@ -1708,6 +1817,8 @@ def write_selected_vocabulary_artifact(
 def vocabulary_guidance_metadata(
     *,
     dictionary_path: Path,
+    target_grade: str = DEFAULT_TARGET_GRADE,
+    target_profile: str = DEFAULT_TARGET_PROFILE,
     vocabulary_source_kind: str = "explicit",
     vocabulary_source_sha256: str | None = None,
     candidate_pool: Sequence[VocabularyCandidate],
@@ -1715,6 +1826,8 @@ def vocabulary_guidance_metadata(
 ) -> dict[str, object]:
     resolved_vocabulary_source_sha256 = vocabulary_source_sha256 or file_sha256_if_present(dictionary_path)
     return {
+        "target_grade": target_grade,
+        "target_profile": target_profile,
         "dictionary_path": str(dictionary_path),
         "vocabulary_source": {
             "kind": vocabulary_source_kind,
@@ -1743,7 +1856,10 @@ def file_sha256_if_present(path: Path) -> str:
 def build_whole_document_rewrite_prompt(
     context: ContextPacket,
     image_payloads_by_path: Mapping[str, str],
+    *,
+    target_grade: str = DEFAULT_TARGET_GRADE,
 ) -> RewritePrompt:
+    profile = grade_profile(target_grade)
     required_shape = {
         "source_id": context.source_id,
         "rewritten_markdown": "...",
@@ -1753,7 +1869,7 @@ def build_whole_document_rewrite_prompt(
         [
             "Whole-document rewrite request:",
             f"source_id: {context.source_id}",
-            "Rewrite the entire parsed content.md above at once for Korean 1학년 readers.",
+            f"Rewrite the entire parsed content.md above at once for {profile.reader_description}.",
             "Use the full parsed document and interleaved images above as the source material.",
             f"Preserve every page marker exactly: {page_markers}",
             "Preserve every image/html block exactly where it belongs in the rewritten document.",
@@ -1767,6 +1883,7 @@ def build_whole_document_rewrite_prompt(
         context,
         final_instruction=instruction,
         image_payloads_by_path=image_payloads_by_path,
+        system_prompt=rewrite_system_prompt_for_grade(target_grade),
     )
 
 
@@ -1940,6 +2057,7 @@ def write_rewrite_artifacts(
     failure_rows: Sequence[Mapping[str, object]],
     model: str,
     target_profile: str,
+    target_grade: str,
     attached_assets: Sequence[RewriteAsset],
     rewrite_mode: str,
     content_markdown: str | None = None,
@@ -1963,6 +2081,7 @@ def write_rewrite_artifacts(
                 failure_rows=failure_rows,
                 model=model,
                 target_profile=target_profile,
+                target_grade=target_grade,
                 attached_assets=attached_assets,
                 rewrite_mode=rewrite_mode,
                 vocabulary_guidance=vocabulary_guidance,
@@ -1979,6 +2098,7 @@ def write_rewrite_artifacts(
                 context=context,
                 model=model,
                 target_profile=target_profile,
+                target_grade=target_grade,
                 attached_assets=attached_assets,
                 rewrite_mode=rewrite_mode,
                 vocabulary_guidance=vocabulary_guidance,
@@ -2012,6 +2132,7 @@ def build_quality_report(
     failure_rows: Sequence[Mapping[str, object]],
     model: str,
     target_profile: str,
+    target_grade: str,
     attached_assets: Sequence[RewriteAsset],
     rewrite_mode: str,
     vocabulary_guidance: Mapping[str, object] | None = None,
@@ -2021,6 +2142,7 @@ def build_quality_report(
     report = {
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
         "source_id": context.source_id,
+        "target_grade": target_grade,
         "target_profile": target_profile,
         "rewrite_mode": rewrite_mode,
         "model": model,
@@ -2051,11 +2173,13 @@ def build_rewrite_manifest(
     context: ContextPacket,
     model: str,
     target_profile: str,
+    target_grade: str,
     attached_assets: Sequence[RewriteAsset],
     rewrite_mode: str,
     vocabulary_guidance: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     rewrite = {
+        "target_grade": target_grade,
         "target_profile": target_profile,
         "mode": rewrite_mode,
         "model": model,
