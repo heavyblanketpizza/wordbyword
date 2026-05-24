@@ -1815,7 +1815,8 @@ class DocumentationCommandTest(unittest.TestCase):
         for path in (root / "README.md", root / "BEGINNERS_GUIDE.md"):
             for line in path.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
-                if stripped.startswith("uv ") and "python -m wordbyword" in stripped:
+                parts = shlex.split(stripped) if stripped.startswith("uv ") else []
+                if "wordbyword" in parts:
                     command_lines.append((path, stripped))
 
         self.assertGreater(len(command_lines), 0)
@@ -1824,7 +1825,10 @@ class DocumentationCommandTest(unittest.TestCase):
             with self.subTest(path=path.name, command=command):
                 parts = shlex.split(command)
                 cli_args = parts[parts.index("wordbyword") + 1 :]
-                parser.parse_args(cli_args)
+                try:
+                    parser.parse_args(cli_args)
+                except SystemExit as error:
+                    self.assertEqual(error.code, 0)
 
 
 def pipeline_result(output_dir: Path) -> PipelineResult:

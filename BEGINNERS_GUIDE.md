@@ -10,6 +10,19 @@ This guide is the simple version. The technical truth lives in `README.md`.
 
 ## Before You Start
 
+Install the project and check that the command is available:
+
+```bash
+uv sync --dev
+uv run wordbyword --help
+```
+
+The project expects Python `>=3.14`; `uv` should handle that for normal local development. You can also open the GUI with:
+
+```bash
+uv run wordbyword-gui
+```
+
 Put dictionary source files here:
 
 ```text
@@ -19,8 +32,8 @@ build-dictionary/original/
 After adding files, preview and apply managed source names:
 
 ```bash
-uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --rename-dictionary-source-archive --apply-dictionary-source-renames --ollama-model gemma4:31b
+uv run wordbyword --rename-dictionary-source-archive --ollama-model gemma4:31b
+uv run wordbyword --rename-dictionary-source-archive --apply-dictionary-source-renames --ollama-model gemma4:31b
 ```
 
 Supported dictionary files:
@@ -44,10 +57,11 @@ ollama serve
 ollama pull gemma4:31b
 ```
 
+Use a different pulled model if you also pass that model with `--ollama-model`.
+
 Check the project:
 
 ```bash
-uv sync --dev
 uv run pytest -q
 uv run ruff check .
 ```
@@ -57,7 +71,7 @@ uv run ruff check .
 For normal use, run one command:
 
 ```bash
-uv --no-cache run python -m wordbyword --build-dictionary --ollama-model gemma4:31b
+uv run wordbyword --build-dictionary --ollama-model gemma4:31b
 ```
 
 This reads managed files in `build-dictionary/original/` and writes the finished dictionary files in `build-dictionary/`.
@@ -65,7 +79,8 @@ This reads managed files in `build-dictionary/original/` and writes the finished
 If the dictionary build says a source file is unmanaged, run the rename preview and apply commands above first. If it reports duplicate source materials, quarantine the duplicate copies before continuing:
 
 ```bash
-uv --no-cache run python -m wordbyword --resolve-dictionary-source-duplicates
+uv run wordbyword --resolve-dictionary-source-duplicates
+uv run wordbyword --resolve-dictionary-source-duplicates --yes
 ```
 
 It checks the saved numbered files first. If a saved step is still valid, it skips that step and continues from the next needed step.
@@ -73,7 +88,7 @@ It checks the saved numbered files first. If a saved step is still valid, it ski
 To rebuild everything from the beginning on purpose, use:
 
 ```bash
-uv --no-cache run python -m wordbyword --build-dictionary --force --ollama-model gemma4:31b
+uv run wordbyword --build-dictionary --force --ollama-model gemma4:31b
 ```
 
 The final dictionary is:
@@ -85,14 +100,14 @@ build-dictionary/15_final_dictionary.jsonl
 If you are fixing one stage by hand, these recovery commands still exist:
 
 ```bash
-uv --no-cache run python -m wordbyword --prep-dictionary
-uv --no-cache run python -m wordbyword --clean-example-sentences --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --clean-dictionary-candidates --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --link-cleaned-examples
-uv --no-cache run python -m wordbyword --generate-missing-examples --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --retry-generated-examples --ollama-model gemma4:31b
-uv --no-cache run python -m wordbyword --add-reference-meanings
-uv --no-cache run python -m wordbyword --generate-missing-meanings --ollama-model gemma4:31b
+uv run wordbyword --prep-dictionary
+uv run wordbyword --clean-example-sentences --ollama-model gemma4:31b
+uv run wordbyword --clean-dictionary-candidates --ollama-model gemma4:31b
+uv run wordbyword --link-cleaned-examples
+uv run wordbyword --generate-missing-examples --ollama-model gemma4:31b
+uv run wordbyword --retry-generated-examples --ollama-model gemma4:31b
+uv run wordbyword --add-reference-meanings
+uv run wordbyword --generate-missing-meanings --ollama-model gemma4:31b
 ```
 
 Important: `--prep-dictionary` builds deterministic stages `00` through `09`. Use `--build-dictionary` when you want the finished `15_final_dictionary.jsonl`.
@@ -102,7 +117,7 @@ Important: `--prep-dictionary` builds deterministic stages `00` through `09`. Us
 For normal use, run one command:
 
 ```bash
-uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
+uv run wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
 
 This does three things:
@@ -124,13 +139,13 @@ classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/
 Only parse class source materials when you want to inspect OCR output:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials
+uv run wordbyword --parse-source-materials
 ```
 
 Only print already rewritten materials when you do not want to parse and rewrite again:
 
 ```bash
-uv --no-cache run python -m wordbyword --print-class-materials --ollama-model gemma4:31b
+uv run wordbyword --print-class-materials --ollama-model gemma4:31b
 ```
 
 ## PaddleOCR-VL
@@ -141,12 +156,14 @@ PaddleOCR-VL usually lives in a separate Python environment. If this folder exis
 .venv-paddleocr-vl/
 ```
 
+It also auto-checks `.venv-paddleocr/`. A manually supplied sidecar path wins over environment variables, and environment variables win over auto-discovery.
+
 You should not need to type `PYTHONPATH`.
 
 If you need to choose the sidecar manually:
 
 ```bash
-uv --no-cache run python -m wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
+uv run wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
 ```
 
 ## Archive Used Class Handouts
@@ -160,37 +177,37 @@ wbw-vocabulary-intelligence/class-session-archive/
 Preview safe filenames:
 
 ```bash
-uv --no-cache run python -m wordbyword --rename-class-session-archive --ollama-model gemma4:31b
+uv run wordbyword --rename-class-session-archive --ollama-model gemma4:31b
 ```
 
 Apply the safe filenames:
 
 ```bash
-uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-archive-renames --ollama-model gemma4:31b
+uv run wordbyword --rename-class-session-archive --apply-archive-renames --ollama-model gemma4:31b
 ```
 
 If the tool reports duplicate class printouts, quarantine the duplicate copies before continuing:
 
 ```bash
-uv --no-cache run python -m wordbyword --resolve-archive-duplicates
+uv run wordbyword --resolve-archive-duplicates
 ```
 
 If it reports model-reviewed near duplicates, rerun the resolver with Ollama review enabled:
 
 ```bash
-uv --no-cache run python -m wordbyword --resolve-archive-duplicates --include-near-duplicates --ollama-model gemma4:31b
+uv run wordbyword --resolve-archive-duplicates --include-near-duplicates --ollama-model gemma4:31b
 ```
 
 Then count vocabulary from used handouts:
 
 ```bash
-uv --no-cache run python -m wordbyword --build-usage-signals
+uv run wordbyword --build-usage-signals
 ```
 
 Update the live classroom vocabulary list:
 
 ```bash
-uv --no-cache run python -m wordbyword --update-live-lexicon
+uv run wordbyword --update-live-lexicon
 ```
 
 This maintains the canonical live lexicon, the supplemental non-canonical live lexicon, and the unmatched usage audit file.
@@ -200,7 +217,7 @@ This maintains the canonical live lexicon, the supplemental non-canonical live l
 After a used handout has a managed archive filename, make one adult-facing report:
 
 ```bash
-uv --no-cache run python -m wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
+uv run wordbyword --generate-after-class-reading-report 2026-05-10_grade1-reading-apples.docx --ollama-model gemma4:31b
 ```
 
 Bare filenames are read from `wbw-vocabulary-intelligence/class-session-archive/`. You can still pass an explicit path for unusual/manual workflows.
