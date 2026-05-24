@@ -57,7 +57,9 @@ from wordbyword.classroom_printout_studio.class_printing.printable import (
     print_class_materials,
 )
 from wordbyword.class_archive.archive import (
+    ArchiveDuplicateResolutionResult,
     ClassSessionArchiveError,
+    resolve_archive_duplicates,
     rename_class_session_archive,
 )
 from wordbyword.class_archive.live_lexicon import (
@@ -225,6 +227,11 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.after_class_report_font_path,
+        )
+    if args.resolve_archive_duplicates is not None:
+        return resolve_archive_duplicates_cli(
+            archive_root=args.resolve_archive_duplicates,
+            yes=args.yes,
         )
     if args.rename_class_session_archive is not None:
         return rename_class_session_archive_cli(
@@ -1519,6 +1526,77 @@ def update_live_lexicon_cli(
 
 def emit_live_lexicon_progress(phase: str, detail: str) -> None:
     emit_live_lexicon_progress_ui(phase, detail)
+
+
+def resolve_archive_duplicates_cli(
+    *,
+    archive_root: Path,
+    yes: bool,
+) -> int:
+    try:
+        preview = resolve_archive_duplicates(archive_root, apply=False)
+    except ClassSessionArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    if preview.duplicate_group_count == 0:
+        sys.stdout.write(
+            "no duplicate class-session archive files found\n"
+            f"  archive_root: {preview.archive_root}\n"
+        )
+        sys.stdout.flush()
+        return 0
+
+    write_archive_duplicate_resolution_summary(preview, applied=False)
+    if not yes:
+        if not sys.stdin.isatty():
+            sys.stderr.write(
+                "wordbyword: duplicate resolution requires an interactive terminal. "
+                "Rerun with --resolve-archive-duplicates in a terminal, or pass --yes to apply the recommended quarantine plan.\n"
+            )
+            return 1
+        response = input("Apply this duplicate quarantine plan? [y/N] ").strip().lower()
+        if response not in {"y", "yes"}:
+            sys.stderr.write("wordbyword: duplicate resolution cancelled; no files were moved.\n")
+            return 1
+
+    try:
+        result = resolve_archive_duplicates(archive_root, apply=True)
+    except ClassSessionArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    write_archive_duplicate_resolution_summary(result, applied=True)
+    return 0
+
+
+def write_archive_duplicate_resolution_summary(
+    result: ArchiveDuplicateResolutionResult,
+    *,
+    applied: bool,
+) -> None:
+    sys.stdout.write(
+        f"{'archive duplicates resolved' if applied else 'archive duplicate resolution plan'}\n"
+        f"  archive_root: {result.archive_root}\n"
+        f"  duplicate_groups: {result.duplicate_group_count}\n"
+        f"  quarantine_root: {result.quarantine_root}\n"
+        f"  manifest: {result.manifest_path}\n"
+    )
+    if result.batch_root is not None:
+        sys.stdout.write(f"  batch: {result.batch_root}\n")
+    for index, resolution in enumerate(result.resolutions, start=1):
+        sys.stdout.write(f"  group {index}:\n")
+        for evidence in resolution.group.evidences:
+            sys.stdout.write(f"    reason: {evidence.reason} {evidence.detail}\n")
+        sys.stdout.write(f"    keep: {resolution.keep_path.name}\n")
+        for source, destination in zip(
+            resolution.quarantine_paths,
+            resolution.quarantine_destination_paths,
+            strict=True,
+        ):
+            action = "quarantined" if applied else "quarantine"
+            sys.stdout.write(f"    {action}: {source.name} -> {destination.name}\n")
+    sys.stdout.flush()
 
 
 def rename_class_session_archive_cli(

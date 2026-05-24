@@ -471,6 +471,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Apply --rename-class-session-archive rename plans. Without this flag, the command is a dry-run.",
     )
     parser.add_argument(
+        "--resolve-archive-duplicates",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
+        default=None,
+        metavar="DIR",
+        help=(
+            "Resolve duplicate direct .docx/.pdf files in a class-session archive by moving recommended duplicates "
+            "to a hidden quarantine folder after confirmation. Defaults to wbw-vocabulary-intelligence/"
+            "class-session-archive when no DIR is supplied."
+        ),
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="With --resolve-archive-duplicates, apply the recommended quarantine plan without prompting.",
+    )
+    parser.add_argument(
         "--build-usage-signals",
         action="store_true",
         help=(
@@ -575,6 +593,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.build_class_printouts is not None,
         args.generate_after_class_reading_report is not None,
         args.rename_class_session_archive is not None,
+        args.resolve_archive_duplicates is not None,
         args.build_usage_signals,
         args.update_live_lexicon,
     ]
@@ -654,6 +673,11 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.exit(
             2,
             "wordbyword: error: --apply-archive-renames requires --rename-class-session-archive.\n",
+        )
+    if args.yes and args.resolve_archive_duplicates is None:
+        parser.exit(
+            2,
+            "wordbyword: error: --yes requires --resolve-archive-duplicates.\n",
         )
     if args.parse_source_materials is not None and args.source_id:
         parser.exit(

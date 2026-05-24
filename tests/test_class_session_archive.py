@@ -7,6 +7,7 @@ import re
 import shutil
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,16 +15,20 @@ import fitz
 from docx import Document
 
 from wordbyword.class_archive.archive import (
+    ARCHIVE_DUPLICATE_MANIFEST_SCHEMA_VERSION,
     DEFAULT_ARCHIVE_LEDGER_FILENAME,
+    DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME,
     DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     ArchiveRenameMetadata,
     ClassSessionArchiveError,
     archive_filename,
     build_archived_material,
+    discover_archive_duplicates,
     discover_archive_materials,
     discover_archive_material_paths,
     normalize_grade_level,
     rename_class_session_archive,
+    resolve_archive_duplicates,
     safe_slug,
 )
 from wordbyword.class_archive.live_lexicon import (
@@ -170,7 +175,8 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
                 )
 
             message = str(context.exception)
-            self.assertIn("duplicate same-format class-session archive files detected", message)
+            self.assertIn("duplicate class-session archive files detected", message)
+            self.assertIn("same_format_sha256", message)
             self.assertIn(existing.name, message)
             self.assertIn(duplicate.name, message)
             self.assertEqual(len(client.calls), 0)
@@ -205,12 +211,38 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
                 )
 
             message = str(context.exception)
+            self.assertIn("same_format_sha256", message)
             self.assertIn(first.name, message)
             self.assertIn(second.name, message)
             self.assertEqual(len(client.calls), 0)
             self.assertTrue(first.exists())
             self.assertTrue(second.exists())
             self.assertFalse((archive / DEFAULT_ARCHIVE_LEDGER_FILENAME).exists())
+
+    def test_refuses_cross_format_exact_text_duplicate_before_llm_call(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            docx = archive / "material.docx"
+            pdf = archive / "material.pdf"
+            text = duplicate_text()
+            write_docx(docx, text)
+            write_pdf(pdf, text)
+            client = RecordingArchiveClient({})
+
+            with self.assertRaises(ClassSessionArchiveError) as context:
+                rename_class_session_archive(
+                    archive,
+                    client=client,
+                    model="fake-ollama",
+                    apply=False,
+                )
+
+            message = str(context.exception)
+            self.assertIn("cross_format_text_fingerprint", message)
+            self.assertIn(docx.name, message)
+            self.assertIn(pdf.name, message)
+            self.assertEqual(len(client.calls), 0)
 
     def test_same_suffix_different_content_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -403,10 +435,184 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
                 )
 
             message = str(context.exception)
-            self.assertIn("duplicate same-format class-session archive files detected", message)
+            self.assertIn("duplicate class-session archive files detected", message)
+            self.assertIn("same_format_sha256", message)
             self.assertIn(first.name, message)
             self.assertIn(second.name, message)
             self.assertFalse(output.exists())
+
+    def test_usage_signal_build_refuses_cross_format_exact_text_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            archive = root / "class-session-archive"
+            output = root / "usage-signal-build"
+            archive.mkdir()
+            docx = archive / "2026-05-10_grade1-reading-apples.docx"
+            pdf = archive / "2026-05-10_grade1-reading-apples.pdf"
+            text = duplicate_text()
+            write_docx(docx, text)
+            write_pdf(pdf, text)
+
+            with self.assertRaises(UsageSignalBuildError) as context:
+                build_usage_signals(
+                    archive_root=archive,
+                    output_root=output,
+                )
+
+            message = str(context.exception)
+            self.assertIn("cross_format_text_fingerprint", message)
+            self.assertIn(docx.name, message)
+            self.assertIn(pdf.name, message)
+            self.assertFalse(output.exists())
+
+
+class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
+    def test_prompt_yes_quarantines_same_format_duplicates_and_writes_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            kept = archive / "2026-05-10_grade1-reading-apples.docx"
+            duplicate = archive / "copy of apples.docx"
+            write_docx(kept, "사과를 먹고 학교에 갑니다.")
+            shutil.copyfile(kept, duplicate)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", InteractiveInput("y\n")),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(kept.exists())
+            self.assertFalse(duplicate.exists())
+            quarantine_files = sorted((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).glob("*/*.docx"))
+            self.assertEqual([path.name for path in quarantine_files], [duplicate.name])
+            manifest = json.loads((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["schema_version"], ARCHIVE_DUPLICATE_MANIFEST_SCHEMA_VERSION)
+            self.assertEqual(manifest["resolutions"][0]["kept"]["name"], kept.name)
+            self.assertEqual(manifest["resolutions"][0]["quarantined"][0]["name"], duplicate.name)
+            self.assertEqual(discover_archive_duplicates(archive), ())
+            self.assertEqual([path.name for path in discover_usage_signal_documents(archive)], [kept.name])
+            self.assertIn("archive duplicates resolved", stdout.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_cross_format_duplicate_resolution_keeps_docx_over_older_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            pdf = archive / "2026-05-09_grade1-reading-apples.pdf"
+            docx = archive / "material.docx"
+            text = duplicate_text()
+            write_pdf(pdf, text)
+            write_docx(docx, text)
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=True,
+                clock=fixed_archive_clock,
+            )
+
+            self.assertTrue(result.applied)
+            self.assertTrue(docx.exists())
+            self.assertFalse(pdf.exists())
+            self.assertEqual(result.resolutions[0].keep_path.name, docx.name)
+            self.assertEqual(result.resolutions[0].quarantine_paths[0].name, pdf.name)
+            self.assertTrue((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME / "20260524T120000+0000" / pdf.name).exists())
+
+    def test_same_format_duplicate_resolution_prefers_managed_name(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            unmanaged = archive / "material.docx"
+            managed = archive / "2026-05-10_grade1-reading-apples.docx"
+            write_docx(unmanaged, "사과를 먹고 학교에 갑니다.")
+            shutil.copyfile(unmanaged, managed)
+
+            result = resolve_archive_duplicates(
+                archive,
+                apply=True,
+                clock=fixed_archive_clock,
+            )
+
+            self.assertTrue(managed.exists())
+            self.assertFalse(unmanaged.exists())
+            self.assertEqual(result.resolutions[0].keep_path.name, managed.name)
+
+    def test_prompt_no_leaves_duplicates_and_exits_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, "중복된 수업 자료입니다.")
+            shutil.copyfile(first, second)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", InteractiveInput("n\n")),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+
+            self.assertEqual(exit_code, 1)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).exists())
+            self.assertIn("cancelled", stderr.getvalue())
+
+    def test_noninteractive_resolver_without_yes_leaves_duplicates_and_exits_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, "중복된 수업 자료입니다.")
+            shutil.copyfile(first, second)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+
+            self.assertEqual(exit_code, 1)
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertFalse((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).exists())
+            self.assertIn("--yes", stderr.getvalue())
+
+    def test_yes_applies_recommended_resolution_without_prompting(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            first = archive / "material.docx"
+            second = archive / "material copy.docx"
+            write_docx(first, "중복된 수업 자료입니다.")
+            shutil.copyfile(first, second)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--yes"])
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(first.exists())
+            self.assertFalse(second.exists())
+            self.assertTrue((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME).is_dir())
+            self.assertNotIn("Apply this duplicate quarantine plan?", stdout.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
 
 
 class LiveLexiconUpdateTest(unittest.TestCase):
@@ -842,6 +1048,28 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         self.assertEqual(args.rename_class_session_archive, DEFAULT_CLASS_SESSION_ARCHIVE_ROOT)
         self.assertFalse(args.apply_archive_renames)
 
+    def test_parser_has_archive_duplicate_resolver_command(self) -> None:
+        args = build_parser().parse_args(["--resolve-archive-duplicates"])
+
+        self.assertEqual(
+            args.resolve_archive_duplicates,
+            Path("wbw-vocabulary-intelligence") / "class-session-archive",
+        )
+        self.assertEqual(args.resolve_archive_duplicates, DEFAULT_CLASS_SESSION_ARCHIVE_ROOT)
+        self.assertFalse(args.yes)
+
+    def test_yes_requires_archive_duplicate_resolver(self) -> None:
+        stderr = io.StringIO()
+
+        with (
+            patch("sys.stderr", stderr),
+            self.assertRaises(SystemExit) as context,
+        ):
+            main(["--build-usage-signals", "--yes"])
+
+        self.assertEqual(context.exception.code, 2)
+        self.assertIn("--yes requires --resolve-archive-duplicates", stderr.getvalue())
+
     def test_main_with_archive_rename_skips_pipeline(self) -> None:
         stdout = io.StringIO()
         with (
@@ -1032,6 +1260,23 @@ class FakeLiveLexiconUpdateResult:
     supplemental_promoted_count = 0
 
 
+class InteractiveInput(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def fixed_archive_clock() -> datetime:
+    return datetime(2026, 5, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def duplicate_text() -> str:
+    return (
+        "This class handout explains apple reading practice for grade one students. "
+        "Students read the same simple passage, notice key vocabulary, and answer gentle questions. "
+        "The content is intentionally long enough for duplicate text fingerprinting. "
+    ) * 3
+
+
 def write_docx(path: Path, text: str) -> None:
     document = Document()
     document.add_paragraph(text)
@@ -1041,7 +1286,7 @@ def write_docx(path: Path, text: str) -> None:
 def write_pdf(path: Path, text: str) -> None:
     document = fitz.open()
     page = document.new_page()
-    page.insert_text((72, 72), text)
+    page.insert_textbox(fitz.Rect(72, 72, 540, 760), text, fontsize=11)
     document.save(path)
     document.close()
 

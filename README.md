@@ -246,6 +246,20 @@ uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-ar
 
 The rename command considers direct `.docx` and `.pdf` files only. It never edits document contents, never deletes files, never moves files outside the archive, and never overwrites an existing file.
 
+If the archive contains duplicate class printouts, rename and usage-signal commands stop before writing outputs. Review and quarantine duplicates interactively:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-archive-duplicates
+```
+
+For explicit non-interactive cleanup, apply the recommended quarantine plan:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-archive-duplicates --yes
+```
+
+The resolver never deletes files. It moves duplicates into `wbw-vocabulary-intelligence/class-session-archive/.wordbyword-duplicates/` and writes an audit manifest.
+
 Build deterministic usage signals from managed archive filenames:
 
 ```bash

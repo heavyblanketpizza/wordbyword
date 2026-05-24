@@ -152,6 +152,12 @@ Apply the safe filenames:
 uv --no-cache run python -m wordbyword --rename-class-session-archive --apply-archive-renames --ollama-model gemma4:31b
 ```
 
+If the tool reports duplicate class printouts, quarantine the duplicate copies before continuing:
+
+```bash
+uv --no-cache run python -m wordbyword --resolve-archive-duplicates
+```
+
 Then count vocabulary from used handouts:
 
 ```bash
