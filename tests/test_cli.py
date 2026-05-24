@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import shlex
 import tempfile
@@ -33,7 +34,10 @@ from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationEr
 from wordbyword.dictionary_build.pipeline import PipelineResult
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
 from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
-from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_SOURCE_MATERIAL_ROOT
+from wordbyword.classroom_printout_studio.source_parsing.materials import (
+    DEFAULT_SOURCE_MATERIAL_ROOT,
+    parser_settings_signature_for_source,
+)
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 
@@ -184,6 +188,17 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(error.exception.code, 2)
         self.assertIn("--force can only be used with --prep-dictionary or --build-dictionary", stderr.getvalue())
+
+    def test_force_class_printouts_requires_class_printout_workflow(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--force-class-printouts"])
+        stderr = io.StringIO()
+
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+            validate_args(parser, args)
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--force-class-printouts requires --build-class-printouts", stderr.getvalue())
 
     def test_class_printout_commands_have_zero_config_roots(self) -> None:
         parser = build_parser()
@@ -336,120 +351,327 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertIn("interrupted", stderr.getvalue())
 
     def test_build_class_printouts_runs_only_the_bundles_parsed_in_this_run(self) -> None:
-        parsed_bundles = [
-            SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/parsed/lesson-a")),
-            SimpleNamespace(source_id="lesson-b", output_dir=Path("/tmp/parsed/lesson-b")),
-        ]
-        parsed_result = SimpleNamespace(
-            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
-            output_root=Path("classroom-printout-studio/class-source-materials/parsed"),
-            bundles=parsed_bundles,
-        )
-        rewrite_outputs = [
-            SimpleNamespace(
-                source_id="lesson-a",
-                output_dir=Path("/tmp/rewritten/lesson-a"),
-                failed_page_count=0,
-                rewritten_page_count=2,
-                selected_vocabulary=[{"canonical_key": "물"}],
-            ),
-            SimpleNamespace(
-                source_id="lesson-b",
-                output_dir=Path("/tmp/rewritten/lesson-b"),
-                failed_page_count=0,
-                rewritten_page_count=3,
-                selected_vocabulary=[{"canonical_key": "빛"}],
-            ),
-        ]
-        print_outputs = [
-            SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/print/lesson-a"), accepted=True),
-            SimpleNamespace(source_id="lesson-b", output_dir=Path("/tmp/print/lesson-b"), accepted=True),
-        ]
-        clients = [object(), object()]
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            rewrite_root = root / "rewritten"
+            print_root = root / "print"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            source_a = write_class_printout_source(source_dir, "lesson-a.txt", b"lesson a")
+            source_b = write_class_printout_source(source_dir, "lesson-b.txt", b"lesson b")
+            source_hashes = {
+                "lesson-a": sha256_bytes(b"lesson a"),
+                "lesson-b": sha256_bytes(b"lesson b"),
+            }
 
-        with (
-            patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
-            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result) as parse_materials,
-            patch(
-                "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
-                side_effect=rewrite_outputs,
-            ) as rewrite_material,
-            patch("wordbyword.cli.app.print_class_material", side_effect=print_outputs) as print_material,
-            patch("wordbyword.cli.app.ollama_client", side_effect=clients),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-        ):
-            exit_code = main(
-                [
-                    "--build-class-printouts",
-                    "--rewrite-dictionary",
-                    "build-dictionary/15_final_dictionary.jsonl",
-                    "--rewrite-output-root",
-                    "/tmp/rewritten",
-                    "--print-output-root",
-                    "/tmp/print",
-                    "--print-body-font-size",
-                    "13",
-                    "--print-font-path",
-                    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-                ]
+            def parse_side_effect(source_path: Path, **kwargs: object) -> SimpleNamespace:
+                return write_parsed_class_printout_bundle(source_path, **kwargs)
+
+            def rewrite_side_effect(parsed_bundle_dir: Path, **kwargs: object) -> SimpleNamespace:
+                source_id = parsed_bundle_dir.name
+                output_dir = rewrite_root / source_id
+                output_dir.mkdir(parents=True)
+                return SimpleNamespace(
+                    source_id=source_id,
+                    output_dir=output_dir,
+                    failed_page_count=0,
+                    rewritten_page_count=2,
+                    selected_vocabulary=[{"canonical_key": "물"}],
+                )
+
+            def print_side_effect(rewritten_bundle_dir: Path, **kwargs: object) -> SimpleNamespace:
+                source_id = rewritten_bundle_dir.name
+                return write_printed_class_printout_bundle(
+                    print_root,
+                    source_id=source_id,
+                    source_sha256=source_hashes[source_id],
+                )
+
+            clients = [object(), object()]
+            args = [
+                "--build-class-printouts",
+                str(source_dir),
+                "--source-output-root",
+                str(parse_root),
+                "--rewrite-dictionary",
+                str(dictionary_path),
+                "--rewrite-output-root",
+                str(rewrite_root),
+                "--print-output-root",
+                str(print_root),
+                "--skip-pdf-parse",
+                "--print-body-font-size",
+                "13",
+                "--print-font-path",
+                "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+            ]
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=parse_side_effect) as parse_material,
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=rewrite_side_effect,
+                ) as rewrite_material,
+                patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect) as print_material,
+                patch("wordbyword.cli.app.ollama_client", side_effect=clients),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(args)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual([call.args[0] for call in parse_material.call_args_list], [source_a, source_b])
+            self.assertEqual(
+                [rewrite_call.args[0] for rewrite_call in rewrite_material.call_args_list],
+                [parse_root / "lesson-a", parse_root / "lesson-b"],
             )
+            self.assertEqual(
+                [rewrite_call.kwargs["dictionary_path"] for rewrite_call in rewrite_material.call_args_list],
+                [dictionary_path, dictionary_path],
+            )
+            self.assertEqual(
+                [rewrite_call.kwargs["vocabulary_source_kind"] for rewrite_call in rewrite_material.call_args_list],
+                ["explicit", "explicit"],
+            )
+            self.assertEqual(
+                [print_call.args[0] for print_call in print_material.call_args_list],
+                [rewrite_root / "lesson-a", rewrite_root / "lesson-b"],
+            )
+            self.assertEqual(
+                [print_call.kwargs["body_font_size"] for print_call in print_material.call_args_list],
+                [13, 13],
+            )
+            ledger = json.loads((parse_root / ".wordbyword-class-printout-ledger.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(ledger["entries"]), set(source_hashes.values()))
+            self.assertEqual(ledger["entries"][source_hashes["lesson-a"]]["status"], "printed")
 
-        self.assertEqual(exit_code, 0)
-        parse_materials.assert_called_once()
-        self.assertEqual(parse_materials.call_args.args[0], DEFAULT_SOURCE_MATERIAL_ROOT)
-        self.assertEqual(parse_materials.call_args.kwargs["paddleocr_vl_settings"].sidecar_env, ".venv-paddleocr-vl")
-        self.assertEqual(rewrite_material.call_args_list[0].args[0], Path("/tmp/parsed/lesson-a"))
-        self.assertEqual(rewrite_material.call_args_list[1].args[0], Path("/tmp/parsed/lesson-b"))
-        self.assertEqual(
-            [rewrite_call.kwargs["dictionary_path"] for rewrite_call in rewrite_material.call_args_list],
-            [Path("build-dictionary/15_final_dictionary.jsonl"), Path("build-dictionary/15_final_dictionary.jsonl")],
-        )
-        self.assertEqual(
-            [rewrite_call.kwargs["output_root"] for rewrite_call in rewrite_material.call_args_list],
-            [Path("/tmp/rewritten"), Path("/tmp/rewritten")],
-        )
-        self.assertEqual(print_material.call_args_list[0].args[0], Path("/tmp/rewritten/lesson-a"))
-        self.assertEqual(print_material.call_args_list[1].args[0], Path("/tmp/rewritten/lesson-b"))
-        self.assertEqual(
-            [print_call.kwargs["output_root"] for print_call in print_material.call_args_list],
-            [Path("/tmp/print"), Path("/tmp/print")],
-        )
-        self.assertEqual(
-            [print_call.kwargs["body_font_size"] for print_call in print_material.call_args_list],
-            [13, 13],
-        )
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material") as second_parse,
+                patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material") as second_rewrite,
+                patch("wordbyword.cli.app.print_class_material") as second_print,
+                patch("wordbyword.cli.app.ollama_client") as second_client,
+            ):
+                second_exit_code = main(args)
+
+            self.assertEqual(second_exit_code, 0)
+            second_parse.assert_not_called()
+            second_rewrite.assert_not_called()
+            second_print.assert_not_called()
+            second_client.assert_not_called()
 
     def test_build_class_printouts_returns_nonzero_when_a_rewrite_fails(self) -> None:
-        parsed_result = SimpleNamespace(
-            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
-            output_root=Path("classroom-printout-studio/class-source-materials/parsed"),
-            bundles=[SimpleNamespace(source_id="lesson-a", output_dir=Path("/tmp/parsed/lesson-a"))],
-        )
-        rewrite_output = SimpleNamespace(
-            source_id="lesson-a",
-            output_dir=Path("/tmp/rewritten/lesson-a"),
-            failed_page_count=1,
-            rewritten_page_count=0,
-            selected_vocabulary=[],
-        )
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            rewrite_root = root / "rewritten"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            write_class_printout_source(source_dir, "lesson-a.txt", b"lesson a")
+            rewrite_output = SimpleNamespace(
+                source_id="lesson-a",
+                output_dir=rewrite_root / "lesson-a",
+                failed_page_count=1,
+                rewritten_page_count=0,
+                selected_vocabulary=[],
+            )
 
-        with (
-            patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
-            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result),
-            patch(
-                "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
-                return_value=rewrite_output,
-            ),
-            patch("wordbyword.cli.app.print_class_material") as print_material,
-            patch("wordbyword.cli.app.ollama_client", return_value=object()),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-        ):
-            exit_code = main(["--build-class-printouts"])
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    return_value=rewrite_output,
+                ),
+                patch("wordbyword.cli.app.print_class_material") as print_material,
+                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(
+                    [
+                        "--build-class-printouts",
+                        str(source_dir),
+                        "--source-output-root",
+                        str(parse_root),
+                        "--rewrite-output-root",
+                        str(rewrite_root),
+                        "--rewrite-dictionary",
+                        str(dictionary_path),
+                        "--skip-pdf-parse",
+                    ]
+                )
 
         self.assertEqual(exit_code, 1)
         print_material.assert_not_called()
+
+    def test_build_class_printouts_hard_fails_duplicate_new_source_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            write_class_printout_source(source_dir, "lesson-a.txt", b"same bytes")
+            write_class_printout_source(source_dir, "lesson-copy.md", b"same bytes")
+            stderr = io.StringIO()
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("sys.stderr", stderr),
+                patch("wordbyword.cli.app.parse_source_material") as parse_material,
+                patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material") as rewrite_material,
+                patch("wordbyword.cli.app.print_class_material") as print_material,
+            ):
+                exit_code = main(
+                    [
+                        "--build-class-printouts",
+                        str(source_dir),
+                        "--source-output-root",
+                        str(parse_root),
+                        "--rewrite-dictionary",
+                        str(dictionary_path),
+                        "--skip-pdf-parse",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("duplicate class source materials", stderr.getvalue())
+            parse_material.assert_not_called()
+            rewrite_material.assert_not_called()
+            print_material.assert_not_called()
+
+    def test_build_class_printouts_regenerates_when_docx_missing_but_reuses_parse_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            rewrite_root = root / "rewritten"
+            print_root = root / "print"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            source_path = write_class_printout_source(source_dir, "lesson.txt", b"lesson")
+            source_sha = sha256_bytes(b"lesson")
+            args = [
+                "--build-class-printouts",
+                str(source_dir),
+                "--source-output-root",
+                str(parse_root),
+                "--rewrite-output-root",
+                str(rewrite_root),
+                "--print-output-root",
+                str(print_root),
+                "--rewrite-dictionary",
+                str(dictionary_path),
+                "--skip-pdf-parse",
+            ]
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=successful_rewrite_side_effect(rewrite_root),
+                ),
+                patch(
+                    "wordbyword.cli.app.print_class_material",
+                    side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
+                ),
+                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                self.assertEqual(main(args), 0)
+
+            (print_root / "lesson" / "material.docx").unlink()
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material") as parse_material,
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=successful_rewrite_side_effect(rewrite_root),
+                ) as rewrite_material,
+                patch(
+                    "wordbyword.cli.app.print_class_material",
+                    side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
+                ) as print_material,
+                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                self.assertEqual(main(args), 0)
+
+            self.assertEqual(source_path.name, "lesson.txt")
+            parse_material.assert_not_called()
+            rewrite_material.assert_called_once()
+            print_material.assert_called_once()
+
+    def test_force_class_printouts_regenerates_parse_rewrite_and_print(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            rewrite_root = root / "rewritten"
+            print_root = root / "print"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            write_class_printout_source(source_dir, "lesson.txt", b"lesson")
+            source_sha = sha256_bytes(b"lesson")
+            args = [
+                "--build-class-printouts",
+                str(source_dir),
+                "--source-output-root",
+                str(parse_root),
+                "--rewrite-output-root",
+                str(rewrite_root),
+                "--print-output-root",
+                str(print_root),
+                "--rewrite-dictionary",
+                str(dictionary_path),
+                "--skip-pdf-parse",
+            ]
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=successful_rewrite_side_effect(rewrite_root),
+                ),
+                patch(
+                    "wordbyword.cli.app.print_class_material",
+                    side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
+                ),
+                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                self.assertEqual(main(args), 0)
+
+            with (
+                patch("sys.stdout", io.StringIO()),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle) as parse_material,
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=successful_rewrite_side_effect(rewrite_root),
+                ) as rewrite_material,
+                patch(
+                    "wordbyword.cli.app.print_class_material",
+                    side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
+                ) as print_material,
+                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                self.assertEqual(main([*args, "--force-class-printouts"]), 0)
+
+            parse_material.assert_called_once()
+            rewrite_material.assert_called_once()
+            print_material.assert_called_once()
 
     def test_interactive_source_rewrite_output_uses_styled_terminal_ui(self) -> None:
         stdout = TtyStringIO()
@@ -568,51 +790,62 @@ class ParserDefaultsTest(unittest.TestCase):
 
     def test_interactive_build_class_printouts_print_phase_uses_styled_terminal_ui(self) -> None:
         stdout = TtyStringIO()
-        parsed_result = SimpleNamespace(
-            source_dir=DEFAULT_SOURCE_MATERIAL_ROOT,
-            output_root=Path("/tmp/parsed"),
-            bundles=[SimpleNamespace(source_id="lesson", output_dir=Path("/tmp/parsed/lesson"))],
-        )
-        rewrite_output = SimpleNamespace(
-            source_id="lesson",
-            output_dir=Path("/tmp/rewritten/lesson"),
-            failed_page_count=0,
-            rewritten_page_count=2,
-            selected_vocabulary=[{"canonical_key": "물"}],
-        )
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_dir = root / "sources"
+            parse_root = root / "parsed"
+            rewrite_root = root / "rewritten"
+            print_root = root / "print"
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            source_dir.mkdir()
+            dictionary_path.write_text("{}\n", encoding="utf-8")
+            write_class_printout_source(source_dir, "lesson.txt", b"lesson")
 
-        def print_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
-            progress = kwargs["progress"]
-            assert callable(progress)
-            progress(
-                PrintableProgress(
-                    phase="plan",
-                    source_id="lesson",
-                    detail="planning printable reading material",
-                    source_index=1,
-                    total_sources=1,
+            def print_side_effect(*args: object, **kwargs: object) -> SimpleNamespace:
+                progress = kwargs["progress"]
+                assert callable(progress)
+                progress(
+                    PrintableProgress(
+                        phase="plan",
+                        source_id="lesson",
+                        detail="planning printable reading material",
+                        source_index=1,
+                        total_sources=1,
+                    )
                 )
-            )
-            return SimpleNamespace(
-                source_id="lesson",
-                output_dir=Path("/tmp/print/lesson"),
-                accepted=True,
-                failure_reason="",
-                attempt_rows=[{"selected_asset_ids": ["fig1"], "body_font_size_pt": 13}],
-                failure_rows=[],
-            )
+                return write_printed_class_printout_bundle(
+                    print_root,
+                    source_id="lesson",
+                    source_sha256=sha256_bytes(b"lesson"),
+                )
 
-        with (
-            patch.dict("os.environ", {"TERM": "xterm-256color"}),
-            patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.paddleocr_vl_settings_from_args", return_value=PaddleOCRVLSettings(sidecar_env=".venv-paddleocr-vl")),
-            patch("wordbyword.cli.app.parse_source_materials", return_value=parsed_result),
-            patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material", return_value=rewrite_output),
-            patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
-            patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-        ):
-            exit_code = main(["--build-class-printouts"])
+            with (
+                patch.dict("os.environ", {"TERM": "xterm-256color"}),
+                patch("sys.stdout", stdout),
+                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch(
+                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    side_effect=successful_rewrite_side_effect(rewrite_root),
+                ),
+                patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
+                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            ):
+                exit_code = main(
+                    [
+                        "--build-class-printouts",
+                        str(source_dir),
+                        "--source-output-root",
+                        str(parse_root),
+                        "--rewrite-output-root",
+                        str(rewrite_root),
+                        "--print-output-root",
+                        str(print_root),
+                        "--rewrite-dictionary",
+                        str(dictionary_path),
+                        "--skip-pdf-parse",
+                    ]
+                )
 
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
@@ -671,6 +904,130 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertIn("PLAN", rendered)
         self.assertIn("after_class_report.docx", rendered)
         self.assertNotIn("after-class report [", rendered)
+
+
+def write_class_printout_source(source_dir: Path, name: str, content: bytes) -> Path:
+    path = source_dir / name
+    path.write_bytes(content)
+    return path
+
+
+def sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def write_parsed_class_printout_bundle(
+    source_path: Path,
+    *,
+    output_root: Path,
+    source_id: str,
+    parse_pdf: bool,
+    render_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
+    **_: object,
+) -> SimpleNamespace:
+    output_dir = output_root / source_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir = output_dir / "assets"
+    assets_dir.mkdir(exist_ok=True)
+    (output_dir / "content.md").write_text("<!-- page:1 -->\n\n쉬운 수업 자료입니다.\n", encoding="utf-8")
+    (output_dir / "chunks.json").write_text(
+        json.dumps([{"page": 1, "text": "쉬운 수업 자료입니다.", "metadata": {}}], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (output_dir / "quality_report.json").write_text("{}\n", encoding="utf-8")
+    manifest = {
+        "schema_version": "wordbyword.source_material_workspace.v1",
+        "source": {
+            "id": source_id,
+            "path": str(source_path),
+            "filename": source_path.name,
+            "sha256": sha256_bytes(source_path.read_bytes()),
+        },
+        "parser": {
+            "status": "parsed",
+            "name": "test-parser",
+            "version": "1",
+            "settings": {
+                "settings_signature": parser_settings_signature_for_source(
+                    source_path,
+                    parse_pdf=parse_pdf,
+                    render_dpi=render_dpi,
+                    paddleocr_vl_settings=paddleocr_vl_settings,
+                )
+            },
+        },
+        "files": {
+            "assets": "assets/",
+            "content_markdown": "content.md",
+            "chunks_json": "chunks.json",
+            "quality_report_json": "quality_report.json",
+        },
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return SimpleNamespace(
+        source_id=source_id,
+        source_path=source_path,
+        output_dir=output_dir,
+        manifest_path=manifest_path,
+        assets_dir=assets_dir,
+        manifest=manifest,
+    )
+
+
+def successful_rewrite_side_effect(rewrite_root: Path):
+    def rewrite(parsed_bundle_dir: Path, **_: object) -> SimpleNamespace:
+        source_id = parsed_bundle_dir.name
+        output_dir = rewrite_root / source_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return SimpleNamespace(
+            source_id=source_id,
+            output_dir=output_dir,
+            failed_page_count=0,
+            rewritten_page_count=1,
+            selected_vocabulary=[{"canonical_key": "물"}],
+        )
+
+    return rewrite
+
+
+def successful_print_side_effect(print_root: Path, source_hashes_by_id: dict[str, str]):
+    def print_material(rewritten_bundle_dir: Path, **_: object) -> SimpleNamespace:
+        source_id = rewritten_bundle_dir.name
+        return write_printed_class_printout_bundle(
+            print_root,
+            source_id=source_id,
+            source_sha256=source_hashes_by_id[source_id],
+        )
+
+    return print_material
+
+
+def write_printed_class_printout_bundle(
+    print_root: Path,
+    *,
+    source_id: str,
+    source_sha256: str,
+) -> SimpleNamespace:
+    output_dir = print_root / source_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "material.docx").write_bytes(b"docx")
+    manifest = {
+        "schema_version": "wordbyword.printable_material.v1",
+        "source": {"id": source_id, "filename": f"{source_id}.txt", "sha256": source_sha256},
+        "printable": {"status": "written"},
+        "files": {"docx": "material.docx"},
+    }
+    (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return SimpleNamespace(
+        source_id=source_id,
+        output_dir=output_dir,
+        accepted=True,
+        failure_reason="",
+        attempt_rows=[{"selected_asset_ids": [], "body_font_size_pt": 13}],
+        failure_rows=[],
+    )
 
 
 class BuildDictionaryCliTest(unittest.TestCase):

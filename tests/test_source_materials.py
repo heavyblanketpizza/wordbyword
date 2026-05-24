@@ -18,6 +18,7 @@ from wordbyword.classroom_printout_studio.source_parsing.materials import (
     discover_source_materials,
     parse_source_material,
     parse_source_materials,
+    parser_settings_signature_for_source,
     source_id_for,
 )
 
@@ -73,6 +74,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(manifest["source"]["filename"], "sample.pdf")
             self.assertEqual(manifest["parser"]["status"], "parsed")
             self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.5")
+            self.assertRegex(manifest["parser"]["settings"]["settings_signature"], r"^[a-f0-9]{64}$")
             self.assertEqual(manifest["files"]["content_markdown"], "content.md")
             self.assertEqual(manifest["files"]["quality_report_json"], "quality_report.json")
 
@@ -121,6 +123,24 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(FakePaddleOCRVL.init_kwargs["device"], "cpu")
             self.assertEqual(len(FakePaddleOCRVL.predict_input), 1)
             self.assertTrue(str(FakePaddleOCRVL.predict_input[0]).endswith("page-0001.png"))
+            self.assertEqual(
+                manifest["parser"]["settings"]["settings_signature"],
+                parser_settings_signature_for_source(
+                    source_path,
+                    parse_pdf=True,
+                    render_dpi=144,
+                    paddleocr_vl_settings=PaddleOCRVLSettings(device="cpu", isolated_process=False),
+                ),
+            )
+            self.assertNotEqual(
+                manifest["parser"]["settings"]["settings_signature"],
+                parser_settings_signature_for_source(
+                    source_path,
+                    parse_pdf=True,
+                    render_dpi=200,
+                    paddleocr_vl_settings=PaddleOCRVLSettings(device="cpu", isolated_process=False),
+                ),
+            )
 
             content = (bundle.output_dir / "content.md").read_text(encoding="utf-8")
             self.assertIn("PaddleOCR-VL text from page-0001.png", content)

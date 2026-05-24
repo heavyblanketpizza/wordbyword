@@ -34,7 +34,7 @@ Build class printouts from source materials:
 uv --no-cache run python -m wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
 
-That full class-printout command starts from `classroom-printout-studio/class-source-materials`, parses PDFs with PaddleOCR-VL, rewrites only the sources parsed in that run with vocabulary guidance from `build-dictionary/15_final_dictionary.jsonl`, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
+That full class-printout command starts from `classroom-printout-studio/class-source-materials`, hashes source files before parsing, skips sources already tied to a successful printable DOCX in the class-printout ledger, parses new PDFs with PaddleOCR-VL, rewrites with the canonical live lexicon when it exists, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
 
 ## Local Folders
 
@@ -200,7 +200,9 @@ uv --no-cache run python -m wordbyword --rewrite-vocabulary-guided-source-materi
 uv --no-cache run python -m wordbyword --rewrite-whole-source-materials --ollama-model gemma4:31b
 ```
 
-Vocabulary-guided rewrites default to `classroom-printout-studio/class-source-materials/parsed` and `build-dictionary/15_final_dictionary.jsonl`. They write bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/`.
+Vocabulary-guided rewrites default to `classroom-printout-studio/class-source-materials/parsed`. If no `--rewrite-dictionary` is supplied, vocabulary guidance comes from `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` when it exists, otherwise `build-dictionary/15_final_dictionary.jsonl`. They write bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/`.
+
+`--build-class-printouts` stores workflow state in `classroom-printout-studio/class-source-materials/parsed/.wordbyword-class-printout-ledger.json`. The ledger is keyed by source file SHA-256, so a renamed source with identical bytes is skipped after a successful printout, while changed bytes under the same filename are treated as a new source. Use `--force-class-printouts` to regenerate parse, rewrite, and print outputs for sources that the ledger would otherwise skip.
 
 Print rewritten materials manually:
 

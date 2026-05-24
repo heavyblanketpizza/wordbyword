@@ -98,6 +98,10 @@ This does three things:
 2. Rewrites them into easier Korean with vocabulary help.
 3. Makes editable Word handouts.
 
+After you have built the live classroom lexicon, the rewrite step automatically uses `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl`. Before that file exists, it falls back to `build-dictionary/15_final_dictionary.jsonl`.
+
+The workflow keeps a content-hash ledger under the parsed source-material folder. If the same source bytes were already printed successfully, the next run skips them before parsing or calling Ollama. If you really want to regenerate already printed sources, add `--force-class-printouts`.
+
 The Word files are written under:
 
 ```text

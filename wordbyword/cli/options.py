@@ -358,8 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "Dictionary JSONL for vocabulary-guided rewrites. Defaults to "
-            "<--output>/15_final_dictionary.jsonl."
+            "Dictionary or canonical live-lexicon JSONL for vocabulary-guided rewrites. Defaults to the "
+            "canonical live lexicon when it exists, otherwise <--output>/15_final_dictionary.jsonl."
         ),
     )
     parser.add_argument(
@@ -404,6 +404,11 @@ def build_parser() -> argparse.ArgumentParser:
             "Parse class source materials, rewrite them with vocabulary guidance, and write DOCX printouts. "
             f"Defaults to {DEFAULT_SOURCE_MATERIAL_ROOT} when no DIR is supplied."
         ),
+    )
+    parser.add_argument(
+        "--force-class-printouts",
+        action="store_true",
+        help="With --build-class-printouts, regenerate sources even when the class-printout ledger says they were already printed.",
     )
     parser.add_argument(
         "--print-output-root",
@@ -618,6 +623,11 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.exit(
             2,
             "wordbyword: error: --force can only be used with --prep-dictionary or --build-dictionary.\n",
+        )
+    if args.force_class_printouts and args.build_class_printouts is None:
+        parser.exit(
+            2,
+            "wordbyword: error: --force-class-printouts requires --build-class-printouts.\n",
         )
     command_requested = any(
         [

@@ -263,6 +263,55 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             self.assertEqual(candidates[1].canonical_key, "learning-only")
             self.assertNotIn("missing-example", {candidate.canonical_key for candidate in candidates})
 
+    def test_live_lexicon_candidates_skip_inactive_rows_and_rank_by_roi(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            live_path = Path(workspace) / "grade1-live-lexicon-canonical.jsonl"
+            write_jsonl(
+                live_path,
+                [
+                    {
+                        "canonical_key": "inactive",
+                        "example": "쓰지 않을 예문입니다.",
+                        "learning_signal_score": 0.99,
+                        "roi_score": 1.0,
+                        "active": False,
+                        "class_count": 99,
+                    },
+                    {
+                        "canonical_key": "tie-low-printout",
+                        "example": "낮은 예문입니다.",
+                        "learning_signal_score": 0.5,
+                        "roi_score": 0.8,
+                        "class_count": 4,
+                        "class_printout_count": 1,
+                    },
+                    {
+                        "canonical_key": "roi-wins",
+                        "example": "높은 예문입니다.",
+                        "learning_signal_score": 0.2,
+                        "roi_score": 0.91,
+                        "class_count": 1,
+                    },
+                    {
+                        "canonical_key": "tie-high-printout",
+                        "example": "높은 출력 예문입니다.",
+                        "learning_signal_score": 0.5,
+                        "roi_score": 0.8,
+                        "class_count": 2,
+                        "class_printout_count": 3,
+                    },
+                ],
+            )
+
+            candidates = load_vocabulary_guided_candidates(live_path)
+
+            self.assertEqual(
+                [candidate.canonical_key for candidate in candidates],
+                ["roi-wins", "tie-high-printout", "tie-low-printout"],
+            )
+            self.assertEqual(candidates[1].class_printout_count, 3)
+            self.assertNotIn("inactive", {candidate.canonical_key for candidate in candidates})
+
     def test_dictionary_candidates_reject_invalid_roi_scores(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             dictionary_path = Path(workspace) / "15_final_dictionary.jsonl"
@@ -323,6 +372,8 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             outputs = rewrite_vocabulary_guided_source_material(
                 bundle_dir,
                 dictionary_path=dictionary_path,
+                vocabulary_source_kind="live_lexicon",
+                vocabulary_source_sha256="abc123",
                 output_root=root / "rewritten-vocabulary",
                 client=client,
                 model="fake-vision",
@@ -354,9 +405,19 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             self.assertTrue((outputs.output_dir / "selection_attempts.jsonl").is_file())
             selected = json.loads((outputs.output_dir / "selected_vocabulary.json").read_text(encoding="utf-8"))
             self.assertEqual(selected["selected_count"], 20)
+            self.assertEqual(
+                selected["vocabulary_source"],
+                {
+                    "kind": "live_lexicon",
+                    "path": str(dictionary_path),
+                    "sha256": "abc123",
+                },
+            )
             self.assertEqual(selected["selected_vocabulary"][0]["canonical_key"], "선물")
             manifest = json.loads((outputs.output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["rewrite"]["mode"], "vocabulary_guided")
+            self.assertEqual(manifest["rewrite"]["vocabulary_guidance"]["vocabulary_source_kind"], "live_lexicon")
+            self.assertEqual(manifest["rewrite"]["vocabulary_guidance"]["vocabulary_source_sha256"], "abc123")
             self.assertIn("selected_vocabulary_json", manifest["files"])
             quality = json.loads((outputs.output_dir / "quality_report.json").read_text(encoding="utf-8"))
             self.assertEqual(quality["vocabulary_guidance"]["selected_count"], 20)
@@ -457,20 +518,23 @@ class SourceRewriteCliTest(unittest.TestCase):
             write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
-            with patch("wordbyword.cli.app.ollama_client", return_value=client):
-                with patch("sys.stdout", io.StringIO()):
-                    exit_code = main(
-                        [
-                            "--rewrite-vocabulary-guided-source-material",
-                            str(bundle_dir),
-                            "--rewrite-output-root",
-                            str(output_root),
-                            "--output",
-                            str(dictionary_output),
-                            "--ollama-model",
-                            "fake-vision",
-                        ]
-                    )
+            with (
+                patch("wordbyword.cli.app.DEFAULT_LIVE_LEXICON_PATH", root / "missing-live.jsonl"),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("sys.stdout", io.StringIO()),
+            ):
+                exit_code = main(
+                    [
+                        "--rewrite-vocabulary-guided-source-material",
+                        str(bundle_dir),
+                        "--rewrite-output-root",
+                        str(output_root),
+                        "--output",
+                        str(dictionary_output),
+                        "--ollama-model",
+                        "fake-vision",
+                    ]
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(client.calls), 2)
@@ -480,6 +544,50 @@ class SourceRewriteCliTest(unittest.TestCase):
                 selected["dictionary_path"],
                 str(dictionary_output / "15_final_dictionary.jsonl"),
             )
+            self.assertEqual(selected["vocabulary_source"]["kind"], "dictionary_seed")
+
+    def test_cli_rewrites_one_source_material_defaults_to_live_lexicon_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            parsed_root = root / "parsed"
+            output_root = root / "rewritten-vocabulary"
+            dictionary_output = root / "dictionary"
+            dictionary_output.mkdir()
+            bundle_dir = write_parsed_fixture(
+                parsed_root,
+                pages=[
+                    page_one_text(),
+                    "# Later page\n\nSecond page source explains the ending.",
+                ],
+            )
+            write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=20)
+            live_path = root / "grade1-live-lexicon-canonical.jsonl"
+            write_dictionary_fixture(live_path, count=20)
+            client = RecordingVocabularyGuidedRewriteClient()
+
+            with (
+                patch("wordbyword.cli.app.DEFAULT_LIVE_LEXICON_PATH", live_path),
+                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("sys.stdout", io.StringIO()),
+            ):
+                exit_code = main(
+                    [
+                        "--rewrite-vocabulary-guided-source-material",
+                        str(bundle_dir),
+                        "--rewrite-output-root",
+                        str(output_root),
+                        "--output",
+                        str(dictionary_output),
+                        "--ollama-model",
+                        "fake-vision",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(client.calls), 2)
+            selected = json.loads((output_root / "lesson" / "selected_vocabulary.json").read_text(encoding="utf-8"))
+            self.assertEqual(selected["dictionary_path"], str(live_path))
+            self.assertEqual(selected["vocabulary_source"]["kind"], "live_lexicon")
 
     def test_cli_rewrites_all_source_materials_with_explicit_vocabulary_dictionary(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -517,6 +625,7 @@ class SourceRewriteCliTest(unittest.TestCase):
             self.assertEqual(len(client.calls), 2)
             selected = json.loads((output_root / "lesson" / "selected_vocabulary.json").read_text(encoding="utf-8"))
             self.assertEqual(selected["dictionary_path"], str(dictionary_path))
+            self.assertEqual(selected["vocabulary_source"]["kind"], "explicit")
 
     def test_cli_rejects_combined_rewrite_commands(self) -> None:
         stderr = io.StringIO()

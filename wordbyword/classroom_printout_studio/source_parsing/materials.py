@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -910,6 +911,11 @@ def _parser_metadata(
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
 ) -> ParserMetadata:
     settings = paddleocr_vl_settings or PaddleOCRVLSettings()
+    settings_payload = parser_settings_payload(
+        status=status,
+        render_dpi=render_dpi,
+        paddleocr_vl_settings=settings,
+    )
     return ParserMetadata(
         status=status,
         name="paddleocr-vl-1.5" if status == "parsed" else "",
@@ -923,8 +929,58 @@ def _parser_metadata(
             "image_workflow": "PDF pages are rendered to PNG before PaddleOCR-VL inference.",
             "pipeline_version": "v1.5",
             "asset_layout": "flat assets/ folder per source material",
+            "settings_signature": parser_settings_signature(settings_payload),
             **({key: value for key, value in asdict(settings).items() if value is not None} if status == "parsed" else {}),
         },
+    )
+
+
+def parser_settings_payload(
+    *,
+    status: Literal["parsed", "not_run", "skipped"],
+    render_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+) -> dict[str, Any]:
+    settings = paddleocr_vl_settings or PaddleOCRVLSettings()
+    return {
+        "status": status,
+        "parser_name": "paddleocr-vl-1.5" if status == "parsed" else "",
+        "render_dpi": render_dpi,
+        "pipeline_version": "v1.5",
+        "asset_layout": "flat assets/ folder per source material",
+        "paddleocr_vl_settings": {key: value for key, value in asdict(settings).items() if value is not None}
+        if status == "parsed"
+        else {},
+    }
+
+
+def parser_settings_signature(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def parser_status_for_source(source_path: Path, *, parse_pdf: bool) -> Literal["parsed", "not_run", "skipped"]:
+    suffix = source_path.suffix.lower()
+    if suffix == ".pdf" and parse_pdf:
+        return "parsed"
+    if suffix == ".pdf":
+        return "not_run"
+    return "skipped"
+
+
+def parser_settings_signature_for_source(
+    source_path: Path,
+    *,
+    parse_pdf: bool,
+    render_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+) -> str:
+    return parser_settings_signature(
+        parser_settings_payload(
+            status=parser_status_for_source(source_path, parse_pdf=parse_pdf),
+            render_dpi=render_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
+        )
     )
 
 

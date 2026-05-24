@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import shutil
@@ -37,7 +38,8 @@ DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT = (
 VOCABULARY_GUIDED_CANDIDATE_LIMIT = 250
 VOCABULARY_GUIDED_SELECTION_LIMIT = 20
 VOCABULARY_GUIDED_SCORING_POLICY = (
-    "selection_score=roi_score when present; otherwise normalized learning_signal_score"
+    "selection_score=roi_score when present; otherwise normalized learning_signal_score; "
+    "ties prefer higher class_printout_count, class_count, learning_signal_score, count"
 )
 IMAGE_SRC_PATTERN = re.compile(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"'][^>]*>", re.IGNORECASE)
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -195,6 +197,8 @@ class VocabularyCandidate:
     roi_score: float | None
     selection_score: float
     count: int
+    class_count: int = 0
+    class_printout_count: int = 0
 
     def prompt_row(self) -> dict[str, object]:
         return {
@@ -439,6 +443,8 @@ def rewrite_vocabulary_guided_source_material(
     parsed_bundle_dir: Path,
     *,
     dictionary_path: Path,
+    vocabulary_source_kind: str = "explicit",
+    vocabulary_source_sha256: str | None = None,
     output_root: Path = DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     client: SupportsCompletion,
     model: str,
@@ -543,6 +549,8 @@ def rewrite_vocabulary_guided_source_material(
         output_dir / "selected_vocabulary.json",
         context=context,
         dictionary_path=dictionary_path,
+        vocabulary_source_kind=vocabulary_source_kind,
+        vocabulary_source_sha256=vocabulary_source_sha256,
         candidate_pool=candidate_pool,
         selected_vocabulary_rows=selected_vocabulary_rows,
         failure_reason="" if bool(selection_attempt["accepted"]) else str(selection_attempt["failure_reason"]),
@@ -613,6 +621,8 @@ def rewrite_vocabulary_guided_source_material(
         rewrite_mode=REWRITE_MODE_VOCABULARY_GUIDED,
         vocabulary_guidance=vocabulary_guidance_metadata(
             dictionary_path=dictionary_path,
+            vocabulary_source_kind=vocabulary_source_kind,
+            vocabulary_source_sha256=vocabulary_source_sha256,
             candidate_pool=candidate_pool,
             selected_vocabulary_rows=selected_vocabulary_rows,
         ),
@@ -650,6 +660,8 @@ def rewrite_vocabulary_guided_source_materials(
     parsed_root: Path,
     *,
     dictionary_path: Path,
+    vocabulary_source_kind: str = "explicit",
+    vocabulary_source_sha256: str | None = None,
     output_root: Path = DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
     client: SupportsCompletion,
     model: str,
@@ -679,6 +691,8 @@ def rewrite_vocabulary_guided_source_materials(
             rewrite_vocabulary_guided_source_material(
                 bundle_dir,
                 dictionary_path=dictionary_path,
+                vocabulary_source_kind=vocabulary_source_kind,
+                vocabulary_source_sha256=vocabulary_source_sha256,
                 output_root=output_root,
                 client=client,
                 model=model,
@@ -715,6 +729,8 @@ def load_vocabulary_guided_candidates(dictionary_path: Path) -> list[VocabularyC
     candidates.sort(
         key=lambda candidate: (
             -candidate.selection_score,
+            -candidate.class_printout_count,
+            -candidate.class_count,
             -candidate.learning_signal_score,
             -candidate.count,
             candidate.canonical_key,
@@ -729,6 +745,8 @@ def vocabulary_candidate_from_dictionary_row(
     row_number: int,
     dictionary_path: Path,
 ) -> VocabularyCandidate | None:
+    if row.get("active") is False:
+        return None
     canonical_key = str(row.get("canonical_key", "") or "").strip()
     example = str(row.get("example", "") or "").strip()
     if not canonical_key or not example:
@@ -739,7 +757,24 @@ def vocabulary_candidate_from_dictionary_row(
         roi_score = parse_roi_score(row.get("roi_score"))
     except ValueError as exc:
         raise SourceRewriteError(f"Invalid roi_score in row {row_number} of {dictionary_path}: {exc}") from exc
-    count = parse_nonnegative_int(row.get("count"), field_name="count", row_number=row_number, dictionary_path=dictionary_path)
+    count = parse_nonnegative_int(
+        first_present(row, "count", "class_count", "canonical_count", default=0),
+        field_name="count",
+        row_number=row_number,
+        dictionary_path=dictionary_path,
+    )
+    class_count = parse_nonnegative_int(
+        row.get("class_count", 0),
+        field_name="class_count",
+        row_number=row_number,
+        dictionary_path=dictionary_path,
+    )
+    class_printout_count = parse_nonnegative_int(
+        row.get("class_printout_count", 0),
+        field_name="class_printout_count",
+        row_number=row_number,
+        dictionary_path=dictionary_path,
+    )
     selection_score = roi_score if roi_score is not None else normalized_signal_score
     return VocabularyCandidate(
         canonical_key=canonical_key,
@@ -748,7 +783,17 @@ def vocabulary_candidate_from_dictionary_row(
         roi_score=roi_score,
         selection_score=selection_score,
         count=count,
+        class_count=class_count,
+        class_printout_count=class_printout_count,
     )
+
+
+def first_present(row: Mapping[str, object], *field_names: str, default: object = None) -> object:
+    for field_name in field_names:
+        value = row.get(field_name)
+        if value is not None:
+            return value
+    return default
 
 
 def parse_nonnegative_int(
@@ -1628,15 +1673,23 @@ def write_selected_vocabulary_artifact(
     *,
     context: ContextPacket,
     dictionary_path: Path,
+    vocabulary_source_kind: str = "explicit",
+    vocabulary_source_sha256: str | None = None,
     candidate_pool: Sequence[VocabularyCandidate],
     selected_vocabulary_rows: Sequence[Mapping[str, object]],
     failure_reason: str = "",
 ) -> None:
+    resolved_vocabulary_source_sha256 = vocabulary_source_sha256 or file_sha256_if_present(dictionary_path)
     path.write_text(
         json.dumps(
             {
                 "source_id": context.source_id,
                 "dictionary_path": str(dictionary_path),
+                "vocabulary_source": {
+                    "kind": vocabulary_source_kind,
+                    "path": str(dictionary_path),
+                    "sha256": resolved_vocabulary_source_sha256,
+                },
                 "candidate_count": len(candidate_pool),
                 "selected_count": len(selected_vocabulary_rows),
                 "selection_scoring_policy": VOCABULARY_GUIDED_SCORING_POLICY,
@@ -1655,16 +1708,36 @@ def write_selected_vocabulary_artifact(
 def vocabulary_guidance_metadata(
     *,
     dictionary_path: Path,
+    vocabulary_source_kind: str = "explicit",
+    vocabulary_source_sha256: str | None = None,
     candidate_pool: Sequence[VocabularyCandidate],
     selected_vocabulary_rows: Sequence[Mapping[str, object]],
 ) -> dict[str, object]:
+    resolved_vocabulary_source_sha256 = vocabulary_source_sha256 or file_sha256_if_present(dictionary_path)
     return {
         "dictionary_path": str(dictionary_path),
+        "vocabulary_source": {
+            "kind": vocabulary_source_kind,
+            "path": str(dictionary_path),
+            "sha256": resolved_vocabulary_source_sha256,
+        },
+        "vocabulary_source_kind": vocabulary_source_kind,
+        "vocabulary_source_sha256": resolved_vocabulary_source_sha256,
         "candidate_count": len(candidate_pool),
         "selected_count": len(selected_vocabulary_rows),
         "selected_canonical_keys": [row.get("canonical_key", "") for row in selected_vocabulary_rows],
         "selection_scoring_policy": VOCABULARY_GUIDED_SCORING_POLICY,
     }
+
+
+def file_sha256_if_present(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def build_whole_document_rewrite_prompt(

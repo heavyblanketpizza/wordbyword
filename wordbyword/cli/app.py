@@ -8,8 +8,12 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+from wordbyword._json_io import read_json_object, write_json_atomic
 from wordbyword.after_class_reports import (
     AfterClassReportError,
     generate_after_class_reading_report,
@@ -38,9 +42,14 @@ from wordbyword.dictionary_build.resumable import (
     generated_example_failure_count as resumable_generated_example_failure_count,
 )
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
+    SourceMaterialBundle,
     SourceMaterialParseError,
+    discover_source_materials,
     parse_source_material,
     parse_source_materials,
+    parser_settings_signature_for_source,
+    sha256_file,
+    source_id_for,
 )
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
     DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
@@ -64,6 +73,7 @@ from wordbyword.class_archive.archive import (
     rename_class_session_archive,
 )
 from wordbyword.class_archive.live_lexicon import (
+    DEFAULT_LIVE_LEXICON_PATH,
     LiveLexiconUpdateError,
     update_live_lexicon,
 )
@@ -106,10 +116,34 @@ from wordbyword.dictionary_build.saved_outputs import (
 PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
 PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_PYTHON"
 DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS = (".venv-paddleocr-vl", ".venv-paddleocr")
+CLASS_PRINTOUT_LEDGER_FILENAME = ".wordbyword-class-printout-ledger.json"
+CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION = "wordbyword.class_printout_workflow.v1"
+CLASS_PRINTOUT_STATUS_PRINTED = "printed"
+CLASS_PRINTOUT_STATUS_REWRITE_FAILED = "rewrite_failed"
+CLASS_PRINTOUT_STATUS_PRINT_FAILED = "print_failed"
 
 # Compatibility surface for callers that patch/import wordbyword.cli.app.run_pipeline.
 # The CLI command dispatcher must not call this.
 run_pipeline = _run_pipeline_compat
+
+
+class ClassPrintoutWorkflowError(RuntimeError):
+    """Raised when class-printout workflow state is invalid."""
+
+
+@dataclass(frozen=True)
+class RewriteVocabularySource:
+    path: Path
+    kind: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class BuildClassPrintoutSource:
+    path: Path
+    source_id: str
+    sha256: str
+    parser_settings_signature: str
 
 
 class LazyOllamaCompletionClient:
@@ -198,18 +232,20 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             base_url=args.ollama_base_url,
         )
     if args.rewrite_vocabulary_guided_source_material is not None:
+        vocabulary_source = rewrite_vocabulary_source_from_args(args)
         return rewrite_vocabulary_guided_source_material_cli(
             parsed_bundle_dir=args.rewrite_vocabulary_guided_source_material,
             output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
-            dictionary_path=rewrite_dictionary_path_from_args(args),
+            vocabulary_source=vocabulary_source,
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
     if args.rewrite_vocabulary_guided_source_materials is not None:
+        vocabulary_source = rewrite_vocabulary_source_from_args(args)
         return rewrite_vocabulary_guided_source_materials_cli(
             parsed_root=args.rewrite_vocabulary_guided_source_materials,
             output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
-            dictionary_path=rewrite_dictionary_path_from_args(args),
+            vocabulary_source=vocabulary_source,
             model=args.ollama_model,
             base_url=args.ollama_base_url,
         )
@@ -233,6 +269,7 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
         )
     if args.build_class_printouts is not None:
         options = source_parse_options_from_args(args)
+        vocabulary_source = rewrite_vocabulary_source_from_args(args)
         return build_class_printouts_cli(
             source_dir=args.build_class_printouts,
             parse_output_root=options.output_root,
@@ -240,12 +277,13 @@ def run_immediate_command(args: argparse.Namespace) -> int | None:
             render_dpi=options.render_dpi,
             paddleocr_vl_settings=options.paddleocr_vl_settings,
             rewrite_output_root=args.rewrite_output_root or DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
-            dictionary_path=rewrite_dictionary_path_from_args(args),
+            vocabulary_source=vocabulary_source,
             print_output_root=args.print_output_root,
             model=args.ollama_model,
             base_url=args.ollama_base_url,
             font_path=args.print_font_path,
             body_font_size=args.print_body_font_size,
+            force_class_printouts=args.force_class_printouts,
         )
     if args.generate_after_class_reading_report is not None:
         return generate_after_class_reading_report_cli(
@@ -477,7 +515,32 @@ def generated_example_failure_count(output_dir: Path) -> int:
 
 
 def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
-    return args.rewrite_dictionary or artifact_path(args.output, ArtifactId.FINAL_DICTIONARY)
+    return rewrite_vocabulary_source_from_args(args).path
+
+
+def rewrite_vocabulary_source_from_args(args: argparse.Namespace) -> RewriteVocabularySource:
+    if args.rewrite_dictionary is not None:
+        path = args.rewrite_dictionary
+        return RewriteVocabularySource(path=path, kind="explicit", sha256=file_sha256_if_present(path))
+    live_lexicon_path = DEFAULT_LIVE_LEXICON_PATH
+    if live_lexicon_path.is_file():
+        return RewriteVocabularySource(
+            path=live_lexicon_path,
+            kind="live_lexicon",
+            sha256=file_sha256_if_present(live_lexicon_path),
+        )
+    dictionary_path = artifact_path(args.output, ArtifactId.FINAL_DICTIONARY)
+    return RewriteVocabularySource(
+        path=dictionary_path,
+        kind="dictionary_seed",
+        sha256=file_sha256_if_present(dictionary_path),
+    )
+
+
+def file_sha256_if_present(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    return sha256_file(path)
 
 
 def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
@@ -970,7 +1033,7 @@ def rewrite_vocabulary_guided_source_material_cli(
     *,
     parsed_bundle_dir: Path,
     output_root: Path,
-    dictionary_path: Path,
+    vocabulary_source: RewriteVocabularySource,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -984,7 +1047,9 @@ def rewrite_vocabulary_guided_source_material_cli(
         try:
             outputs = rewrite_vocabulary_guided_parsed_source_material(
                 parsed_bundle_dir,
-                dictionary_path=dictionary_path,
+                dictionary_path=vocabulary_source.path,
+                vocabulary_source_kind=vocabulary_source.kind,
+                vocabulary_source_sha256=vocabulary_source.sha256,
                 output_root=output_root,
                 client=client,
                 model=model,
@@ -1002,7 +1067,7 @@ def rewrite_vocabulary_guided_source_material_cli(
             ("status", "written" if outputs.failed_page_count == 0 else "failed"),
             ("source_id", outputs.source_id),
             ("output", str(outputs.output_dir)),
-            ("dictionary", str(dictionary_path)),
+            ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
             ("selected", f"{len(outputs.selected_vocabulary):,} vocabulary"),
             ("rewritten", f"{outputs.rewritten_page_count:,} pages"),
             ("failed", f"{outputs.failed_page_count:,} pages"),
@@ -1016,7 +1081,7 @@ def rewrite_vocabulary_guided_source_material_cli(
         "source material rewritten with vocabulary guidance\n"
         f"  source_id: {outputs.source_id}\n"
         f"  output_dir: {outputs.output_dir}\n"
-        f"  dictionary: {dictionary_path}\n"
+        f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
         f"  selected_vocabulary: {len(outputs.selected_vocabulary)}\n"
         f"  rewritten_pages: {outputs.rewritten_page_count}\n"
         f"  failed_pages: {outputs.failed_page_count}\n"
@@ -1030,7 +1095,7 @@ def rewrite_vocabulary_guided_source_materials_cli(
     *,
     parsed_root: Path,
     output_root: Path,
-    dictionary_path: Path,
+    vocabulary_source: RewriteVocabularySource,
     model: str,
     base_url: str | None,
 ) -> int:
@@ -1044,7 +1109,9 @@ def rewrite_vocabulary_guided_source_materials_cli(
         try:
             outputs = rewrite_vocabulary_guided_parsed_source_materials(
                 parsed_root,
-                dictionary_path=dictionary_path,
+                dictionary_path=vocabulary_source.path,
+                vocabulary_source_kind=vocabulary_source.kind,
+                vocabulary_source_sha256=vocabulary_source.sha256,
                 output_root=output_root,
                 client=client,
                 model=model,
@@ -1065,7 +1132,7 @@ def rewrite_vocabulary_guided_source_materials_cli(
             ("status", "written" if failed_pages == 0 and outputs.source_outputs else "failed"),
             ("parsed", str(outputs.parsed_root)),
             ("output", str(outputs.output_root)),
-            ("dictionary", str(dictionary_path)),
+            ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
             ("sources", f"{len(outputs.source_outputs):,}"),
             ("skipped", f"{len(outputs.skipped_sources):,}"),
             ("selected", f"{selected_vocabulary_count:,} vocabulary"),
@@ -1081,7 +1148,7 @@ def rewrite_vocabulary_guided_source_materials_cli(
         "source materials rewritten with vocabulary guidance\n"
         f"  parsed_root: {outputs.parsed_root}\n"
         f"  output_root: {outputs.output_root}\n"
-        f"  dictionary: {dictionary_path}\n"
+        f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
         f"  sources: {len(outputs.source_outputs)}\n"
         f"  skipped_sources: {len(outputs.skipped_sources)}\n"
         f"  selected_vocabulary: {selected_vocabulary_count}\n"
@@ -1239,6 +1306,294 @@ def print_class_materials_cli(
     return 0 if failed == 0 and written > 0 else 1
 
 
+def class_printout_ledger_path(parse_output_root: Path) -> Path:
+    return parse_output_root / CLASS_PRINTOUT_LEDGER_FILENAME
+
+
+def load_class_printout_ledger(ledger_path: Path) -> dict[str, Any]:
+    if not ledger_path.exists():
+        return {"schema_version": CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION, "entries": {}}
+    payload = read_json_object(ledger_path, error_type=ClassPrintoutWorkflowError)
+    if payload.get("schema_version") != CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION:
+        raise ClassPrintoutWorkflowError(
+            f"Class printout ledger schema is {payload.get('schema_version')!r}, "
+            f"expected {CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION!r}: {ledger_path}"
+        )
+    if not isinstance(payload.get("entries"), dict):
+        raise ClassPrintoutWorkflowError(f"Class printout ledger has invalid entries object: {ledger_path}")
+    return payload
+
+
+def write_class_printout_ledger(ledger_path: Path, ledger: dict[str, Any]) -> None:
+    ledger["schema_version"] = CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION
+    ledger["updated_at"] = datetime.now(timezone.utc).isoformat()
+    write_json_atomic(ledger_path, ledger)
+
+
+def discover_class_printout_sources(
+    *,
+    source_dir: Path,
+    parse_output_root: Path,
+    parse_pdf: bool,
+    render_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
+) -> list[BuildClassPrintoutSource]:
+    source_paths = discover_source_materials(source_dir, output_root=parse_output_root)
+    used_source_ids: set[str] = set()
+    sources: list[BuildClassPrintoutSource] = []
+    for source_path in source_paths:
+        source_id = unique_class_printout_source_id(source_path, source_dir, used_source_ids)
+        sources.append(
+            BuildClassPrintoutSource(
+                path=source_path,
+                source_id=source_id,
+                sha256=sha256_file(source_path),
+                parser_settings_signature=parser_settings_signature_for_source(
+                    source_path,
+                    parse_pdf=parse_pdf,
+                    render_dpi=render_dpi,
+                    paddleocr_vl_settings=paddleocr_vl_settings,
+                ),
+            )
+        )
+    return sources
+
+
+def unique_class_printout_source_id(source_path: Path, source_dir: Path, used_source_ids: set[str]) -> str:
+    source_id = source_id_for(source_path)
+    if source_id not in used_source_ids:
+        used_source_ids.add(source_id)
+        return source_id
+    try:
+        relative = source_path.relative_to(source_dir)
+    except ValueError:
+        relative = Path(source_path.name)
+    source_id = source_id_for(Path("-".join(relative.with_suffix("").parts)))
+    if source_id not in used_source_ids:
+        used_source_ids.add(source_id)
+        return source_id
+    source_id = f"{source_id}-{sha256_file(source_path)[:8]}"
+    used_source_ids.add(source_id)
+    return source_id
+
+
+def valid_printed_class_printout_entry(entry: object, *, source_sha256: str) -> bool:
+    if not isinstance(entry, Mapping):
+        return False
+    if entry.get("status") != CLASS_PRINTOUT_STATUS_PRINTED:
+        return False
+    source = entry.get("source")
+    if not isinstance(source, Mapping) or source.get("sha256") != source_sha256:
+        return False
+    printable = entry.get("printable")
+    if not isinstance(printable, Mapping):
+        return False
+    manifest_path = Path(str(printable.get("manifest_path") or ""))
+    docx_path = Path(str(printable.get("docx_path") or ""))
+    if not manifest_path.is_file() or not docx_path.is_file():
+        return False
+    try:
+        manifest = read_json_object(manifest_path)
+    except (OSError, ValueError):
+        return False
+    manifest_source = manifest.get("source")
+    manifest_printable = manifest.get("printable")
+    if not isinstance(manifest_source, Mapping) or manifest_source.get("sha256") != source_sha256:
+        return False
+    if not isinstance(manifest_printable, Mapping) or manifest_printable.get("status") != "written":
+        return False
+    return True
+
+
+def filter_new_class_printout_sources(
+    sources: Sequence[BuildClassPrintoutSource],
+    *,
+    ledger: Mapping[str, Any],
+    force: bool,
+) -> tuple[list[BuildClassPrintoutSource], list[dict[str, object]]]:
+    entries = ledger.get("entries", {})
+    if not isinstance(entries, Mapping):
+        raise ClassPrintoutWorkflowError("Class printout ledger has invalid entries object.")
+    new_sources: list[BuildClassPrintoutSource] = []
+    skipped: list[dict[str, object]] = []
+    for source in sources:
+        if not force and valid_printed_class_printout_entry(entries.get(source.sha256), source_sha256=source.sha256):
+            skipped.append(
+                {
+                    "source_id": source.source_id,
+                    "source_path": str(source.path),
+                    "source_sha256": source.sha256,
+                    "reason": "already printed successfully",
+                }
+            )
+            continue
+        new_sources.append(source)
+    fail_on_duplicate_new_source_bytes(new_sources)
+    return new_sources, skipped
+
+
+def fail_on_duplicate_new_source_bytes(sources: Sequence[BuildClassPrintoutSource]) -> None:
+    grouped: dict[str, list[BuildClassPrintoutSource]] = {}
+    for source in sources:
+        grouped.setdefault(source.sha256, []).append(source)
+    duplicates = {digest: group for digest, group in grouped.items() if len(group) > 1}
+    if not duplicates:
+        return
+    lines = ["duplicate class source materials detected; remove or move duplicate source files before building printouts:"]
+    for digest, group in sorted(duplicates.items()):
+        lines.append(f"  sha256:{digest}")
+        for source in sorted(group, key=lambda item: item.path.as_posix()):
+            lines.append(f"    - {source.path}")
+    raise ClassPrintoutWorkflowError("\n".join(lines))
+
+
+def reusable_parsed_bundle(source: BuildClassPrintoutSource, *, parse_output_root: Path) -> SourceMaterialBundle | None:
+    output_dir = parse_output_root / source.source_id
+    manifest_path = output_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = read_json_object(manifest_path)
+    except (OSError, ValueError):
+        return None
+    manifest_source = manifest.get("source")
+    manifest_parser = manifest.get("parser")
+    files = manifest.get("files")
+    if not isinstance(manifest_source, Mapping) or manifest_source.get("sha256") != source.sha256:
+        return None
+    if not isinstance(manifest_parser, Mapping):
+        return None
+    parser_settings = manifest_parser.get("settings")
+    if not isinstance(parser_settings, Mapping):
+        return None
+    if parser_settings.get("settings_signature") != source.parser_settings_signature:
+        return None
+    if not isinstance(files, Mapping):
+        return None
+    for file_key in ("content_markdown", "chunks_json"):
+        relative_path = files.get(file_key)
+        if relative_path and not (output_dir / str(relative_path)).is_file():
+            return None
+    return SourceMaterialBundle(
+        source_id=source.source_id,
+        source_path=source.path,
+        output_dir=output_dir,
+        manifest_path=manifest_path,
+        assets_dir=output_dir / "assets",
+        manifest=manifest,
+    )
+
+
+def parse_or_reuse_class_printout_sources(
+    sources: Sequence[BuildClassPrintoutSource],
+    *,
+    parse_output_root: Path,
+    parse_pdf: bool,
+    render_dpi: int,
+    paddleocr_vl_settings: PaddleOCRVLSettings | None,
+    reuse_parsed_cache: bool,
+) -> list[SourceMaterialBundle]:
+    bundles: list[SourceMaterialBundle] = []
+    for index, source in enumerate(sources, start=1):
+        reusable = reusable_parsed_bundle(source, parse_output_root=parse_output_root) if reuse_parsed_cache else None
+        if reusable is not None:
+            bundles.append(reusable)
+            continue
+        bundles.append(
+            parse_source_material(
+                source.path,
+                output_root=parse_output_root,
+                source_id=source.source_id,
+                parse_pdf=parse_pdf,
+                render_dpi=render_dpi,
+                paddleocr_vl_settings=paddleocr_vl_settings,
+                progress=emit_source_material_progress,
+                source_index=index,
+                total_sources=len(sources),
+            )
+        )
+    return bundles
+
+
+def class_printout_rewritable_bundles(
+    bundles: Sequence[SourceMaterialBundle],
+) -> tuple[list[SourceMaterialBundle], list[dict[str, object]]]:
+    rewritable: list[SourceMaterialBundle] = []
+    skipped: list[dict[str, object]] = []
+    for bundle in bundles:
+        parser = bundle.manifest.get("parser")
+        files = bundle.manifest.get("files")
+        status = str(parser.get("status") or "") if isinstance(parser, Mapping) else ""
+        if (
+            status == "parsed"
+            and isinstance(files, Mapping)
+            and (bundle.output_dir / str(files.get("content_markdown") or "content.md")).is_file()
+            and (bundle.output_dir / str(files.get("chunks_json") or "chunks.json")).is_file()
+        ):
+            rewritable.append(bundle)
+            continue
+        skipped.append(
+            {
+                "source_id": bundle.source_id,
+                "source_path": str(bundle.source_path),
+                "source_dir": str(bundle.output_dir),
+                "reason": f"parser status is {status or 'unknown'}",
+            }
+        )
+    return rewritable, skipped
+
+
+def update_class_printout_ledger_entry(
+    ledger: dict[str, Any],
+    *,
+    source: BuildClassPrintoutSource,
+    parsed_bundle: SourceMaterialBundle | None,
+    rewrite_output: object | None,
+    print_output: object | None,
+    status: str,
+    rewrite_model: str,
+    print_model: str,
+    vocabulary_source: RewriteVocabularySource,
+) -> None:
+    entries = ledger.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        raise ClassPrintoutWorkflowError("Class printout ledger has invalid entries object.")
+    print_output_dir = Path(getattr(print_output, "output_dir", "")) if print_output is not None else None
+    printable_manifest = print_output_dir / "manifest.json" if print_output_dir is not None else None
+    printable_docx = print_output_dir / "material.docx" if print_output_dir is not None else None
+    entries[source.sha256] = {
+        "status": status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": {
+            "path": str(source.path),
+            "name": source.path.name,
+            "source_id": source.source_id,
+            "sha256": source.sha256,
+        },
+        "parser": {
+            "settings_signature": source.parser_settings_signature,
+            "bundle_dir": str(parsed_bundle.output_dir) if parsed_bundle is not None else "",
+            "manifest_path": str(parsed_bundle.manifest_path) if parsed_bundle is not None else "",
+        },
+        "rewrite": {
+            "model": rewrite_model,
+            "bundle_dir": str(getattr(rewrite_output, "output_dir", "")) if rewrite_output is not None else "",
+            "vocabulary_source": {
+                "kind": vocabulary_source.kind,
+                "path": str(vocabulary_source.path),
+                "sha256": vocabulary_source.sha256,
+            },
+        },
+        "printable": {
+            "model": print_model,
+            "bundle_dir": str(print_output_dir or ""),
+            "manifest_path": str(printable_manifest or ""),
+            "docx_path": str(printable_docx or ""),
+            "accepted": bool(getattr(print_output, "accepted", False)) if print_output is not None else False,
+        },
+    }
+
+
 def build_class_printouts_cli(
     *,
     source_dir: Path,
@@ -1247,21 +1602,79 @@ def build_class_printouts_cli(
     render_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
     rewrite_output_root: Path,
-    dictionary_path: Path,
+    vocabulary_source: RewriteVocabularySource,
     print_output_root: Path,
     model: str,
     base_url: str | None,
     font_path: Path | None,
     body_font_size: int | None,
+    force_class_printouts: bool,
 ) -> int:
+    ledger_path = class_printout_ledger_path(parse_output_root)
     try:
-        parsed = parse_source_materials(
-            source_dir,
-            output_root=parse_output_root,
+        ledger = load_class_printout_ledger(ledger_path)
+        discovered_sources = discover_class_printout_sources(
+            source_dir=source_dir,
+            parse_output_root=parse_output_root,
             parse_pdf=parse_pdf,
             render_dpi=render_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
-            progress=emit_source_material_progress,
+        )
+        new_sources, skipped_sources = filter_new_class_printout_sources(
+            discovered_sources,
+            ledger=ledger,
+            force=force_class_printouts,
+        )
+    except (SourceMaterialParseError, ClassPrintoutWorkflowError) as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
+
+    if not discovered_sources:
+        sys.stderr.write(f"wordbyword: no class source materials found in {source_dir}\n")
+        return 1
+
+    if not new_sources:
+        if emit_printable_summary(
+            title="workflow complete",
+            summary=(
+                ("status", "skipped"),
+                ("source_dir", str(source_dir)),
+                ("parsed", str(parse_output_root)),
+                ("rewrite", str(rewrite_output_root)),
+                ("print", str(print_output_root)),
+                ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
+                ("discovered sources", f"{len(discovered_sources):,}"),
+                ("skipped", f"{len(skipped_sources):,}"),
+                ("docx written", "0"),
+            ),
+        ):
+            return 0
+        sys.stdout.write(
+            "class printout workflow complete\n"
+            f"  source_dir: {source_dir}\n"
+            f"  parsed_root: {parse_output_root}\n"
+            f"  rewrite_root: {rewrite_output_root}\n"
+            f"  print_root: {print_output_root}\n"
+            f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
+            f"  discovered_sources: {len(discovered_sources)}\n"
+            f"  skipped_sources: {len(skipped_sources)}\n"
+            "  parsed_sources: 0\n"
+            "  rewritten: 0\n"
+            "  failed_rewrites: 0\n"
+            "  docx_written: 0\n"
+            "  failed_prints: 0\n"
+        )
+        sys.stdout.flush()
+        return 0
+
+    try:
+        parsed_bundles = parse_or_reuse_class_printout_sources(
+            new_sources,
+            parse_output_root=parse_output_root,
+            parse_pdf=parse_pdf,
+            render_dpi=render_dpi,
+            paddleocr_vl_settings=paddleocr_vl_settings,
+            reuse_parsed_cache=not force_class_printouts,
         )
     except KeyboardInterrupt:
         sys.stderr.write("wordbyword: class printout build interrupted during parsing; partial workspace cleaned.\n")
@@ -1270,8 +1683,34 @@ def build_class_printouts_cli(
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
 
-    if not parsed.bundles:
-        sys.stderr.write(f"wordbyword: no class source materials found in {source_dir}\n")
+    rewritable_bundles, parser_skipped_sources = class_printout_rewritable_bundles(parsed_bundles)
+    source_by_id = {source.source_id: source for source in new_sources}
+    parsed_by_id = {bundle.source_id: bundle for bundle in parsed_bundles}
+
+    if not rewritable_bundles:
+        all_skipped_sources = [*skipped_sources, *parser_skipped_sources]
+        if emit_printable_summary(
+            title="workflow stopped",
+            summary=(
+                ("status", "stopped after parsing"),
+                ("source_dir", str(source_dir)),
+                ("prepared", f"{len(parsed_bundles):,}"),
+                ("skipped", f"{len(all_skipped_sources):,}"),
+                ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
+                ("rewritable", "0"),
+            ),
+        ):
+            return 1
+
+        sys.stdout.write(
+            "class printout workflow stopped after parsing\n"
+            f"  source_dir: {source_dir}\n"
+            f"  prepared_sources: {len(parsed_bundles)}\n"
+            f"  skipped_sources: {len(all_skipped_sources)}\n"
+            f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
+            "  rewritable: 0\n"
+        )
+        sys.stdout.flush()
         return 1
 
     rewrite_client = ollama_client(
@@ -1283,17 +1722,19 @@ def build_class_printouts_cli(
     rewrite_outputs = []
     try:
         try:
-            for source_index, bundle in enumerate(parsed.bundles, start=1):
+            for source_index, bundle in enumerate(rewritable_bundles, start=1):
                 rewrite_outputs.append(
                     rewrite_vocabulary_guided_parsed_source_material(
                         bundle.output_dir,
-                        dictionary_path=dictionary_path,
+                        dictionary_path=vocabulary_source.path,
+                        vocabulary_source_kind=vocabulary_source.kind,
+                        vocabulary_source_sha256=vocabulary_source.sha256,
                         output_root=rewrite_output_root,
                         client=rewrite_client,
                         model=model,
                         progress=emit_source_rewrite_progress,
                         source_index=source_index,
-                        total_sources=len(parsed.bundles),
+                        total_sources=len(rewritable_bundles),
                     )
                 )
         finally:
@@ -1304,13 +1745,35 @@ def build_class_printouts_cli(
 
     successful_rewrites = [output for output in rewrite_outputs if output.failed_page_count == 0]
     failed_rewrites = len(rewrite_outputs) - len(successful_rewrites)
+    for rewrite_output in rewrite_outputs:
+        if rewrite_output.failed_page_count == 0:
+            continue
+        source = source_by_id.get(rewrite_output.source_id)
+        if source is None:
+            continue
+        update_class_printout_ledger_entry(
+            ledger,
+            source=source,
+            parsed_bundle=parsed_by_id.get(rewrite_output.source_id),
+            rewrite_output=rewrite_output,
+            print_output=None,
+            status=CLASS_PRINTOUT_STATUS_REWRITE_FAILED,
+            rewrite_model=model,
+            print_model=model,
+            vocabulary_source=vocabulary_source,
+        )
+    if failed_rewrites:
+        write_class_printout_ledger(ledger_path, ledger)
+
     if not successful_rewrites:
         if emit_printable_summary(
             title="workflow stopped",
             summary=(
                 ("status", "stopped after rewrite"),
-                ("source_dir", str(parsed.source_dir)),
-                ("parsed", f"{len(parsed.bundles):,}"),
+                ("source_dir", str(source_dir)),
+                ("parsed", f"{len(parsed_bundles):,}"),
+                ("skipped", f"{len(skipped_sources) + len(parser_skipped_sources):,}"),
+                ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
                 ("rewritten", "0"),
                 ("failed rewrites", f"{failed_rewrites:,}"),
             ),
@@ -1319,8 +1782,10 @@ def build_class_printouts_cli(
 
         sys.stdout.write(
             "class printout workflow stopped after rewrite\n"
-            f"  source_dir: {parsed.source_dir}\n"
-            f"  parsed_sources: {len(parsed.bundles)}\n"
+            f"  source_dir: {source_dir}\n"
+            f"  parsed_sources: {len(parsed_bundles)}\n"
+            f"  skipped_sources: {len(skipped_sources) + len(parser_skipped_sources)}\n"
+            f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
             f"  rewritten: 0\n"
             f"  failed_rewrites: {failed_rewrites}\n"
         )
@@ -1358,15 +1823,36 @@ def build_class_printouts_cli(
 
     written = sum(1 for output in print_outputs if output.accepted)
     failed_prints = sum(1 for output in print_outputs if not output.accepted)
+    rewrite_by_id = {output.source_id: output for output in rewrite_outputs}
+    for print_output in print_outputs:
+        source = source_by_id.get(print_output.source_id)
+        if source is None:
+            continue
+        update_class_printout_ledger_entry(
+            ledger,
+            source=source,
+            parsed_bundle=parsed_by_id.get(print_output.source_id),
+            rewrite_output=rewrite_by_id.get(print_output.source_id),
+            print_output=print_output,
+            status=CLASS_PRINTOUT_STATUS_PRINTED if print_output.accepted else CLASS_PRINTOUT_STATUS_PRINT_FAILED,
+            rewrite_model=model,
+            print_model=model,
+            vocabulary_source=vocabulary_source,
+        )
+    write_class_printout_ledger(ledger_path, ledger)
+
     if emit_printable_summary(
         title="workflow complete",
         summary=(
             ("status", "written" if failed_rewrites == 0 and failed_prints == 0 and written > 0 else "failed"),
-            ("source_dir", str(parsed.source_dir)),
-            ("parsed", str(parsed.output_root)),
+            ("source_dir", str(source_dir)),
+            ("parsed", str(parse_output_root)),
             ("rewrite", str(rewrite_output_root)),
             ("print", str(print_output_root)),
-            ("parsed sources", f"{len(parsed.bundles):,}"),
+            ("vocabulary", f"{vocabulary_source.kind}: {vocabulary_source.path}"),
+            ("ledger", str(ledger_path)),
+            ("parsed sources", f"{len(parsed_bundles):,}"),
+            ("skipped sources", f"{len(skipped_sources) + len(parser_skipped_sources):,}"),
             ("rewritten", f"{len(successful_rewrites):,}"),
             ("failed rewrites", f"{failed_rewrites:,}"),
             ("docx written", f"{written:,}"),
@@ -1378,11 +1864,14 @@ def build_class_printouts_cli(
 
     sys.stdout.write(
         "class printout workflow complete\n"
-        f"  source_dir: {parsed.source_dir}\n"
-        f"  parsed_root: {parsed.output_root}\n"
+        f"  source_dir: {source_dir}\n"
+        f"  parsed_root: {parse_output_root}\n"
         f"  rewrite_root: {rewrite_output_root}\n"
         f"  print_root: {print_output_root}\n"
-        f"  parsed_sources: {len(parsed.bundles)}\n"
+        f"  vocabulary_source: {vocabulary_source.kind} {vocabulary_source.path}\n"
+        f"  ledger: {ledger_path}\n"
+        f"  parsed_sources: {len(parsed_bundles)}\n"
+        f"  skipped_sources: {len(skipped_sources) + len(parser_skipped_sources)}\n"
         f"  rewritten: {len(successful_rewrites)}\n"
         f"  failed_rewrites: {failed_rewrites}\n"
         f"  docx_written: {written}\n"
