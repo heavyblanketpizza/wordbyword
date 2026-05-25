@@ -13,6 +13,11 @@ REQUIRED_GUI_KEYS = {
     "language.system",
     "language.english",
     "language.korean",
+    "theme.label",
+    "theme.standard",
+    "theme.neobrutalist",
+    "appearance.text_size_label",
+    "appearance.text_size_value_suffix",
     "panel.end_to_end_flow",
     "panel.pipeline_stages",
     "panel.next_action",
@@ -29,7 +34,9 @@ REQUIRED_GUI_KEYS = {
     "readiness.dictionary.ready.label",
     "readiness.dictionary.ready.next",
     "button.refresh_status",
+    "run.job_blocked",
     "run.no_artifacts",
+    "run.settings_blocked",
 }
 
 

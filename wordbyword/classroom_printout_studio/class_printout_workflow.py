@@ -27,6 +27,7 @@ from wordbyword.classroom_printout_studio.source_parsing.materials import (
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
 from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade, target_profile_for_grade
+from wordbyword.application.workspace import RewriteVocabularySource
 
 CLASS_PRINTOUT_LEDGER_FILENAME = ".wordbyword-class-printout-ledger.json"
 CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION = "wordbyword.class_printout_workflow.v1"
@@ -46,13 +47,6 @@ PrintClassMaterial = Callable[..., object]
 
 class ClassPrintoutWorkflowError(RuntimeError):
     """Raised when class-printout workflow state is invalid."""
-
-
-@dataclass(frozen=True)
-class RewriteVocabularySource:
-    path: Path
-    kind: str
-    sha256: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +119,7 @@ def build_class_printouts_workflow(
         discovered_sources,
         ledger=ledger,
         force=force_class_printouts,
+        vocabulary_source=vocabulary_source,
         target_grade=resolved_target_grade,
         target_profile=resolved_target_profile,
     )
@@ -162,6 +157,7 @@ def build_class_printouts_workflow(
         parse_pdf=parse_pdf,
         render_dpi=render_dpi,
         paddleocr_vl_settings=paddleocr_vl_settings,
+        target_grade=resolved_target_grade,
         reuse_parsed_cache=not force_class_printouts,
         parse_source_material_func=parse_source_material_func,
         progress=source_material_progress,
@@ -331,6 +327,23 @@ def class_printout_ledger_path(parse_output_root: Path) -> Path:
     return parse_output_root / CLASS_PRINTOUT_LEDGER_FILENAME
 
 
+def class_printout_ledger_entry_key(
+    *,
+    target_grade: str,
+    source_sha256: str,
+    parser_settings_signature: str,
+    vocabulary_source_sha256: str,
+) -> str:
+    return "|".join(
+        (
+            target_grade,
+            source_sha256,
+            parser_settings_signature,
+            vocabulary_source_sha256 or "missing-vocabulary-sha256",
+        )
+    )
+
+
 def load_class_printout_ledger(ledger_path: Path) -> dict[str, Any]:
     if not ledger_path.exists():
         return {"schema_version": CLASS_PRINTOUT_LEDGER_SCHEMA_VERSION, "entries": {}}
@@ -429,9 +442,9 @@ def valid_printed_class_printout_entry(
         return False
     if not isinstance(manifest_printable, Mapping) or manifest_printable.get("status") != "written":
         return False
-    if str(manifest_printable.get("target_grade") or "") not in {"", target_grade}:
+    if str(manifest_printable.get("target_grade") or "") != target_grade:
         return False
-    if str(manifest_printable.get("target_profile") or "") not in {"", target_profile}:
+    if str(manifest_printable.get("target_profile") or "") != target_profile:
         return False
     return True
 
@@ -441,6 +454,7 @@ def filter_new_class_printout_sources(
     *,
     ledger: Mapping[str, Any],
     force: bool,
+    vocabulary_source: RewriteVocabularySource,
     target_grade: str,
     target_profile: str,
 ) -> tuple[list[BuildClassPrintoutSource], list[dict[str, object]]]:
@@ -450,8 +464,14 @@ def filter_new_class_printout_sources(
     new_sources: list[BuildClassPrintoutSource] = []
     skipped: list[dict[str, object]] = []
     for source in sources:
+        entry_key = class_printout_ledger_entry_key(
+            target_grade=target_grade,
+            source_sha256=source.sha256,
+            parser_settings_signature=source.parser_settings_signature,
+            vocabulary_source_sha256=vocabulary_source.sha256,
+        )
         if not force and valid_printed_class_printout_entry(
-            entries.get(source.sha256),
+            entries.get(entry_key),
             source_sha256=source.sha256,
             target_grade=target_grade,
             target_profile=target_profile,
@@ -485,7 +505,12 @@ def fail_on_duplicate_new_source_bytes(sources: Sequence[BuildClassPrintoutSourc
     raise ClassPrintoutWorkflowError("\n".join(lines))
 
 
-def reusable_parsed_bundle(source: BuildClassPrintoutSource, *, parse_output_root: Path) -> SourceMaterialBundle | None:
+def reusable_parsed_bundle(
+    source: BuildClassPrintoutSource,
+    *,
+    parse_output_root: Path,
+    target_grade: str,
+) -> SourceMaterialBundle | None:
     output_dir = parse_output_root / source.source_id
     manifest_path = output_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -497,6 +522,8 @@ def reusable_parsed_bundle(source: BuildClassPrintoutSource, *, parse_output_roo
     manifest_source = manifest.get("source")
     manifest_parser = manifest.get("parser")
     files = manifest.get("files")
+    if str(manifest.get("target_grade") or "") != target_grade:
+        return None
     if not isinstance(manifest_source, Mapping) or manifest_source.get("sha256") != source.sha256:
         return None
     if not isinstance(manifest_parser, Mapping):
@@ -529,13 +556,18 @@ def parse_or_reuse_class_printout_sources(
     parse_pdf: bool,
     render_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
+    target_grade: str,
     reuse_parsed_cache: bool,
     parse_source_material_func: ParseSourceMaterial,
     progress: SourceMaterialProgressCallback | None,
 ) -> list[SourceMaterialBundle]:
     bundles: list[SourceMaterialBundle] = []
     for index, source in enumerate(sources, start=1):
-        reusable = reusable_parsed_bundle(source, parse_output_root=parse_output_root) if reuse_parsed_cache else None
+        reusable = (
+            reusable_parsed_bundle(source, parse_output_root=parse_output_root, target_grade=target_grade)
+            if reuse_parsed_cache
+            else None
+        )
         if reusable is not None:
             bundles.append(reusable)
             continue
@@ -547,6 +579,7 @@ def parse_or_reuse_class_printout_sources(
                 parse_pdf=parse_pdf,
                 render_dpi=render_dpi,
                 paddleocr_vl_settings=paddleocr_vl_settings,
+                target_grade=target_grade,
                 progress=progress,
                 source_index=index,
                 total_sources=len(sources),
@@ -603,9 +636,16 @@ def update_class_printout_ledger_entry(
     print_output_dir = Path(getattr(print_output, "output_dir", "")) if print_output is not None else None
     printable_manifest = print_output_dir / "manifest.json" if print_output_dir is not None else None
     printable_docx = print_output_dir / "material.docx" if print_output_dir is not None else None
-    entries[source.sha256] = {
+    entry_key = class_printout_ledger_entry_key(
+        target_grade=target_grade,
+        source_sha256=source.sha256,
+        parser_settings_signature=source.parser_settings_signature,
+        vocabulary_source_sha256=vocabulary_source.sha256,
+    )
+    entries[entry_key] = {
         "status": status,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "target_grade": target_grade,
         "source": {
             "path": str(source.path),
             "name": source.path.name,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from pathlib import Path
 
 from wordbyword.after_class_reports import AfterClassReportError, generate_after_class_reading_report
 from wordbyword.class_archive.archive import (
@@ -14,9 +13,20 @@ from wordbyword.class_archive.usage_signals import UsageSignalBuildError, build_
 from wordbyword.classroom_printout_studio import class_printout_workflow
 from wordbyword.classroom_printout_studio.class_printing.printable import PrintableMaterialError
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteError
-from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialParseError, sha256_file
+from wordbyword.classroom_printout_studio.source_parsing.materials import SourceMaterialParseError
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.cli.app import discover_paddleocr_vl_sidecar_env
+from wordbyword.application.commands import (
+    AfterClassReportRequest,
+    ArchiveDuplicatesRequest,
+    ArchiveRenameRequest,
+    ClassPrintoutsRequest,
+    CommandRequest,
+    DictionaryBuildRequest,
+    LiveLexiconRequest,
+    UsageSignalsRequest,
+    build_gui_request,
+)
+from wordbyword.application.workspace import LazyOllamaCompletionClient, discover_paddleocr_vl_sidecar_env
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.llm import (
     LLMConfigurationError,
@@ -30,7 +40,7 @@ from wordbyword.dictionary_build.resumable import (
     UnresolvedGeneratedExampleFailures,
     build_resumable_dictionary,
 )
-from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade, target_profile_for_grade
+from wordbyword.grade_profiles import target_profile_for_grade
 from wordbyword.gui.job_events import (
     GuiJobEvent,
     after_class_report_event,
@@ -50,74 +60,42 @@ from wordbyword.gui.job_events import (
 EmitEvent = Callable[[GuiJobEvent], None]
 
 
-class LazyOllamaCompletionClient:
-    def __init__(
-        self,
-        *,
-        model: str,
-        base_url: str | None,
-        timeout_seconds: float,
-        max_output_tokens: int,
-    ) -> None:
-        self.model = model
-        self.base_url = base_url
-        self.timeout_seconds = timeout_seconds
-        self.max_output_tokens = max_output_tokens
-        self.client: SupportsCompletion | None = None
-
-    def complete(self, *args: object, **kwargs: object) -> object:
-        if self.client is None:
-            self.client = ollama_client(
-                model=self.model,
-                base_url=self.base_url,
-                timeout_seconds=self.timeout_seconds,
-                max_output_tokens=self.max_output_tokens,
-            )
-        return self.client.complete(*args, **kwargs)  # type: ignore[arg-type]
-
-
 def run_workflow(workflow: str, values: Mapping[str, object], emit: EmitEvent) -> GuiJobEvent:
-    if workflow == "dictionary_build":
-        return run_dictionary(values, emit, target_checkpoint="15")
-    if workflow == "dictionary_prep":
-        return run_dictionary(values, emit, target_checkpoint="09")
-    if workflow == "class_printouts":
-        return run_class_printouts(values, emit)
-    if workflow == "archive_rename_preview":
-        return run_archive_rename(values, emit, apply=False)
-    if workflow == "archive_rename_apply":
-        return run_archive_rename(values, emit, apply=True)
-    if workflow == "archive_duplicates_preview":
-        return run_archive_duplicates(values, emit, apply=False)
-    if workflow == "archive_duplicates_apply":
-        return run_archive_duplicates(values, emit, apply=True)
-    if workflow == "usage_signals":
-        return run_usage_signals(values, emit)
-    if workflow == "live_lexicon":
-        return run_live_lexicon(values, emit)
-    if workflow == "after_class_report":
-        return run_after_class_report(values, emit)
-    raise ValueError(f"Unknown GUI workflow: {workflow}")
+    return run_gui_request(build_gui_request(workflow, values), emit)
 
 
-def run_dictionary(values: Mapping[str, object], emit: EmitEvent, *, target_checkpoint: str) -> GuiJobEvent:
+def run_gui_request(request: CommandRequest, emit: EmitEvent) -> GuiJobEvent:
+    if isinstance(request, DictionaryBuildRequest):
+        return run_dictionary(request, emit)
+    if isinstance(request, ClassPrintoutsRequest):
+        return run_class_printouts(request, emit)
+    if isinstance(request, ArchiveRenameRequest):
+        return run_archive_rename(request, emit)
+    if isinstance(request, ArchiveDuplicatesRequest):
+        return run_archive_duplicates(request, emit)
+    if isinstance(request, UsageSignalsRequest):
+        return run_usage_signals(request, emit)
+    if isinstance(request, LiveLexiconRequest):
+        return run_live_lexicon(request, emit)
+    if isinstance(request, AfterClassReportRequest):
+        return run_after_class_report(request, emit)
+    raise ValueError(f"Command is not available in the GUI adapter: {request.command_id}")
+
+
+def run_dictionary(request: DictionaryBuildRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "dictionary"
-    input_dir = _path(values, "dictionary_input_dir")
-    output_dir = _path(values, "dictionary_output_dir")
-    reference_dictionary_path = _path(values, "reference_dictionary_path")
-    model = _text(values, "model")
-    base_url = _optional_text(values, "base_url")
-    emit(event(workflow, "start", f"building dictionary checkpoint {target_checkpoint}"))
+    emit(event(workflow, "start", f"building dictionary checkpoint {request.target_checkpoint}"))
     try:
         result = build_resumable_dictionary(
-            input_dir=input_dir,
-            output_dir=output_dir,
-            reference_dictionary_path=reference_dictionary_path,
-            include_punctuation=_bool(values, "include_punctuation"),
-            include_numbers=_bool(values, "include_numbers"),
-            model=model,
-            base_url=base_url,
-            force=_bool(values, "dictionary_force"),
+            target_grade=request.target_grade,
+            input_dir=request.input_dir,
+            output_dir=request.output_dir,
+            reference_dictionary_path=request.reference_dictionary_path,
+            include_punctuation=request.include_punctuation,
+            include_numbers=request.include_numbers,
+            model=request.model,
+            base_url=request.base_url,
+            force=request.force,
             progress=lambda phase, detail: emit(stage_event(workflow, phase, detail)),
             cleanup_progress=lambda progress: emit(cleanup_event(workflow, progress, label="example cleanup")),
             dictionary_cleanup_progress=lambda progress: emit(cleanup_event(workflow, progress, label="dictionary cleanup")),
@@ -125,7 +103,7 @@ def run_dictionary(values: Mapping[str, object], emit: EmitEvent, *, target_chec
             generated_meaning_progress=lambda progress: emit(cleanup_event(workflow, progress, label="generated meanings")),
             artifact_callback=lambda stage, entries: emit(artifact_event(workflow, stage, entries)),
             checkpoint_status=lambda status: emit(checkpoint_event(workflow, status)),
-            target_checkpoint=target_checkpoint,
+            target_checkpoint=request.target_checkpoint,
         )
     except UnresolvedGeneratedExampleFailures as error:
         failures = str(error.path)
@@ -135,36 +113,34 @@ def run_dictionary(values: Mapping[str, object], emit: EmitEvent, *, target_chec
         ) from error
     artifacts = {
         "output_dir": str(result.pipeline_result.output_dir),
-        "final_dictionary": str(artifact_path(output_dir, ArtifactId.FINAL_DICTIONARY)),
+        "final_dictionary": str(artifact_path(request.output_dir, ArtifactId.FINAL_DICTIONARY)),
     }
     detail = (
-        f"{'Full dictionary' if target_checkpoint == '15' else 'Dictionary prep'} complete: "
+        f"{'Full dictionary' if request.target_checkpoint == '15' else 'Dictionary prep'} complete: "
         f"{result.pipeline_result.vocabulary_terms:,} vocabulary term(s)"
     )
     return result_event(workflow, detail, artifacts)
 
 
-def run_class_printouts(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEvent:
+def run_class_printouts(request: ClassPrintoutsRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "class_printouts"
     emit(event(workflow, "start", "building class printouts"))
-    parse_pdf = not _bool(values, "skip_pdf_parse")
-    target_grade = _target_grade(values)
     result = class_printout_workflow.build_class_printouts_workflow(
-        source_dir=_path(values, "class_source_dir"),
-        parse_output_root=_path(values, "source_output_root"),
-        parse_pdf=parse_pdf,
-        render_dpi=_int(values, "pdf_render_dpi", 144),
-        paddleocr_vl_settings=_paddleocr_settings(parse_pdf),
-        rewrite_output_root=_path(values, "rewrite_output_root"),
-        vocabulary_source=_rewrite_vocabulary_source(values),
-        print_output_root=_path(values, "print_output_root"),
-        target_grade=target_grade,
-        target_profile=target_profile_for_grade(target_grade),
-        model=_text(values, "model"),
-        base_url=_optional_text(values, "base_url"),
-        font_path=_optional_path(values, "print_font_path"),
-        body_font_size=_optional_int(values, "print_body_font_size"),
-        force_class_printouts=_bool(values, "force_class_printouts"),
+        source_dir=request.source_dir,
+        parse_output_root=request.parse_output_root,
+        parse_pdf=request.parse_pdf,
+        render_dpi=request.render_dpi,
+        paddleocr_vl_settings=request.paddleocr_vl_settings or _paddleocr_settings(request.parse_pdf),
+        rewrite_output_root=request.rewrite_output_root,
+        vocabulary_source=request.vocabulary_source,
+        print_output_root=request.print_output_root,
+        target_grade=request.target_grade,
+        target_profile=target_profile_for_grade(request.target_grade),
+        model=request.model,
+        base_url=request.base_url,
+        font_path=request.font_path,
+        body_font_size=request.body_font_size,
+        force_class_printouts=request.force_class_printouts,
         model_unload_callback=lambda client: _safe_unload(client, emit, workflow),
         source_material_progress=lambda progress: emit(source_material_event(workflow, progress)),
         source_rewrite_progress=lambda progress: emit(source_rewrite_event(workflow, progress)),
@@ -185,49 +161,47 @@ def run_class_printouts(values: Mapping[str, object], emit: EmitEvent) -> GuiJob
     return result_event(workflow, detail, artifacts)
 
 
-def run_archive_rename(values: Mapping[str, object], emit: EmitEvent, *, apply: bool) -> GuiJobEvent:
+def run_archive_rename(request: ArchiveRenameRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
-    model = _text(values, "model")
     client = ollama_client(
-        model=model,
-        base_url=_optional_text(values, "base_url"),
+        model=request.model,
+        base_url=request.base_url,
         timeout_seconds=300.0,
         max_output_tokens=1024,
     )
     try:
         result = rename_class_session_archive(
-            _path(values, "archive_root"),
+            request.archive_root,
             client=client,
-            model=model,
-            apply=apply,
+            model=request.model,
+            apply=request.apply,
             progress=lambda detail: emit(phase_detail_event(workflow, "rename", detail)),
         )
     finally:
         _safe_unload(client, emit, workflow)
     artifacts = {"archive_root": str(result.archive_root), "ledger": str(result.ledger_path)}
-    detail = f"rename {'applied' if apply else 'preview'}: {result.planned_count} planned, {result.renamed_count} renamed"
+    detail = f"rename {'applied' if request.apply else 'preview'}: {result.planned_count} planned, {result.renamed_count} renamed"
     return result_event(workflow, detail, artifacts)
 
 
-def run_archive_duplicates(values: Mapping[str, object], emit: EmitEvent, *, apply: bool) -> GuiJobEvent:
+def run_archive_duplicates(request: ArchiveDuplicatesRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
-    include_near_duplicates = _bool(values, "include_near_duplicates")
     lazy_client: LazyOllamaCompletionClient | None = None
-    if include_near_duplicates:
+    if request.include_near_duplicates:
         lazy_client = LazyOllamaCompletionClient(
-            model=_text(values, "model"),
-            base_url=_optional_text(values, "base_url"),
+            model=request.model,
+            base_url=request.base_url,
             timeout_seconds=300.0,
             max_output_tokens=1024,
         )
     try:
         emit(phase_detail_event(workflow, "scan", "scanning archive duplicates"))
         result = resolve_archive_duplicates(
-            _path(values, "archive_root"),
-            apply=apply,
-            include_near_duplicates=include_near_duplicates,
+            request.archive_root,
+            apply=request.apply,
+            include_near_duplicates=request.include_near_duplicates,
             near_duplicate_client=lazy_client,
-            near_duplicate_model=_text(values, "model") if include_near_duplicates else None,
+            near_duplicate_model=request.model if request.include_near_duplicates else None,
         )
     finally:
         if lazy_client is not None and lazy_client.client is not None:
@@ -240,23 +214,23 @@ def run_archive_duplicates(values: Mapping[str, object], emit: EmitEvent, *, app
     return result_event(workflow, detail, artifacts)
 
 
-def run_usage_signals(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEvent:
+def run_usage_signals(request: UsageSignalsRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
     lazy_client = LazyOllamaCompletionClient(
-        model=_text(values, "model"),
-        base_url=_optional_text(values, "base_url"),
+        model=request.model,
+        base_url=request.base_url,
         timeout_seconds=300.0,
         max_output_tokens=1024,
     )
     try:
         result = build_usage_signals(
-            archive_root=_path(values, "archive_root"),
-            output_root=_path(values, "usage_signal_output_root"),
-            target_grade=_target_grade(values),
-            include_punctuation=_bool(values, "include_punctuation"),
-            include_numbers=_bool(values, "include_numbers"),
+            archive_root=request.archive_root,
+            output_root=request.output_root,
+            target_grade=request.target_grade,
+            include_punctuation=request.include_punctuation,
+            include_numbers=request.include_numbers,
             near_duplicate_client=lazy_client,
-            near_duplicate_model=_text(values, "model"),
+            near_duplicate_model=request.model,
             progress=lambda phase, detail: emit(phase_detail_event(workflow, phase, detail)),
             artifact_callback=lambda stage, entries: emit(artifact_event(workflow, stage, entries)),
         )
@@ -268,15 +242,16 @@ def run_usage_signals(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEv
     return result_event(workflow, detail, artifacts)
 
 
-def run_live_lexicon(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEvent:
+def run_live_lexicon(request: LiveLexiconRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
     result = update_live_lexicon(
-        canonical_dictionary_path=_path(values, "canonical_dictionary_path"),
-        usage_candidates_path=_path(values, "usage_candidates_path"),
-        usage_summary_path=_optional_path(values, "usage_summary_path"),
-        live_lexicon_path=_path(values, "live_lexicon_path"),
-        supplemental_lexicon_path=_path(values, "supplemental_lexicon_path"),
-        unmatched_usage_output_path=_path(values, "unmatched_usage_output_path"),
+        target_grade=request.target_grade,
+        canonical_dictionary_path=request.canonical_dictionary_path,
+        usage_candidates_path=request.usage_candidates_path,
+        usage_summary_path=request.usage_summary_path,
+        live_lexicon_path=request.live_lexicon_path,
+        supplemental_lexicon_path=request.supplemental_lexicon_path,
+        unmatched_usage_output_path=request.unmatched_usage_output_path,
         progress=lambda phase, detail: emit(phase_detail_event(workflow, phase, detail)),
     )
     artifacts = {
@@ -288,22 +263,22 @@ def run_live_lexicon(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEve
     return result_event(workflow, detail, artifacts)
 
 
-def run_after_class_report(values: Mapping[str, object], emit: EmitEvent) -> GuiJobEvent:
+def run_after_class_report(request: AfterClassReportRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "reports"
-    model = _text(values, "model")
     client = ollama_client(
-        model=model,
-        base_url=_optional_text(values, "base_url"),
+        model=request.model,
+        base_url=request.base_url,
         timeout_seconds=1200.0,
         max_output_tokens=32768,
     )
     try:
         outputs = generate_after_class_reading_report(
-            _path(values, "after_class_printout_path"),
-            output_root=_path(values, "after_class_report_output_root"),
+            request.printout_path,
+            output_root=request.output_root,
             client=client,
-            model=model,
-            font_path=_optional_path(values, "after_class_report_font_path"),
+            model=request.model,
+            target_grade=request.target_grade,
+            font_path=request.font_path,
             progress=lambda progress: emit(after_class_report_event(workflow, progress)),
         )
     finally:
@@ -347,29 +322,6 @@ def run_with_error_event(workflow: str, values: Mapping[str, object], emit: Emit
         return error_event(workflow, "workflow failed", error)
 
 
-def _rewrite_vocabulary_source(values: Mapping[str, object]) -> class_printout_workflow.RewriteVocabularySource:
-    explicit = _optional_path(values, "rewrite_dictionary_path")
-    if explicit is not None:
-        return class_printout_workflow.RewriteVocabularySource(
-            path=explicit,
-            kind="explicit",
-            sha256=_sha256_if_present(explicit),
-        )
-    live_lexicon_path = _path(values, "live_lexicon_path")
-    if live_lexicon_path.is_file():
-        return class_printout_workflow.RewriteVocabularySource(
-            path=live_lexicon_path,
-            kind="live_lexicon",
-            sha256=_sha256_if_present(live_lexicon_path),
-        )
-    dictionary_path = artifact_path(_path(values, "dictionary_output_dir"), ArtifactId.FINAL_DICTIONARY)
-    return class_printout_workflow.RewriteVocabularySource(
-        path=dictionary_path,
-        kind="dictionary_seed",
-        sha256=_sha256_if_present(dictionary_path),
-    )
-
-
 def _paddleocr_settings(parse_pdf: bool) -> PaddleOCRVLSettings | None:
     if not parse_pdf:
         return None
@@ -384,55 +336,3 @@ def _safe_unload(client: SupportsCompletion, emit: EmitEvent, workflow: str) -> 
         unload_model_if_supported(client)
     except Exception as error:  # pragma: no cover - defensive cleanup path
         emit(phase_detail_event(workflow, "warning", f"could not unload Ollama model: {error}"))
-
-
-def _sha256_if_present(path: Path) -> str:
-    return sha256_file(path) if path.is_file() else ""
-
-
-def _path(values: Mapping[str, object], key: str) -> Path:
-    text = _text(values, key)
-    return Path(text)
-
-
-def _optional_path(values: Mapping[str, object], key: str) -> Path | None:
-    text = _optional_text(values, key)
-    return None if text is None else Path(text)
-
-
-def _text(values: Mapping[str, object], key: str) -> str:
-    value = values.get(key)
-    return "" if value is None else str(value)
-
-
-def _optional_text(values: Mapping[str, object], key: str) -> str | None:
-    text = _text(values, key).strip()
-    return text or None
-
-
-def _target_grade(values: Mapping[str, object]) -> str:
-    return normalize_target_grade(_optional_text(values, "target_grade") or DEFAULT_TARGET_GRADE)
-
-
-def _bool(values: Mapping[str, object], key: str) -> bool:
-    value = values.get(key)
-    if isinstance(value, str):
-        return value.lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-def _int(values: Mapping[str, object], key: str, default: int) -> int:
-    try:
-        return int(values.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _optional_int(values: Mapping[str, object], key: str) -> int | None:
-    value = _optional_text(values, key)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None

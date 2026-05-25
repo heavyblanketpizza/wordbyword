@@ -9,6 +9,7 @@ from kiwipiepy import Kiwi
 
 from wordbyword.dictionary_build.canonical_keys import join_keys, ordered_unique, sentence_candidate_keys
 from wordbyword.dictionary_build.candidates import normalized_learning_signal_score
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_spec
 from wordbyword.dictionary_build.llm import (
     ChatMessage,
     LLMRequestError,
@@ -91,27 +92,7 @@ IndexedCleanupRow = tuple[str, Mapping[str, object]]
 
 
 def cleaned_example_sentence_fields() -> list[str]:
-    return [
-        "document",
-        "page",
-        "sentence_index",
-        "source_sentence",
-        "cleaned_sentence",
-        "cleanup_action",
-        "cleanup_reason",
-        "model_confidence",
-        "source_similarity",
-        "source_quality_score",
-        "source_matched_canonical_key_count",
-        "source_covered_canonical_key_count",
-        "source_covered_canonical_keys",
-        "source_matched_canonical_keys",
-        "cleaned_quality_score",
-        "cleaned_matched_canonical_key_count",
-        "cleaned_covered_canonical_key_count",
-        "cleaned_covered_canonical_keys",
-        "cleaned_matched_canonical_keys",
-    ]
+    return list(artifact_spec(ArtifactId.CLEANED_EXAMPLE_SENTENCES).csv_header)
 
 
 def clean_example_sentence(

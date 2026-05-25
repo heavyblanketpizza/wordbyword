@@ -32,7 +32,9 @@ from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationError
 from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.execution_guard import acquire_workspace_command_guard
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import SourceRewriteProgress
+from wordbyword.classroom_printout_studio.class_printout_workflow import class_printout_ledger_entry_key
 from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
     DEFAULT_SOURCE_MATERIAL_ROOT,
@@ -51,7 +53,7 @@ class ParserDefaultsTest(unittest.TestCase):
         args = build_parser().parse_args([])
 
         self.assertEqual(args.input, DEFAULT_INPUT_DIR)
-        self.assertEqual(args.input, Path("build-dictionary/original"))
+        self.assertEqual(args.input, Path("build-dictionary/original/grade1"))
         self.assertFalse(args.build_dictionary)
         self.assertFalse(args.prep_dictionary)
         self.assertEqual(args.reference_dictionary, DEFAULT_REFERENCE_DICTIONARY_PATH)
@@ -138,7 +140,7 @@ class ParserDefaultsTest(unittest.TestCase):
 
     def test_yes_accepts_dictionary_source_duplicate_resolver(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["--resolve-dictionary-source-duplicates", "--yes"])
+        args = parser.parse_args(["--resolve-dictionary-source-duplicates", "--yes", "--target-grade", "grade1"])
 
         validate_args(parser, args)
 
@@ -154,6 +156,72 @@ class ParserDefaultsTest(unittest.TestCase):
 
         self.assertEqual(error.exception.code, 2)
         self.assertIn("choose an explicit command", stderr.getvalue())
+
+    def test_grade_scoped_commands_require_explicit_target_grade(self) -> None:
+        commands = [
+            ["--prep-dictionary"],
+            ["--build-dictionary"],
+            ["--clean-example-sentences"],
+            ["--parse-source-material", "lesson.txt"],
+            ["--parse-source-materials", "sources"],
+            ["--rewrite-vocabulary-guided-source-material", "parsed/lesson"],
+            ["--print-class-material", "rewritten/lesson"],
+            ["--build-class-printouts", "sources"],
+            ["--rename-dictionary-source-archive"],
+            ["--resolve-dictionary-source-duplicates"],
+            ["--rename-class-session-archive"],
+            ["--resolve-archive-duplicates"],
+            ["--build-usage-signals"],
+            ["--update-live-lexicon"],
+            ["--generate-after-class-reading-report", "2026-05-10_grade1-reading.docx"],
+        ]
+
+        for command in commands:
+            with self.subTest(command=command):
+                parser = build_parser()
+                args = parser.parse_args(command)
+                stderr = io.StringIO()
+
+                with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+                    validate_args(parser, args)
+
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn("--target-grade is required", stderr.getvalue())
+
+    def test_grade_scoped_explicit_paths_reject_other_grade_tokens(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--build-usage-signals",
+                "--target-grade",
+                "grade7",
+                "--usage-signal-input-root",
+                "wbw-vocabulary-intelligence/class-session-archive/grade1",
+            ]
+        )
+        stderr = io.StringIO()
+
+        with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as error:
+            validate_args(parser, args)
+
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("different grade token", stderr.getvalue())
+
+    def test_dictionary_source_duplicate_resolver_rejects_managed_files_from_another_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace) / "original"
+            root.mkdir()
+            (root / "textbook_government_grade1_korean_2022_term1_reading-basics.txt").write_text(
+                "초등학교 1학년 자료입니다.",
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+
+            with patch("sys.stderr", stderr):
+                exit_code = main(["--resolve-dictionary-source-duplicates", str(root), "--target-grade", "grade7"])
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("outside target grade grade7", stderr.getvalue())
 
     def test_build_dictionary_rejects_incompatible_commands(self) -> None:
         incompatible_args = [
@@ -363,15 +431,27 @@ class ParserDefaultsTest(unittest.TestCase):
         )
         self.assertEqual(
             live_kwargs["live_lexicon_path"],
-            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7-live-lexicon-canonical.jsonl"),
+            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7/canonical.jsonl"),
         )
         self.assertEqual(
             live_kwargs["supplemental_lexicon_path"],
-            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7-live-lexicon-supplemental.jsonl"),
+            Path("wbw-vocabulary-intelligence/live-grade-lexicon/grade7/supplemental.jsonl"),
         )
         self.assertEqual(
             live_kwargs["unmatched_usage_output_path"],
             Path("wbw-vocabulary-intelligence/usage-signal-build/grade7/10_unmatched_usage_candidates.jsonl"),
+        )
+
+    def test_class_printout_ledger_key_includes_target_grade(self) -> None:
+        base = {
+            "source_sha256": "source",
+            "parser_settings_signature": "parser",
+            "vocabulary_source_sha256": "dictionary",
+        }
+
+        self.assertNotEqual(
+            class_printout_ledger_entry_key(target_grade="grade1", **base),
+            class_printout_ledger_entry_key(target_grade="grade7", **base),
         )
 
     def test_removed_pdf_parser_option_is_rejected(self) -> None:
@@ -508,7 +588,9 @@ class ParserDefaultsTest(unittest.TestCase):
             patch("sys.stdout", io.StringIO()),
             patch("wordbyword.cli.app.parse_source_materials", side_effect=KeyboardInterrupt),
         ):
-            exit_code = main(["--parse-source-materials", "classroom-printout-studio/class-source-materials"])
+            exit_code = main(
+                ["--parse-source-materials", "classroom-printout-studio/class-source-materials", "--target-grade", "grade1"]
+            )
 
         self.assertEqual(exit_code, 130)
         self.assertIn("interrupted", stderr.getvalue())
@@ -555,6 +637,8 @@ class ParserDefaultsTest(unittest.TestCase):
 
             clients = [object(), object()]
             args = [
+                "--target-grade",
+                "grade1",
                 "--build-class-printouts",
                 str(source_dir),
                 "--source-output-root",
@@ -608,8 +692,11 @@ class ParserDefaultsTest(unittest.TestCase):
                 [13, 13],
             )
             ledger = json.loads((parse_root / ".wordbyword-class-printout-ledger.json").read_text(encoding="utf-8"))
-            self.assertEqual(set(ledger["entries"]), set(source_hashes.values()))
-            self.assertEqual(ledger["entries"][source_hashes["lesson-a"]]["status"], "printed")
+            self.assertEqual(len(ledger["entries"]), 2)
+            lesson_a_entry = next(
+                entry for entry in ledger["entries"].values() if entry["source"]["source_id"] == "lesson-a"
+            )
+            self.assertEqual(lesson_a_entry["status"], "printed")
 
             with (
                 patch("sys.stdout", io.StringIO()),
@@ -657,6 +744,8 @@ class ParserDefaultsTest(unittest.TestCase):
             ):
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--build-class-printouts",
                         str(source_dir),
                         "--source-output-root",
@@ -693,6 +782,8 @@ class ParserDefaultsTest(unittest.TestCase):
             ):
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--build-class-printouts",
                         str(source_dir),
                         "--source-output-root",
@@ -722,6 +813,8 @@ class ParserDefaultsTest(unittest.TestCase):
             source_path = write_class_printout_source(source_dir, "lesson.txt", b"lesson")
             source_sha = sha256_bytes(b"lesson")
             args = [
+                "--target-grade",
+                "grade1",
                 "--build-class-printouts",
                 str(source_dir),
                 "--source-output-root",
@@ -787,6 +880,8 @@ class ParserDefaultsTest(unittest.TestCase):
             write_class_printout_source(source_dir, "lesson.txt", b"lesson")
             source_sha = sha256_bytes(b"lesson")
             args = [
+                "--target-grade",
+                "grade1",
                 "--build-class-printouts",
                 str(source_dir),
                 "--source-output-root",
@@ -867,6 +962,8 @@ class ParserDefaultsTest(unittest.TestCase):
         ):
             exit_code = main(
                 [
+                    "--target-grade",
+                    "grade1",
                     "--rewrite-vocabulary-guided-source-material",
                     "/tmp/parsed/lesson",
                     "--rewrite-dictionary",
@@ -909,7 +1006,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch("wordbyword.cli.app.ollama_client", return_value=object()),
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):
-            exit_code = main(["--print-class-material", "/tmp/rewritten/lesson"])
+            exit_code = main(["--target-grade", "grade1", "--print-class-material", "/tmp/rewritten/lesson"])
 
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
@@ -943,7 +1040,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch("wordbyword.cli.app.ollama_client", return_value=object()),
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):
-            exit_code = main(["--print-class-materials", "/tmp/rewritten"])
+            exit_code = main(["--target-grade", "grade1", "--print-class-materials", "/tmp/rewritten"])
 
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
@@ -996,6 +1093,8 @@ class ParserDefaultsTest(unittest.TestCase):
             ):
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--build-class-printouts",
                         str(source_dir),
                         "--source-output-root",
@@ -1059,7 +1158,7 @@ class ParserDefaultsTest(unittest.TestCase):
                 patch("wordbyword.cli.app.ollama_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
-                exit_code = main(["--generate-after-class-reading-report", str(source)])
+                exit_code = main(["--target-grade", "grade1", "--generate-after-class-reading-report", str(source)])
 
         self.assertEqual(exit_code, 0)
         rendered = stdout.getvalue()
@@ -1101,6 +1200,7 @@ def write_parsed_class_printout_bundle(
     (output_dir / "quality_report.json").write_text("{}\n", encoding="utf-8")
     manifest = {
         "schema_version": "wordbyword.source_material_workspace.v1",
+        "target_grade": "grade1",
         "source": {
             "id": source_id,
             "path": str(source_path),
@@ -1178,8 +1278,8 @@ def write_printed_class_printout_bundle(
     (output_dir / "material.docx").write_bytes(b"docx")
     manifest = {
         "schema_version": "wordbyword.printable_material.v1",
-        "source": {"id": source_id, "filename": f"{source_id}.txt", "sha256": source_sha256},
-        "printable": {"status": "written"},
+        "source": {"id": source_id, "target_grade": "grade1", "filename": f"{source_id}.txt", "sha256": source_sha256},
+        "printable": {"status": "written", "target_grade": "grade1", "target_profile": "grade1-ko"},
         "files": {"docx": "material.docx"},
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1211,6 +1311,8 @@ class BuildDictionaryCliTest(unittest.TestCase):
             ):
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--build-dictionary",
                         "--force",
                         "--input",
@@ -1240,7 +1342,55 @@ class BuildDictionaryCliTest(unittest.TestCase):
             self.assertEqual(kwargs["base_url"], "http://localhost:11434")
             self.assertTrue(kwargs["force"])
             self.assertEqual(kwargs["target_checkpoint"], "15")
+            self.assertEqual(kwargs["target_grade"], "grade1")
             self.assertIsNotNone(kwargs["checkpoint_status"])
+
+    def test_main_with_build_dictionary_fails_when_workspace_guard_is_held(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            stderr = io.StringIO()
+
+            with (
+                acquire_workspace_command_guard("external rewrite", workspace_root=root),
+                patch("wordbyword.cli.app.Path.cwd", return_value=root),
+                patch("sys.stderr", stderr),
+                patch("wordbyword.cli.app.build_resumable_dictionary") as build_dictionary,
+            ):
+                exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("another command is already running", stderr.getvalue())
+            self.assertIn("external rewrite", stderr.getvalue())
+            build_dictionary.assert_not_called()
+
+    def test_show_distribution_is_not_blocked_by_workspace_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            jsonl_path = root / "dictionary.jsonl"
+
+            with (
+                acquire_workspace_command_guard("external rewrite", workspace_root=root),
+                patch("wordbyword.cli.app.Path.cwd", return_value=root),
+                patch("wordbyword.cli.app.show_distribution", return_value=0) as show_distribution_command,
+            ):
+                exit_code = main(["--show-distribution", str(jsonl_path)])
+
+            self.assertEqual(exit_code, 0)
+            show_distribution_command.assert_called_once()
+
+    def test_workspace_guard_releases_when_cli_command_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+
+            with (
+                patch("wordbyword.cli.app.Path.cwd", return_value=root),
+                patch("wordbyword.cli.app.run_immediate_command", side_effect=RuntimeError("boom")),
+            ):
+                with self.assertRaises(RuntimeError):
+                    main(["--target-grade", "grade1", "--build-dictionary"])
+
+            with acquire_workspace_command_guard("later command", workspace_root=root):
+                pass
 
     def test_main_with_prep_dictionary_uses_resumable_builder_to_stage_nine(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -1258,6 +1408,8 @@ class BuildDictionaryCliTest(unittest.TestCase):
             ):
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--prep-dictionary",
                         "--force",
                         "--input",
@@ -1284,6 +1436,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             self.assertEqual(kwargs["base_url"], "http://localhost:11434")
             self.assertTrue(kwargs["force"])
             self.assertEqual(kwargs["target_checkpoint"], "09")
+            self.assertEqual(kwargs["target_grade"], "grade1")
 
     def test_build_dictionary_reports_resumable_builder_failure(self) -> None:
         stderr = io.StringIO()
@@ -1291,7 +1444,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             "wordbyword.cli.app.build_resumable_dictionary",
             side_effect=ValueError("bad saved artifact"),
         ):
-            exit_code = main(["--build-dictionary"])
+            exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
 
         self.assertEqual(exit_code, 1)
         self.assertIn("bad saved artifact", stderr.getvalue())
@@ -1302,7 +1455,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             "wordbyword.cli.app.build_resumable_dictionary",
             side_effect=wordbyword_cli_unresolved_generated_example_failures(),
         ):
-            exit_code = main(["--build-dictionary"])
+            exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
 
         self.assertEqual(exit_code, 1)
         self.assertIn("1 unresolved generated-example failure", stderr.getvalue())
@@ -1317,6 +1470,8 @@ class DictionarySourceArchiveCliTest(unittest.TestCase):
         ) as rename_cli:
             exit_code = main(
                 [
+                    "--target-grade",
+                    "grade1",
                     "--rename-dictionary-source-archive",
                     "sources",
                     "--apply-dictionary-source-renames",
@@ -1333,6 +1488,7 @@ class DictionarySourceArchiveCliTest(unittest.TestCase):
             model="gemma4:31b",
             base_url="http://localhost:11434",
             apply=True,
+            target_grade="grade1",
         )
 
     def test_main_routes_dictionary_source_duplicate_resolution(self) -> None:
@@ -1340,10 +1496,10 @@ class DictionarySourceArchiveCliTest(unittest.TestCase):
             "wordbyword.cli.app.resolve_dictionary_source_duplicates_cli",
             return_value=0,
         ) as resolve_cli:
-            exit_code = main(["--resolve-dictionary-source-duplicates", "sources", "--yes"])
+            exit_code = main(["--target-grade", "grade1", "--resolve-dictionary-source-duplicates", "sources", "--yes"])
 
         self.assertEqual(exit_code, 0)
-        resolve_cli.assert_called_once_with(archive_root=Path("sources"), yes=True)
+        resolve_cli.assert_called_once_with(archive_root=Path("sources"), yes=True, target_grade="grade1")
 
 
 def wordbyword_cli_unresolved_generated_example_failures():
@@ -1641,7 +1797,7 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             stdout = io.StringIO()
             with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
-                exit_code = main(["--link-cleaned-examples", "--output", str(output_dir)])
+                exit_code = main(["--target-grade", "grade1", "--link-cleaned-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
@@ -1750,6 +1906,8 @@ class ShowDistributionCliTest(unittest.TestCase):
             with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
                 exit_code = main(
                     [
+                        "--target-grade",
+                        "grade1",
                         "--add-reference-meanings",
                         "--output",
                         str(output_dir),
@@ -1855,7 +2013,7 @@ class ShowDistributionCliTest(unittest.TestCase):
                 "wordbyword.cli.app.ollama_client",
                 return_value=GeneratedMeaningClient(),
             ):
-                exit_code = main(["--generate-missing-meanings", "--output", str(output_dir)])
+                exit_code = main(["--target-grade", "grade1", "--generate-missing-meanings", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
@@ -1880,7 +2038,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir = Path(workspace)
 
             with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
-                exit_code = main(["--generate-missing-examples", "--output", str(output_dir)])
+                exit_code = main(["--target-grade", "grade1", "--generate-missing-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
             recovery.assert_called_once()
@@ -1891,7 +2049,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             output_dir = Path(workspace)
 
             with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
-                exit_code = main(["--retry-generated-examples", "--output", str(output_dir)])
+                exit_code = main(["--target-grade", "grade1", "--retry-generated-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
             recovery.assert_called_once()
@@ -1902,7 +2060,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         stderr = io.StringIO()
         with patch("sys.stderr", stderr):
             with self.assertRaises(SystemExit) as error:
-                main(["--retry-generated-examples", "--generate-missing-examples"])
+                main(["--target-grade", "grade1", "--retry-generated-examples", "--generate-missing-examples"])
 
         self.assertEqual(error.exception.code, 2)
         self.assertIn("--retry-generated-examples cannot be combined", stderr.getvalue())

@@ -10,6 +10,7 @@ from wordbyword.dictionary_build.artifacts import (
     all_output_artifact_ids,
     artifact_filename,
     artifact_path,
+    artifact_spec,
     legacy_output_filenames,
     required_artifact_path,
 )
@@ -39,7 +40,7 @@ def cleanup_previous_outputs(
 
 
 def page_fields() -> list[str]:
-    return ["document", "page", "raw_character_count", "clean_character_count", "text"]
+    return list(artifact_spec(ArtifactId.EXTRACTED_PAGES).csv_header)
 
 
 def page_rows(pages: list[PageText]) -> list[dict[str, object]]:
@@ -66,11 +67,11 @@ def parsed_document_count(pages: list[PageText], documents: list[Path]) -> int:
 
 
 def sentence_fields() -> list[str]:
-    return ["document", "page", "sentence_index", "sentence"]
+    return list(artifact_spec(ArtifactId.SENTENCES).csv_header)
 
 
 def token_fields() -> list[str]:
-    return ["document", "page", "sentence_index", "token_index", "form", "pos", "start", "end", "sentence"]
+    return list(artifact_spec(ArtifactId.TOKENS).csv_header)
 
 
 def write_rows(path: Path, rows: list[dict[str, object]], *, fieldnames: list[str]) -> None:
@@ -173,7 +174,7 @@ def write_vocabulary(path: Path, vocabulary: dict[tuple[str, str], CountEntry]) 
         }
         for (term, pos), entry in sorted(vocabulary.items(), key=lambda item: (-item[1].count, item[0][0], item[0][1]))
     ]
-    write_rows(path, rows, fieldnames=["term", "pos", *entry_fields()])
+    write_rows(path, rows, fieldnames=list(artifact_spec(ArtifactId.VOCABULARY_RAW).csv_header))
 
 
 def write_surface_words(path: Path, surface_words: dict[str, CountEntry]) -> None:
@@ -184,7 +185,7 @@ def write_surface_words(path: Path, surface_words: dict[str, CountEntry]) -> Non
         }
         for surface, entry in sorted(surface_words.items(), key=lambda item: (-item[1].count, item[0]))
     ]
-    write_rows(path, rows, fieldnames=["surface", *entry_fields()])
+    write_rows(path, rows, fieldnames=list(artifact_spec(ArtifactId.SURFACE_WORDS).csv_header))
 
 
 def entry_fields() -> list[str]:
@@ -192,50 +193,15 @@ def entry_fields() -> list[str]:
 
 
 def candidate_term_fields() -> list[str]:
-    return [
-        "canonical_key",
-        "display",
-        "kind",
-        "pos_group",
-        "count",
-        "surface_count",
-        "document_count",
-        "variant_count",
-        "variants",
-        "learning_signal_score",
-        "frequency_signal_score",
-        "dispersion_signal_score",
-        "pos_signal_score",
-        "variant_signal_score",
-        "frequency_rate_per_10k",
-        "example",
-    ]
+    return list(artifact_spec(ArtifactId.CANDIDATE_TERMS).csv_header)
 
 
 def rejected_candidate_fields() -> list[str]:
-    return [
-        "kind",
-        "candidate",
-        "canonical_key",
-        "reason",
-        "count",
-        "document_count",
-        "example",
-    ]
+    return list(artifact_spec(ArtifactId.REJECTED_TERMS).csv_header)
 
 
 def example_sentence_fields() -> list[str]:
-    return [
-        "document",
-        "page",
-        "sentence_index",
-        "sentence",
-        "quality_score",
-        "matched_canonical_key_count",
-        "covered_canonical_key_count",
-        "covered_canonical_keys",
-        "matched_canonical_keys",
-    ]
+    return list(artifact_spec(ArtifactId.EXAMPLE_SENTENCES).csv_header)
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -330,6 +330,27 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             with self.assertRaises(SourceRewriteError):
                 load_vocabulary_guided_candidates(dictionary_path)
 
+    def test_vocabulary_guided_rewrite_rejects_parsed_bundle_from_another_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bundle_dir = write_parsed_fixture(root / "parsed", target_grade="grade1")
+            dictionary_path = root / "15_final_dictionary.jsonl"
+            write_dictionary_fixture(dictionary_path, count=20)
+
+            with self.assertRaises(SourceRewriteError) as context:
+                rewrite_vocabulary_guided_source_material(
+                    bundle_dir,
+                    dictionary_path=dictionary_path,
+                    vocabulary_source_kind="dictionary_seed",
+                    vocabulary_source_sha256="dictionary",
+                    output_root=root / "rewritten",
+                    client=RecordingVocabularyGuidedRewriteClient(),
+                    model="fake-vision",
+                    target_grade="grade7",
+                )
+
+            self.assertIn("does not match target grade grade7", str(context.exception))
+
     def test_vocabulary_selection_response_validation_rejects_bad_shapes(self) -> None:
         context = minimal_context_packet()
         candidates = [
@@ -359,6 +380,7 @@ class VocabularyGuidedRewriteTest(unittest.TestCase):
             root = Path(workspace)
             bundle_dir = write_parsed_fixture(
                 root / "parsed",
+                target_grade="grade7",
                 pages=[
                     page_one_text(),
                     "# Later page\n\nSecond page source explains the ending.",
@@ -494,6 +516,8 @@ class SourceRewriteCliTest(unittest.TestCase):
                 with patch("sys.stdout", io.StringIO()):
                     exit_code = main(
                         [
+                            "--target-grade",
+                            "grade1",
                             "--rewrite-whole-source-materials",
                             str(parsed_root),
                             "--rewrite-output-root",
@@ -527,7 +551,7 @@ class SourceRewriteCliTest(unittest.TestCase):
             client = RecordingVocabularyGuidedRewriteClient()
 
             with (
-                patch("wordbyword.cli.app.DEFAULT_LIVE_LEXICON_PATH", root / "missing-live.jsonl"),
+                patch("wordbyword.cli.app.default_live_lexicon_path", return_value=root / "missing-live.jsonl"),
                 patch("wordbyword.cli.app.ollama_client", return_value=client),
                 patch("sys.stdout", io.StringIO()),
             ):
@@ -535,6 +559,8 @@ class SourceRewriteCliTest(unittest.TestCase):
                     [
                         "--rewrite-vocabulary-guided-source-material",
                         str(bundle_dir),
+                        "--target-grade",
+                        "grade1",
                         "--rewrite-output-root",
                         str(output_root),
                         "--output",
@@ -569,12 +595,12 @@ class SourceRewriteCliTest(unittest.TestCase):
                 ],
             )
             write_dictionary_fixture(dictionary_output / "15_final_dictionary.jsonl", count=20)
-            live_path = root / "grade1-live-lexicon-canonical.jsonl"
+            live_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
             write_dictionary_fixture(live_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
             with (
-                patch("wordbyword.cli.app.DEFAULT_LIVE_LEXICON_PATH", live_path),
+                patch("wordbyword.cli.app.default_live_lexicon_path", return_value=live_path),
                 patch("wordbyword.cli.app.ollama_client", return_value=client),
                 patch("sys.stdout", io.StringIO()),
             ):
@@ -582,6 +608,8 @@ class SourceRewriteCliTest(unittest.TestCase):
                     [
                         "--rewrite-vocabulary-guided-source-material",
                         str(bundle_dir),
+                        "--target-grade",
+                        "grade1",
                         "--rewrite-output-root",
                         str(output_root),
                         "--output",
@@ -618,6 +646,8 @@ class SourceRewriteCliTest(unittest.TestCase):
                 with patch("sys.stdout", io.StringIO()):
                     exit_code = main(
                         [
+                            "--target-grade",
+                            "grade1",
                             "--rewrite-vocabulary-guided-source-materials",
                             str(parsed_root),
                             "--rewrite-output-root",
@@ -819,6 +849,7 @@ def dictionary_fixture_keys() -> list[str]:
 
 
 def write_dictionary_fixture(path: Path, *, count: int = 20) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         {
             "canonical_key": key,
@@ -837,6 +868,7 @@ def write_parsed_fixture(
     parsed_root: Path,
     *,
     source_id: str = "lesson",
+    target_grade: str = "grade1",
     pages: list[str] | None = None,
 ) -> Path:
     bundle_dir = parsed_root / source_id
@@ -870,6 +902,7 @@ def write_parsed_fixture(
         json.dumps(
             {
                 "schema_version": "wordbyword.source_material_workspace.v1",
+                "target_grade": target_grade,
                 "source": {
                     "id": source_id,
                     "path": f"{source_id}.pdf",

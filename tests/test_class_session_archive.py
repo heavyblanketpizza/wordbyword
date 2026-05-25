@@ -38,6 +38,7 @@ from wordbyword.class_archive.live_lexicon import (
     DEFAULT_SUPPLEMENTAL_LEXICON_PATH,
     DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
     DEFAULT_USAGE_CANDIDATES_PATH,
+    LiveLexiconUpdateError,
     update_live_lexicon,
 )
 from wordbyword.class_archive.usage_signals import (
@@ -98,6 +99,32 @@ class ClassSessionArchiveRenameTest(unittest.TestCase):
             for plan in result.plans:
                 self.assertRegex(plan.target_name, r"^\d{4}-\d{2}-\d{2}_grade1-physics-light-and-atoms\.")
                 self.assertEqual(plan.metadata.grade_level, "grade1")
+
+    def test_archive_rename_uses_selected_target_grade_over_model_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "material.docx", "중학교 1학년 읽기 자료입니다.")
+            client = RecordingArchiveClient(
+                {
+                    "grade_level": "grade7",
+                    "topic_slug": "reading",
+                    "short_title_slug": "middle-practice",
+                    "korean_title": "중등 읽기",
+                    "confidence": 0.91,
+                }
+            )
+
+            result = rename_class_session_archive(
+                archive,
+                client=client,
+                model="fake-ollama",
+                target_grade="grade1",
+                apply=False,
+            )
+
+            self.assertEqual(result.plans[0].metadata.grade_level, "grade1")
+            self.assertIn("_grade1-", result.plans[0].target_name)
 
     def test_apply_renames_files_and_writes_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -496,6 +523,7 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
             result = build_usage_signals(
                 archive_root=archive,
                 output_root=output,
+                target_grade="grade1",
             )
 
             self.assertEqual(result.documents, 2)
@@ -523,6 +551,7 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
             self.assertEqual(discover_usage_signal_documents(archive, target_grade="grade7"), [])
             summary = json.loads((output / "00_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["document_count"], 2)
+            self.assertEqual(summary["target_grade"], "grade1")
             self.assertEqual(summary["documents"], [named_docx.name, named_pdf.name])
 
             with (output / "01_extracted_pages.csv").open(encoding="utf-8-sig") as handle:
@@ -551,6 +580,7 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
                 build_usage_signals(
                     archive_root=archive,
                     output_root=output,
+                    target_grade="grade1",
                 )
 
             message = str(context.exception)
@@ -576,6 +606,7 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
                 build_usage_signals(
                     archive_root=archive,
                     output_root=output,
+                    target_grade="grade1",
                 )
 
             message = str(context.exception)
@@ -608,6 +639,7 @@ class ClassUsageSignalBuildTest(unittest.TestCase):
                 build_usage_signals(
                     archive_root=archive,
                     output_root=output,
+                    target_grade="grade1",
                     near_duplicate_client=client,
                     near_duplicate_model="fake-ollama",
                 )
@@ -637,7 +669,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", InteractiveInput("y\n")),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--target-grade", "grade1"])
 
             self.assertEqual(exit_code, 0)
             self.assertTrue(kept.exists())
@@ -711,7 +743,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", InteractiveInput("n\n")),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--target-grade", "grade1"])
 
             self.assertEqual(exit_code, 1)
             self.assertTrue(first.exists())
@@ -735,7 +767,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", io.StringIO("")),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive)])
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--target-grade", "grade1"])
 
             self.assertEqual(exit_code, 1)
             self.assertTrue(first.exists())
@@ -759,7 +791,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", io.StringIO("")),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive), "--yes"])
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--yes", "--target-grade", "grade1"])
 
             self.assertEqual(exit_code, 0)
             self.assertTrue(first.exists())
@@ -795,9 +827,16 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("wordbyword.cli.app.ollama_client", return_value=client),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive), "--include-near-duplicates"])
+                exit_code = main([
+                    "--resolve-archive-duplicates",
+                    str(archive),
+                    "--include-near-duplicates",
+                    "--target-grade",
+                    "grade1",
+                ])
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(client.near_duplicate_calls, 1)
             self.assertTrue(kept.exists())
             self.assertFalse(duplicate.exists())
             manifest = json.loads((archive / DEFAULT_ARCHIVE_DUPLICATE_QUARANTINE_DIRNAME / "manifest.json").read_text(encoding="utf-8"))
@@ -986,9 +1025,17 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("wordbyword.cli.app.ollama_client", return_value=client),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
-                exit_code = main(["--resolve-archive-duplicates", str(archive), "--include-near-duplicates", "--yes"])
+                exit_code = main([
+                    "--resolve-archive-duplicates",
+                    str(archive),
+                    "--include-near-duplicates",
+                    "--yes",
+                    "--target-grade",
+                    "grade1",
+                ])
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(client.near_duplicate_calls, 1)
             self.assertTrue(kept.exists())
             self.assertFalse(duplicate.exists())
             self.assertNotIn("Apply this duplicate quarantine plan?", stdout.getvalue())
@@ -1082,8 +1129,8 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             root = Path(workspace)
             canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
             old_live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon.jsonl"
-            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
-            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1" / "supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -1137,9 +1184,13 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                     },
                 ],
             )
-            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 4, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
 
             result = update_live_lexicon(
+                target_grade="grade1",
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 usage_summary_path=usage_summary_path,
@@ -1191,13 +1242,15 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertIs(supplemental_rows[0]["active"], True)
             self.assertNotIn("count", supplemental_rows[0])
             self.assertNotIn("document_count", supplemental_rows[0])
+            manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["target_grade"], "grade1")
 
     def test_update_live_lexicon_maintains_existing_canonical_without_dictionary(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
-            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
-            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1" / "supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -1220,7 +1273,10 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 ],
             )
             usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
-            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 4, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
             write_jsonl(
                 usage_candidates_path,
                 [
@@ -1235,6 +1291,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             )
 
             result = update_live_lexicon(
+                target_grade="grade1",
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 usage_summary_path=usage_summary_path,
@@ -1259,8 +1316,8 @@ class LiveLexiconUpdateTest(unittest.TestCase):
     def test_update_live_lexicon_maintains_supplemental_rows(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
-            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
-            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1" / "supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -1315,7 +1372,10 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 ],
             )
             usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
-            usage_summary_path.write_text(json.dumps({"document_count": 4}), encoding="utf-8")
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 4, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
             write_jsonl(
                 usage_candidates_path,
                 [
@@ -1351,6 +1411,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             )
 
             result = update_live_lexicon(
+                target_grade="grade1",
                 usage_candidates_path=usage_candidates_path,
                 usage_summary_path=usage_summary_path,
                 live_lexicon_path=live_lexicon_path,
@@ -1390,8 +1451,8 @@ class LiveLexiconUpdateTest(unittest.TestCase):
     def test_update_live_lexicon_sorts_canonical_rows_by_roi(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
-            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
-            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1" / "supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -1419,10 +1480,14 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 ],
             )
             usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
-            usage_summary_path.write_text(json.dumps({"document_count": 1}), encoding="utf-8")
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 1, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
             write_jsonl(usage_candidates_path, [])
 
             update_live_lexicon(
+                target_grade="grade1",
                 usage_candidates_path=usage_candidates_path,
                 usage_summary_path=usage_summary_path,
                 live_lexicon_path=live_lexicon_path,
@@ -1438,8 +1503,8 @@ class LiveLexiconUpdateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             canonical_dictionary_path = root / "build-dictionary" / "15_final_dictionary.jsonl"
-            live_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-canonical.jsonl"
-            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1-live-lexicon-supplemental.jsonl"
+            live_lexicon_path = root / "live-grade-lexicon" / "grade1" / "canonical.jsonl"
+            supplemental_lexicon_path = root / "live-grade-lexicon" / "grade1" / "supplemental.jsonl"
             usage_candidates_path = root / "usage-signal-build" / "08_dictionary_candidates.jsonl"
             usage_summary_path = root / "usage-signal-build" / "00_summary.json"
             unmatched_output_path = root / "usage-signal-build" / "10_unmatched_usage_candidates.jsonl"
@@ -1456,7 +1521,10 @@ class LiveLexiconUpdateTest(unittest.TestCase):
                 ],
             )
             usage_summary_path.parent.mkdir(parents=True, exist_ok=True)
-            usage_summary_path.write_text(json.dumps({"document_count": 2}), encoding="utf-8")
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 2, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
             write_jsonl(
                 usage_candidates_path,
                 [
@@ -1476,6 +1544,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             )
 
             update_live_lexicon(
+                target_grade="grade1",
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 live_lexicon_path=live_lexicon_path,
@@ -1486,6 +1555,7 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             first_supplemental = supplemental_lexicon_path.read_text(encoding="utf-8")
             first_unmatched = unmatched_output_path.read_text(encoding="utf-8")
             update_live_lexicon(
+                target_grade="grade1",
                 canonical_dictionary_path=canonical_dictionary_path,
                 usage_candidates_path=usage_candidates_path,
                 live_lexicon_path=live_lexicon_path,
@@ -1496,6 +1566,51 @@ class LiveLexiconUpdateTest(unittest.TestCase):
             self.assertEqual(live_lexicon_path.read_text(encoding="utf-8"), first_live)
             self.assertEqual(supplemental_lexicon_path.read_text(encoding="utf-8"), first_supplemental)
             self.assertEqual(unmatched_output_path.read_text(encoding="utf-8"), first_unmatched)
+
+    def test_update_live_lexicon_rejects_usage_summary_from_another_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            canonical_dictionary_path = root / "build-dictionary" / "output" / "grade7" / "15_final_dictionary.jsonl"
+            usage_candidates_path = (
+                root / "wbw-vocabulary-intelligence" / "usage-signal-build" / "grade1" / "08_dictionary_candidates.jsonl"
+            )
+            usage_summary_path = usage_candidates_path.parent / "00_summary.json"
+            write_jsonl(
+                canonical_dictionary_path,
+                [
+                    {
+                        "canonical_key": "먹다",
+                        "count": 1,
+                        "document_count": 1,
+                    },
+                ],
+            )
+            write_jsonl(usage_candidates_path, [])
+            usage_summary_path.write_text(
+                json.dumps({"document_count": 1, "target_grade": "grade1"}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(LiveLexiconUpdateError) as context:
+                update_live_lexicon(
+                    target_grade="grade7",
+                    canonical_dictionary_path=canonical_dictionary_path,
+                    usage_candidates_path=usage_candidates_path,
+                    usage_summary_path=usage_summary_path,
+                    live_lexicon_path=root
+                    / "wbw-vocabulary-intelligence"
+                    / "live-grade-lexicon"
+                    / "grade7"
+                    / "canonical.jsonl",
+                    supplemental_lexicon_path=root
+                    / "wbw-vocabulary-intelligence"
+                    / "live-grade-lexicon"
+                    / "grade7"
+                    / "supplemental.jsonl",
+                    unmatched_usage_output_path=usage_candidates_path.parent / "10_unmatched_usage_candidates.jsonl",
+                )
+
+            self.assertIn("does not match target grade grade7", str(context.exception))
 
 
 class ClassSessionArchiveCliTest(unittest.TestCase):
@@ -1561,11 +1676,24 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         ):
             mock_rename.return_value = FakeRenameResult()
 
-            exit_code = main(["--rename-class-session-archive", "class-session-archive"])
+            exit_code = main(["--rename-class-session-archive", "class-session-archive", "--target-grade", "grade1"])
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
         self.assertIn("class-session archive rename complete", stdout.getvalue())
+
+    def test_archive_duplicate_resolver_rejects_managed_files_from_another_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            archive = Path(workspace) / "class-session-archive"
+            archive.mkdir()
+            write_docx(archive / "2026-05-10_grade1-reading-apples.docx", "사과를 읽습니다.")
+            stderr = io.StringIO()
+
+            with patch("sys.stderr", stderr):
+                exit_code = main(["--resolve-archive-duplicates", str(archive), "--target-grade", "grade7"])
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("outside target grade grade7", stderr.getvalue())
 
     def test_parser_has_usage_signal_defaults(self) -> None:
         args = build_parser().parse_args(["--build-usage-signals"])
@@ -1620,7 +1748,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         ):
             mock_build.return_value = FakeUsageSignalBuildResult()
 
-            exit_code = main(["--build-usage-signals"])
+            exit_code = main(["--build-usage-signals", "--target-grade", "grade1"])
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
@@ -1636,7 +1764,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         ):
             mock_build.return_value = FakeUsageSignalBuildResult()
 
-            exit_code = main(["--build-usage-signals"])
+            exit_code = main(["--build-usage-signals", "--target-grade", "grade1"])
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
@@ -1652,7 +1780,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         ):
             mock_update.return_value = FakeLiveLexiconUpdateResult()
 
-            exit_code = main(["--update-live-lexicon"])
+            exit_code = main(["--update-live-lexicon", "--target-grade", "grade1"])
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
@@ -1668,7 +1796,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         ):
             mock_update.return_value = FakeLiveLexiconUpdateResult()
 
-            exit_code = main(["--update-live-lexicon"])
+            exit_code = main(["--update-live-lexicon", "--target-grade", "grade1"])
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()

@@ -32,11 +32,17 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.dictionary_build.readers import SUPPORTED_EXTENSIONS, read_text_file
 from wordbyword.dictionary_build.text import clean_layout_text
-from wordbyword.grade_profiles import GRADE_WITH_UNKNOWN_PATTERN, normalize_grade_level as normalize_shared_grade_level
+from wordbyword.grade_profiles import (
+    DICTIONARY_SOURCE_ROOT,
+    GRADE_WITH_UNKNOWN_PATTERN,
+    UNKNOWN_GRADE,
+    normalize_target_grade,
+    normalize_grade_level as normalize_shared_grade_level,
+)
 
 DICTIONARY_SOURCE_ARCHIVE_SCHEMA_VERSION = "wordbyword.dictionary_source_archive.v1"
 DICTIONARY_SOURCE_DUPLICATE_MANIFEST_SCHEMA_VERSION = "wordbyword.dictionary_source_archive_duplicates.v1"
-DEFAULT_DICTIONARY_SOURCE_ROOT = Path("build-dictionary/original")
+DEFAULT_DICTIONARY_SOURCE_ROOT = DICTIONARY_SOURCE_ROOT
 DEFAULT_DICTIONARY_SOURCE_LEDGER_FILENAME = ".wordbyword-dictionary-source-ledger.json"
 DEFAULT_DICTIONARY_SOURCE_DUPLICATE_QUARANTINE_DIRNAME = ".wordbyword-dictionary-source-duplicates"
 MIN_DICTIONARY_SOURCE_CLASSIFICATION_CONFIDENCE = 0.80
@@ -285,6 +291,7 @@ def rename_dictionary_source_archive(
     *,
     client: SupportsCompletion,
     model: str,
+    target_grade: str | None = None,
     apply: bool = False,
     ledger_path: Path | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -293,6 +300,7 @@ def rename_dictionary_source_archive(
     root = archive_root.resolve()
     if not root.is_dir():
         raise DictionarySourceArchiveError(f"dictionary source archive folder does not exist: {archive_root}")
+    forced_target_grade = normalize_target_grade(target_grade) if target_grade is not None else None
 
     resolved_ledger_path = (ledger_path or root / DEFAULT_DICTIONARY_SOURCE_LEDGER_FILENAME).resolve()
     ensure_inside_archive(root, resolved_ledger_path, allow_equal=False)
@@ -312,6 +320,8 @@ def rename_dictionary_source_archive(
         if progress is not None:
             progress(f"classifying {material.relative_path}")
         metadata = classify_dictionary_source_material(material, client=client)
+        if forced_target_grade is not None:
+            metadata = metadata.model_copy(update={"grade_level": forced_target_grade})
         target_path = unique_dictionary_source_target_path(
             root,
             directory=material.path.parent,
@@ -748,6 +758,28 @@ def valid_managed_dictionary_source_name_for_path(path: Path) -> bool:
 
 def is_managed_dictionary_source_name(stem: str) -> bool:
     return bool(MANAGED_DICTIONARY_SOURCE_NAME_PATTERN.fullmatch(stem))
+
+
+def managed_dictionary_source_grade_from_stem(stem: str) -> str:
+    parts = stem.split("_")
+    return parts[2] if len(parts) > 2 else UNKNOWN_GRADE
+
+
+def validate_managed_dictionary_source_grades(source_root: Path, *, target_grade: str) -> None:
+    mismatches: list[Path] = []
+    if not source_root.exists() or not source_root.is_dir():
+        return
+    for path in source_root.rglob("*"):
+        if not path.is_file() or not is_managed_dictionary_source_name(path.stem):
+            continue
+        grade = managed_dictionary_source_grade_from_stem(path.stem)
+        if grade not in {target_grade, UNKNOWN_GRADE}:
+            mismatches.append(path)
+    if mismatches:
+        details = "\n".join(f"  - {path}" for path in sorted(mismatches, key=str))
+        raise DictionarySourceArchiveError(
+            f"dictionary source archive contains managed files outside target grade {target_grade}:\n{details}"
+        )
 
 
 def load_dictionary_source_ledger(path: Path) -> dict[str, Any]:

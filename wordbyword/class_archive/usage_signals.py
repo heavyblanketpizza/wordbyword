@@ -11,7 +11,6 @@ from kiwipiepy import Kiwi
 from wordbyword.class_archive.archive import (
     ClassSessionArchiveError,
     DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
-    DEFAULT_VOCABULARY_INTELLIGENCE_ROOT,
     format_archive_duplicate_message,
     is_managed_archive_name,
     natural_path_sort_key,
@@ -23,8 +22,9 @@ from wordbyword.dictionary_build.models import PageText
 from wordbyword.dictionary_build.readers import normalize_text
 from wordbyword.dictionary_build.writers import ArtifactCallback, write_outputs
 from wordbyword.grade_profiles import extract_grade_from_source_id, normalize_target_grade
+from wordbyword.grade_profiles import grade_workspace
 
-DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "usage-signal-build"
+DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT = grade_workspace().usage_signal_output_root
 SUPPORTED_USAGE_SIGNAL_EXTENSIONS = {".docx", ".pdf"}
 
 ProgressCallback = Callable[[str, str], None]
@@ -32,6 +32,7 @@ ProgressCallback = Callable[[str, str], None]
 
 @dataclass(frozen=True)
 class UsageSignalBuildResult:
+    target_grade: str
     archive_root: Path
     output_root: Path
     documents: int
@@ -50,7 +51,7 @@ def build_usage_signals(
     *,
     archive_root: Path = DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
     output_root: Path = DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT,
-    target_grade: str | None = None,
+    target_grade: str,
     include_punctuation: bool = False,
     include_numbers: bool = False,
     near_duplicate_client: SupportsCompletion | None = None,
@@ -76,7 +77,7 @@ def build_usage_signals(
         raise UsageSignalBuildError(format_archive_duplicate_message(archive_root, duplicates))
 
     _report(progress, "scan", f"discovering named class printouts in {archive_root}")
-    normalized_target_grade = normalize_target_grade(target_grade) if target_grade is not None else None
+    normalized_target_grade = normalize_target_grade(target_grade)
     documents = discover_usage_signal_documents(archive_root, target_grade=normalized_target_grade)
     kiwi = Kiwi()
     analyzer = KoreanAnalyzer(
@@ -105,9 +106,11 @@ def build_usage_signals(
         documents=[Path(document_id_for_usage_signal(document, archive_root)) for document in documents],
         kiwi=kiwi,
         artifact_callback=artifact_callback,
+        metadata={"target_grade": normalized_target_grade},
     )
 
     return UsageSignalBuildResult(
+        target_grade=normalized_target_grade,
         archive_root=archive_root,
         output_root=output_root,
         documents=len(documents),

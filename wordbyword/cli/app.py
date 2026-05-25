@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import shutil
-import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from wordbyword.after_class_reports import (
@@ -42,18 +39,17 @@ from wordbyword.dictionary_build.source_archive import (
     DictionarySourceArchiveError,
     DictionarySourceDuplicateResolutionResult,
     apply_dictionary_source_duplicate_resolution_result,
+    managed_dictionary_source_grade_from_stem,
     rename_dictionary_source_archive,
     resolve_dictionary_source_duplicates,
+    validate_managed_dictionary_source_grades,
 )
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
     SourceMaterialParseError,
     parse_source_material,
     parse_source_materials,
-    sha256_file,
 )
 from wordbyword.classroom_printout_studio.class_rewriting.rewrite import (
-    DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT,
-    DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT,
     SourceRewriteError,
     rewrite_vocabulary_guided_source_material as rewrite_vocabulary_guided_parsed_source_material,
     rewrite_vocabulary_guided_source_materials as rewrite_vocabulary_guided_parsed_source_materials,
@@ -72,9 +68,9 @@ from wordbyword.class_archive.archive import (
     apply_archive_duplicate_resolution_result,
     resolve_archive_duplicates,
     rename_class_session_archive,
+    validate_managed_class_archive_grades,
 )
 from wordbyword.class_archive.live_lexicon import (
-    DEFAULT_LIVE_LEXICON_PATH,
     LiveLexiconUpdateError,
     update_live_lexicon,
 )
@@ -113,19 +109,50 @@ from wordbyword.dictionary_build.saved_outputs import (
     write_generated_meaning_dictionary_candidates_from_saved,
     write_meaning_dictionary_candidates_from_saved,
 )
+from wordbyword.execution_guard import CommandAlreadyRunningError, acquire_workspace_command_guard
 from wordbyword.grade_profiles import (
-    DEFAULT_TARGET_GRADE,
-    default_after_class_report_output_root,
+    GradeWorkspace,
     default_live_lexicon_path,
-    default_print_output_root,
-    default_supplemental_lexicon_path,
-    default_unmatched_usage_output_path,
-    default_usage_signal_output_root,
-    default_vocabulary_guided_rewrite_output_root,
-    default_whole_rewrite_output_root,
-    extract_grade_from_source_id,
-    normalize_target_grade,
     target_profile_for_grade,
+)
+from wordbyword.grade_workspace_migration import migrate_grade_workspaces
+from wordbyword.application import workspace as application_workspace
+from wordbyword.application.commands import (
+    AfterClassReportRequest,
+    ArchiveDuplicatesRequest,
+    ArchiveRenameRequest,
+    ClassMaterialPrintRequest,
+    ClassPrintoutsRequest,
+    CommandId,
+    CommandRequest,
+    DictionarySourceDuplicatesRequest,
+    DictionarySourceRenameRequest,
+    DictionaryBuildRequest,
+    DictionaryRecoveryRequest,
+    DictionaryStageRequest,
+    LiveLexiconRequest,
+    MigrateGradeWorkspacesRequest,
+    ShowDistributionRequest,
+    SourceMaterialParseRequest,
+    SourceMaterialRewriteRequest,
+    SourceMaterialsParseRequest,
+    UsageSignalsRequest,
+    build_cli_request,
+    command_id_from_cli_args,
+    command_spec,
+)
+from wordbyword.application.workspace import (
+    LazyOllamaCompletionClient,
+    RewriteVocabularySource,
+    current_python_has_paddleocr as application_current_python_has_paddleocr,
+    discover_paddleocr_vl_sidecar_env as application_discover_paddleocr_vl_sidecar_env,
+    paddleocr_vl_settings_from_args as application_paddleocr_vl_settings_from_args,
+    paddleocr_vl_python_can_locate_paddleocr as application_paddleocr_vl_python_can_locate_paddleocr,
+    paddleocr_vl_sidecar_python_path as application_paddleocr_vl_sidecar_python_path,
+    paddleocr_vl_sidecar_search_roots as application_paddleocr_vl_sidecar_search_roots,
+    source_parse_options_from_args as application_source_parse_options_from_args,
+    validate_paddleocr_vl_sidecar as application_validate_paddleocr_vl_sidecar,
+    wordbyword_project_root as application_wordbyword_project_root,
 )
 
 PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
@@ -137,121 +164,100 @@ DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS = (".venv-paddleocr-vl", ".venv-paddleocr")
 run_pipeline = _run_pipeline_compat
 
 
-@dataclass(frozen=True)
-class RewriteVocabularySource:
-    path: Path
-    kind: str
-    sha256: str
-
-
-class LazyOllamaCompletionClient:
-    def __init__(
-        self,
-        *,
-        model: str,
-        base_url: str | None,
-        timeout_seconds: float,
-        max_output_tokens: int,
-    ) -> None:
-        self.model = model
-        self.base_url = base_url
-        self.timeout_seconds = timeout_seconds
-        self.max_output_tokens = max_output_tokens
-        self.client: SupportsCompletion | None = None
-
-    def complete(self, *args: object, **kwargs: object) -> object:
-        if self.client is None:
-            self.client = ollama_client(
-                model=self.model,
-                base_url=self.base_url,
-                timeout_seconds=self.timeout_seconds,
-                max_output_tokens=self.max_output_tokens,
-            )
-        return self.client.complete(*args, **kwargs)  # type: ignore[arg-type]
-
-
 def target_grade_from_args(args: argparse.Namespace) -> str:
-    return normalize_target_grade(getattr(args, "target_grade", DEFAULT_TARGET_GRADE))
+    return application_workspace.target_grade_from_args(args)
 
 
 def target_grade_was_explicit(args: argparse.Namespace) -> bool:
-    return bool(getattr(args, "target_grade_explicit", False)) or target_grade_from_args(args) != DEFAULT_TARGET_GRADE
+    return bool(getattr(args, "target_grade_explicit", False))
+
+
+def workspace_from_args(args: argparse.Namespace) -> GradeWorkspace:
+    return application_workspace.workspace_from_args(args)
 
 
 def option_was_explicit(args: argparse.Namespace, dest: str) -> bool:
-    return bool(getattr(args, f"{dest}_explicit", False))
+    return application_workspace.option_was_explicit(args, dest)
+
+
+def resolved_dictionary_input_dir(args: argparse.Namespace) -> Path:
+    return application_workspace.resolved_dictionary_input_dir(args)
+
+
+def resolved_dictionary_output_dir(args: argparse.Namespace) -> Path:
+    return application_workspace.resolved_dictionary_output_dir(args)
+
+
+def resolved_reference_dictionary_path(args: argparse.Namespace) -> Path:
+    return application_workspace.resolved_reference_dictionary_path(args)
+
+
+def resolved_canonical_dictionary_path(args: argparse.Namespace) -> Path:
+    return application_workspace.resolved_canonical_dictionary_path(args)
+
+
+def resolved_class_source_dir(args: argparse.Namespace, source_dir: Path) -> Path:
+    return application_workspace.resolved_class_source_dir(args, source_dir)
+
+
+def resolved_parsed_source_root(args: argparse.Namespace, parsed_root: Path) -> Path:
+    return application_workspace.resolved_parsed_source_root(args, parsed_root)
+
+
+def resolved_archive_root(args: argparse.Namespace, archive_root: Path) -> Path:
+    return application_workspace.resolved_archive_root(args, archive_root)
+
+
+def resolved_usage_signal_input_root(args: argparse.Namespace) -> Path:
+    return application_workspace.resolved_usage_signal_input_root(args)
+
+
+def resolved_dictionary_source_root(args: argparse.Namespace, source_root: Path) -> Path:
+    return application_workspace.resolved_dictionary_source_root(args, source_root)
+
+
+def dictionary_source_grade_from_stem(stem: str) -> str:
+    return managed_dictionary_source_grade_from_stem(stem)
 
 
 def resolved_whole_rewrite_output_root(args: argparse.Namespace) -> Path:
-    if args.rewrite_output_root is not None:
-        return args.rewrite_output_root
-    if target_grade_was_explicit(args):
-        return default_whole_rewrite_output_root(target_grade_from_args(args))
-    return DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT
+    return application_workspace.resolved_whole_rewrite_output_root(args)
 
 
 def resolved_vocabulary_rewrite_output_root(args: argparse.Namespace) -> Path:
-    if args.rewrite_output_root is not None:
-        return args.rewrite_output_root
-    if target_grade_was_explicit(args):
-        return default_vocabulary_guided_rewrite_output_root(target_grade_from_args(args))
-    return DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT
+    return application_workspace.resolved_vocabulary_rewrite_output_root(args)
 
 
 def resolved_print_output_root(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "print_output_root"):
-        return default_print_output_root(target_grade_from_args(args))
-    return args.print_output_root
+    return application_workspace.resolved_print_output_root(args)
 
 
 def resolve_print_class_materials_root(args: argparse.Namespace) -> Path:
-    if (
-        target_grade_was_explicit(args)
-        and args.print_class_materials == DEFAULT_VOCABULARY_GUIDED_REWRITE_OUTPUT_ROOT
-    ):
-        return default_vocabulary_guided_rewrite_output_root(target_grade_from_args(args))
-    return args.print_class_materials
+    return application_workspace.resolved_print_class_materials_root(args)
 
 
 def resolved_usage_signal_output_root(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "usage_signal_output_root"):
-        return default_usage_signal_output_root(target_grade_from_args(args), explicit_target=True)
-    return args.usage_signal_output_root
+    return application_workspace.resolved_usage_signal_output_root(args)
 
 
 def resolved_live_lexicon_path(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "live_lexicon"):
-        return default_live_lexicon_path(target_grade_from_args(args))
-    return args.live_lexicon
+    return application_workspace.resolved_live_lexicon_path(args)
 
 
 def resolved_supplemental_lexicon_path(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "supplemental_lexicon"):
-        return default_supplemental_lexicon_path(target_grade_from_args(args))
-    return args.supplemental_lexicon
+    return application_workspace.resolved_supplemental_lexicon_path(args)
 
 
 def resolved_usage_candidates_path(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "usage_candidates"):
-        return artifact_path(resolved_usage_signal_output_root(args), ArtifactId.DICTIONARY_CANDIDATES)
-    return args.usage_candidates
+    return application_workspace.resolved_usage_candidates_path(args)
 
 
 def resolved_unmatched_usage_output_path(args: argparse.Namespace) -> Path:
-    if target_grade_was_explicit(args) and not option_was_explicit(args, "unmatched_usage_output"):
-        return default_unmatched_usage_output_path(target_grade_from_args(args), explicit_target=True)
-    return args.unmatched_usage_output
+    return application_workspace.resolved_unmatched_usage_output_path(args)
 
 
 def resolved_after_class_report_output_root(args: argparse.Namespace) -> Path:
-    if option_was_explicit(args, "after_class_report_output_root"):
-        return args.after_class_report_output_root
-    if target_grade_was_explicit(args):
-        return default_after_class_report_output_root(target_grade_from_args(args))
-    if args.generate_after_class_reading_report is not None:
-        source_grade = extract_grade_from_source_id(args.generate_after_class_reading_report.stem)
-        return default_after_class_report_output_root(source_grade)
-    return args.after_class_report_output_root
+    return application_workspace.resolved_after_class_report_output_root(args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -260,7 +266,16 @@ def main(argv: list[str] | None = None) -> int:
     validate_args(parser, args)
 
     try:
-        immediate_exit_code = run_immediate_command(args)
+        command_label = exclusive_command_label(args)
+        if command_label is None:
+            immediate_exit_code = run_immediate_command(args)
+        else:
+            try:
+                with acquire_workspace_command_guard(command_label, workspace_root=Path.cwd()):
+                    immediate_exit_code = run_immediate_command(args)
+            except CommandAlreadyRunningError as error:
+                sys.stderr.write(f"wordbyword: {error}. Try again after it finishes.\n")
+                return 1
     except PipelineUsageError as exc:
         parser.exit(2, f"wordbyword: error: {exc}\n")
     if immediate_exit_code is not None:
@@ -273,222 +288,294 @@ def main(argv: list[str] | None = None) -> int:
     )
 
 
+def exclusive_command_label(args: argparse.Namespace) -> str | None:
+    command_id = command_id_from_cli_args(args)
+    if command_id is None:
+        return None
+    return command_spec(command_id).lock_label
+
+
 def run_immediate_command(args: argparse.Namespace) -> int | None:
-    if args.build_dictionary:
-        return build_dictionary_cli(args)
-    if args.prep_dictionary:
-        return prep_dictionary_cli(args)
-    if pipeline_cleanup_requested(args):
-        return dictionary_recovery_cli(args)
-    if args.parse_source_material is not None:
-        options = source_parse_options_from_args(args)
+    request = build_cli_request(args)
+    if request is None:
+        return None
+    return run_cli_request(request)
+
+
+def run_cli_request(request: CommandRequest) -> int | None:
+    if isinstance(request, ShowDistributionRequest):
+        return show_distribution(jsonl_path=request.jsonl_path, model=request.model)
+
+    if isinstance(request, DictionaryStageRequest):
+        if request.command_id == CommandId.LINK_CLEANED_EXAMPLES:
+            return link_cleaned_examples(output_dir=request.output_dir)
+        if request.command_id == CommandId.ADD_REFERENCE_MEANINGS:
+            return add_reference_meanings(
+                output_dir=request.output_dir,
+                reference_dictionary_path=request.reference_dictionary_path,
+            )
+        if request.command_id == CommandId.GENERATE_MISSING_MEANINGS:
+            return generate_missing_meanings(
+                output_dir=request.output_dir,
+                model=request.model,
+                base_url=request.base_url,
+            )
+
+    if isinstance(request, MigrateGradeWorkspacesRequest):
+        return migrate_grade_workspaces_cli(apply=request.apply)
+
+    if isinstance(request, DictionaryBuildRequest):
+        if request.command_id == CommandId.DICTIONARY_PREP:
+            return prep_dictionary_cli(request)
+        return build_dictionary_cli(request)
+
+    if isinstance(request, DictionaryRecoveryRequest):
+        return dictionary_recovery_cli(request)
+
+    if isinstance(request, SourceMaterialParseRequest):
         return parse_source_material_cli(
-            source_path=args.parse_source_material,
-            output_root=options.output_root,
-            source_id=args.source_id,
-            parse_pdf=options.parse_pdf,
-            render_dpi=options.render_dpi,
-            paddleocr_vl_settings=options.paddleocr_vl_settings,
+            source_path=request.source_path,
+            output_root=request.output_root,
+            source_id=request.source_id,
+            target_grade=request.target_grade,
+            parse_pdf=request.parse_pdf,
+            render_dpi=request.render_dpi,
+            paddleocr_vl_settings=request.paddleocr_vl_settings,
         )
-    if args.parse_source_materials is not None:
-        options = source_parse_options_from_args(args)
+
+    if isinstance(request, SourceMaterialsParseRequest):
         return parse_source_materials_cli(
-            source_dir=args.parse_source_materials,
-            output_root=options.output_root,
-            parse_pdf=options.parse_pdf,
-            render_dpi=options.render_dpi,
-            paddleocr_vl_settings=options.paddleocr_vl_settings,
+            source_dir=request.source_dir,
+            output_root=request.output_root,
+            target_grade=request.target_grade,
+            parse_pdf=request.parse_pdf,
+            render_dpi=request.render_dpi,
+            paddleocr_vl_settings=request.paddleocr_vl_settings,
         )
-    if args.rewrite_whole_source_material is not None:
-        return rewrite_whole_source_material_cli(
-            parsed_bundle_dir=args.rewrite_whole_source_material,
-            output_root=resolved_whole_rewrite_output_root(args),
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    if args.rewrite_whole_source_materials is not None:
-        return rewrite_whole_source_materials_cli(
-            parsed_root=args.rewrite_whole_source_materials,
-            output_root=resolved_whole_rewrite_output_root(args),
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    if args.rewrite_vocabulary_guided_source_material is not None:
-        vocabulary_source = rewrite_vocabulary_source_from_args(args)
-        return rewrite_vocabulary_guided_source_material_cli(
-            parsed_bundle_dir=args.rewrite_vocabulary_guided_source_material,
-            output_root=resolved_vocabulary_rewrite_output_root(args),
-            vocabulary_source=vocabulary_source,
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    if args.rewrite_vocabulary_guided_source_materials is not None:
-        vocabulary_source = rewrite_vocabulary_source_from_args(args)
-        return rewrite_vocabulary_guided_source_materials_cli(
-            parsed_root=args.rewrite_vocabulary_guided_source_materials,
-            output_root=resolved_vocabulary_rewrite_output_root(args),
-            vocabulary_source=vocabulary_source,
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    if args.print_class_material is not None:
-        return print_class_material_cli(
-            rewritten_bundle_dir=args.print_class_material,
-            output_root=resolved_print_output_root(args),
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            font_path=args.print_font_path,
-            body_font_size=args.print_body_font_size,
-        )
-    if args.print_class_materials is not None:
-        return print_class_materials_cli(
-            rewritten_root=resolve_print_class_materials_root(args),
-            output_root=resolved_print_output_root(args),
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            font_path=args.print_font_path,
-            body_font_size=args.print_body_font_size,
-        )
-    if args.build_class_printouts is not None:
-        options = source_parse_options_from_args(args)
-        vocabulary_source = rewrite_vocabulary_source_from_args(args)
+
+    if isinstance(request, SourceMaterialRewriteRequest):
+        vocabulary_source = _request_vocabulary_source(request.vocabulary_source, request.raw_args)
+        if request.command_id == CommandId.REWRITE_WHOLE_SOURCE_MATERIAL:
+            return rewrite_whole_source_material_cli(
+                parsed_bundle_dir=request.parsed_path,
+                output_root=request.output_root,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+            )
+        if request.command_id == CommandId.REWRITE_WHOLE_SOURCE_MATERIALS:
+            return rewrite_whole_source_materials_cli(
+                parsed_root=request.parsed_path,
+                output_root=request.output_root,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+            )
+        if vocabulary_source is None:
+            raise ValueError(f"{request.command_id} requires a vocabulary source")
+        if request.command_id == CommandId.REWRITE_VOCABULARY_GUIDED_SOURCE_MATERIAL:
+            return rewrite_vocabulary_guided_source_material_cli(
+                parsed_bundle_dir=request.parsed_path,
+                output_root=request.output_root,
+                vocabulary_source=vocabulary_source,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+            )
+        if request.command_id == CommandId.REWRITE_VOCABULARY_GUIDED_SOURCE_MATERIALS:
+            return rewrite_vocabulary_guided_source_materials_cli(
+                parsed_root=request.parsed_path,
+                output_root=request.output_root,
+                vocabulary_source=vocabulary_source,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+            )
+
+    if isinstance(request, ClassMaterialPrintRequest):
+        if request.command_id == CommandId.PRINT_CLASS_MATERIAL:
+            return print_class_material_cli(
+                rewritten_bundle_dir=request.rewritten_path,
+                output_root=request.output_root,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+                font_path=request.font_path,
+                body_font_size=request.body_font_size,
+            )
+        if request.command_id == CommandId.PRINT_CLASS_MATERIALS:
+            return print_class_materials_cli(
+                rewritten_root=request.rewritten_path,
+                output_root=request.output_root,
+                target_grade=request.target_grade,
+                model=request.model,
+                base_url=request.base_url,
+                font_path=request.font_path,
+                body_font_size=request.body_font_size,
+            )
+
+    if isinstance(request, ClassPrintoutsRequest):
+        vocabulary_source = _request_vocabulary_source(request.vocabulary_source, request.raw_args)
+        if vocabulary_source is None:
+            raise ValueError(f"{request.command_id} requires a vocabulary source")
         return build_class_printouts_cli(
-            source_dir=args.build_class_printouts,
-            parse_output_root=options.output_root,
-            parse_pdf=options.parse_pdf,
-            render_dpi=options.render_dpi,
-            paddleocr_vl_settings=options.paddleocr_vl_settings,
-            rewrite_output_root=resolved_vocabulary_rewrite_output_root(args),
+            source_dir=request.source_dir,
+            parse_output_root=request.parse_output_root,
+            parse_pdf=request.parse_pdf,
+            render_dpi=request.render_dpi,
+            paddleocr_vl_settings=request.paddleocr_vl_settings,
+            rewrite_output_root=request.rewrite_output_root,
             vocabulary_source=vocabulary_source,
-            print_output_root=resolved_print_output_root(args),
-            target_grade=target_grade_from_args(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            font_path=args.print_font_path,
-            body_font_size=args.print_body_font_size,
-            force_class_printouts=args.force_class_printouts,
+            print_output_root=request.print_output_root,
+            target_grade=request.target_grade,
+            model=request.model,
+            base_url=request.base_url,
+            font_path=request.font_path,
+            body_font_size=request.body_font_size,
+            force_class_printouts=request.force_class_printouts,
         )
-    if args.generate_after_class_reading_report is not None:
+
+    if isinstance(request, AfterClassReportRequest):
         return generate_after_class_reading_report_cli(
-            printout_path=args.generate_after_class_reading_report,
-            output_root=resolved_after_class_report_output_root(args),
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            font_path=args.after_class_report_font_path,
+            printout_path=request.printout_path,
+            output_root=request.output_root,
+            model=request.model,
+            base_url=request.base_url,
+            font_path=request.font_path,
+            target_grade=request.target_grade,
         )
-    if args.resolve_archive_duplicates is not None:
+
+    if isinstance(request, ArchiveDuplicatesRequest):
         return resolve_archive_duplicates_cli(
-            archive_root=args.resolve_archive_duplicates,
-            yes=args.yes,
-            include_near_duplicates=args.include_near_duplicates,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
+            archive_root=request.archive_root,
+            yes=request.apply,
+            include_near_duplicates=request.include_near_duplicates,
+            model=request.model,
+            base_url=request.base_url,
+            target_grade=request.target_grade,
         )
-    if args.resolve_dictionary_source_duplicates is not None:
+
+    if isinstance(request, DictionarySourceDuplicatesRequest):
         return resolve_dictionary_source_duplicates_cli(
-            archive_root=args.resolve_dictionary_source_duplicates,
-            yes=args.yes,
+            archive_root=request.archive_root,
+            yes=request.apply,
+            target_grade=request.target_grade,
         )
-    if args.rename_class_session_archive is not None:
+
+    if isinstance(request, ArchiveRenameRequest):
         return rename_class_session_archive_cli(
-            archive_root=args.rename_class_session_archive,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            apply=args.apply_archive_renames,
+            archive_root=request.archive_root,
+            model=request.model,
+            base_url=request.base_url,
+            apply=request.apply,
+            target_grade=request.target_grade,
         )
-    if args.rename_dictionary_source_archive is not None:
+
+    if isinstance(request, DictionarySourceRenameRequest):
         return rename_dictionary_source_archive_cli(
-            archive_root=args.rename_dictionary_source_archive,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            apply=args.apply_dictionary_source_renames,
+            archive_root=request.archive_root,
+            model=request.model,
+            base_url=request.base_url,
+            apply=request.apply,
+            target_grade=request.target_grade,
         )
-    if args.build_usage_signals:
+
+    if isinstance(request, UsageSignalsRequest):
         return build_usage_signals_cli(
-            archive_root=args.usage_signal_input_root,
-            output_root=resolved_usage_signal_output_root(args),
-            target_grade=target_grade_from_args(args) if target_grade_was_explicit(args) else None,
-            include_punctuation=args.include_punctuation,
-            include_numbers=args.include_numbers,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
+            archive_root=request.archive_root,
+            output_root=request.output_root,
+            target_grade=request.target_grade,
+            include_punctuation=request.include_punctuation,
+            include_numbers=request.include_numbers,
+            model=request.model,
+            base_url=request.base_url,
         )
-    if args.update_live_lexicon:
+
+    if isinstance(request, LiveLexiconRequest):
         return update_live_lexicon_cli(
-            canonical_dictionary_path=args.canonical_dictionary,
-            usage_candidates_path=resolved_usage_candidates_path(args),
-            usage_summary_path=args.usage_summary,
-            live_lexicon_path=resolved_live_lexicon_path(args),
-            supplemental_lexicon_path=resolved_supplemental_lexicon_path(args),
-            unmatched_usage_output_path=resolved_unmatched_usage_output_path(args),
+            canonical_dictionary_path=request.canonical_dictionary_path,
+            usage_candidates_path=request.usage_candidates_path,
+            usage_summary_path=request.usage_summary_path,
+            live_lexicon_path=request.live_lexicon_path,
+            supplemental_lexicon_path=request.supplemental_lexicon_path,
+            unmatched_usage_output_path=request.unmatched_usage_output_path,
+            target_grade=request.target_grade,
         )
-    if args.show_distribution is not None:
-        return show_distribution(
-            jsonl_path=resolve_distribution_path(args.show_distribution, args.output),
-            model=args.ollama_model,
-        )
-    if args.link_cleaned_examples:
-        return link_cleaned_examples(output_dir=args.output)
-    if args.add_reference_meanings:
-        return add_reference_meanings(
-            output_dir=args.output,
-            reference_dictionary_path=args.reference_dictionary,
-        )
-    if args.generate_missing_meanings:
-        return generate_missing_meanings(
-            output_dir=args.output,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-        )
-    return None
+
+    raise ValueError(f"Unsupported CLI command: {request.command_id}")
 
 
-def build_dictionary_cli(args: argparse.Namespace) -> int:
+def _request_vocabulary_source(
+    fallback: RewriteVocabularySource | None,
+    raw_args: object,
+) -> RewriteVocabularySource | None:
+    if raw_args is not None:
+        return rewrite_vocabulary_source_from_args(raw_args)
+    return fallback
+
+
+def _coerce_dictionary_build_request(args_or_request: argparse.Namespace | DictionaryBuildRequest, command_id: CommandId) -> DictionaryBuildRequest:
+    if isinstance(args_or_request, DictionaryBuildRequest):
+        return args_or_request
+    request = build_cli_request(args_or_request)
+    if not isinstance(request, DictionaryBuildRequest) or request.command_id != command_id:
+        raise PipelineUsageError(f"expected {command_id.value} request")
+    return request
+
+
+def _coerce_dictionary_recovery_request(args_or_request: argparse.Namespace | DictionaryRecoveryRequest) -> DictionaryRecoveryRequest:
+    if isinstance(args_or_request, DictionaryRecoveryRequest):
+        return args_or_request
+    request = build_cli_request(args_or_request)
+    if not isinstance(request, DictionaryRecoveryRequest):
+        raise PipelineUsageError("expected dictionary recovery request")
+    return request
+
+
+def build_dictionary_cli(args: argparse.Namespace | DictionaryBuildRequest) -> int:
+    request = _coerce_dictionary_build_request(args, CommandId.DICTIONARY_BUILD)
+    input_dir = request.input_dir
+    output_dir = request.output_dir
     emit_boot_screen(
-        input_dir=args.input,
-        output_dir=args.output,
+        input_dir=input_dir,
+        output_dir=output_dir,
         clean_example_sentences=True,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
 
     try:
         result = build_resumable_dictionary(
-            input_dir=args.input,
-            output_dir=args.output,
-            reference_dictionary_path=args.reference_dictionary,
-            include_punctuation=args.include_punctuation,
-            include_numbers=args.include_numbers,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            force=args.force,
+            target_grade=request.target_grade,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            reference_dictionary_path=request.reference_dictionary_path,
+            include_punctuation=request.include_punctuation,
+            include_numbers=request.include_numbers,
+            model=request.model,
+            base_url=request.base_url,
+            force=request.force,
             progress=emit_stage_update,
             cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="example",
                 item_label="rows",
             ),
             dictionary_cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="dictionary",
                 item_label="terms",
             ),
             generated_example_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="candidate example",
                 item_label="terms",
             ),
             generated_meaning_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="meaning",
                 item_label="terms",
             ),
-            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+            artifact_callback=pipeline_artifact_callback(model=request.model),
             checkpoint_status=emit_dictionary_build_checkpoint_status,
             target_checkpoint="15",
         )
@@ -514,35 +601,39 @@ def build_dictionary_cli(args: argparse.Namespace) -> int:
 
     emit_completion_screen(
         result.pipeline_result,
-        input_dir=args.input,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
+        input_dir=input_dir,
+        include_punctuation=request.include_punctuation,
+        include_numbers=request.include_numbers,
         clean_example_sentences=True,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
     return 0
 
 
-def prep_dictionary_cli(args: argparse.Namespace) -> int:
+def prep_dictionary_cli(args: argparse.Namespace | DictionaryBuildRequest) -> int:
+    request = _coerce_dictionary_build_request(args, CommandId.DICTIONARY_PREP)
+    input_dir = request.input_dir
+    output_dir = request.output_dir
     emit_boot_screen(
-        input_dir=args.input,
-        output_dir=args.output,
+        input_dir=input_dir,
+        output_dir=output_dir,
         clean_example_sentences=False,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
 
     try:
         result = build_resumable_dictionary(
-            input_dir=args.input,
-            output_dir=args.output,
-            reference_dictionary_path=args.reference_dictionary,
-            include_punctuation=args.include_punctuation,
-            include_numbers=args.include_numbers,
-            model=args.ollama_model,
-            base_url=args.ollama_base_url,
-            force=args.force,
+            target_grade=request.target_grade,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            reference_dictionary_path=request.reference_dictionary_path,
+            include_punctuation=request.include_punctuation,
+            include_numbers=request.include_numbers,
+            model=request.model,
+            base_url=request.base_url,
+            force=request.force,
             progress=emit_stage_update,
-            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+            artifact_callback=pipeline_artifact_callback(model=request.model),
             checkpoint_status=emit_dictionary_build_checkpoint_status,
             target_checkpoint="09",
         )
@@ -559,50 +650,53 @@ def prep_dictionary_cli(args: argparse.Namespace) -> int:
 
     emit_completion_screen(
         result.pipeline_result,
-        input_dir=args.input,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
+        input_dir=input_dir,
+        include_punctuation=request.include_punctuation,
+        include_numbers=request.include_numbers,
         clean_example_sentences=False,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
     return 0
 
 
-def dictionary_recovery_cli(args: argparse.Namespace) -> int:
+def dictionary_recovery_cli(args: argparse.Namespace | DictionaryRecoveryRequest) -> int:
+    request = _coerce_dictionary_recovery_request(args)
+    input_dir = request.input_dir
+    output_dir = request.output_dir
     emit_boot_screen(
-        input_dir=args.input,
-        output_dir=args.output,
+        input_dir=input_dir,
+        output_dir=output_dir,
         clean_example_sentences=True,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
 
     try:
         run_saved_dictionary_cleanup(
-            output_dir=args.output,
-            clean_example_sentences=args.clean_example_sentences,
-            clean_dictionary_candidates=args.clean_dictionary_candidates,
-            generate_missing_examples=args.generate_missing_examples,
-            retry_generated_examples=args.retry_generated_examples,
-            sentence_cleanup_model=args.ollama_model,
-            sentence_cleanup_base_url=args.ollama_base_url,
+            output_dir=output_dir,
+            clean_example_sentences=request.clean_example_sentences,
+            clean_dictionary_candidates=request.clean_dictionary_candidates,
+            generate_missing_examples=request.generate_missing_examples,
+            retry_generated_examples=request.retry_generated_examples,
+            sentence_cleanup_model=request.model,
+            sentence_cleanup_base_url=request.base_url,
             progress=emit_stage_update,
             cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="example",
                 item_label="rows",
             ),
             dictionary_cleanup_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="dictionary",
                 item_label="terms",
             ),
             generated_example_progress=cleanup_progress_callback(
-                model=args.ollama_model,
+                model=request.model,
                 label="candidate example",
                 item_label="terms",
             ),
-            generated_example_retry_decider=generated_example_retry_decider(args),
-            artifact_callback=pipeline_artifact_callback(model=args.ollama_model),
+            generated_example_retry_decider=generated_example_retry_decider(request),
+            artifact_callback=pipeline_artifact_callback(model=request.model),
         )
     except ValueError as error:
         raise PipelineUsageError(str(error)) from error
@@ -611,12 +705,12 @@ def dictionary_recovery_cli(args: argparse.Namespace) -> int:
         return 1
 
     emit_completion_screen(
-        load_pipeline_result_from_output(args.output),
-        input_dir=args.input,
-        include_punctuation=args.include_punctuation,
-        include_numbers=args.include_numbers,
+        load_pipeline_result_from_output(output_dir),
+        input_dir=input_dir,
+        include_punctuation=request.include_punctuation,
+        include_numbers=request.include_numbers,
         clean_example_sentences=True,
-        sentence_cleanup_model=args.ollama_model,
+        sentence_cleanup_model=request.model,
     )
     return 0
 
@@ -635,36 +729,25 @@ def rewrite_dictionary_path_from_args(args: argparse.Namespace) -> Path:
 
 
 def rewrite_vocabulary_source_from_args(args: argparse.Namespace) -> RewriteVocabularySource:
-    if args.rewrite_dictionary is not None:
-        path = args.rewrite_dictionary
-        return RewriteVocabularySource(path=path, kind="explicit", sha256=file_sha256_if_present(path))
-    live_lexicon_path = default_live_lexicon_path(target_grade_from_args(args)) if target_grade_was_explicit(args) else DEFAULT_LIVE_LEXICON_PATH
-    if live_lexicon_path.is_file():
-        return RewriteVocabularySource(
-            path=live_lexicon_path,
-            kind="live_lexicon",
-            sha256=file_sha256_if_present(live_lexicon_path),
-        )
-    dictionary_path = artifact_path(args.output, ArtifactId.FINAL_DICTIONARY)
-    return RewriteVocabularySource(
-        path=dictionary_path,
-        kind="dictionary_seed",
-        sha256=file_sha256_if_present(dictionary_path),
+    return application_workspace.rewrite_vocabulary_source(
+        explicit_path=args.rewrite_dictionary,
+        target_grade=target_grade_from_args(args),
+        dictionary_output_dir=resolved_dictionary_output_dir(args),
+        live_lexicon_path_factory=default_live_lexicon_path,
+        file_sha256=file_sha256_if_present,
     )
 
 
 def file_sha256_if_present(path: Path) -> str:
-    if not path.is_file():
-        return ""
-    return sha256_file(path)
+    return application_workspace.file_sha256_if_present(path)
 
 
 def source_parse_options_from_args(args: argparse.Namespace) -> SourceParseOptions:
-    return SourceParseOptions(
-        output_root=args.source_output_root,
-        parse_pdf=not args.skip_pdf_parse,
-        render_dpi=args.pdf_render_dpi,
-        paddleocr_vl_settings=None if args.skip_pdf_parse else paddleocr_vl_settings_from_args(args),
+    return application_source_parse_options_from_args(
+        args,
+        discover_sidecar_env=discover_paddleocr_vl_sidecar_env,
+        validate_sidecar=validate_paddleocr_vl_sidecar,
+        current_python_available=current_python_has_paddleocr,
     )
 
 
@@ -690,15 +773,21 @@ def cleanup_progress_callback(
 
 
 def generated_example_retry_decider(
-    args: argparse.Namespace,
+    args: argparse.Namespace | DictionaryRecoveryRequest,
 ) -> Callable[[GeneratedExampleAttemptSummary], bool]:
+    output_dir = args.output_dir if isinstance(args, DictionaryRecoveryRequest) else resolved_dictionary_output_dir(args)
+    retry_generated_examples = (
+        args.retry_generated_examples if isinstance(args, DictionaryRecoveryRequest) else bool(args.retry_generated_examples)
+    )
+    model = args.model if isinstance(args, DictionaryRecoveryRequest) else args.ollama_model
+
     def decide(summary: GeneratedExampleAttemptSummary) -> bool:
-        if args.retry_generated_examples:
+        if retry_generated_examples:
             return False
         return prompt_generated_example_retry(
             summary=summary,
-            output_dir=args.output,
-            model=args.ollama_model,
+            output_dir=output_dir,
+            model=model,
         )
 
     return decide
@@ -842,6 +931,26 @@ def load_dictionary_candidates(jsonl_path: Path) -> list[dict[str, object]]:
     return entries
 
 
+def migrate_grade_workspaces_cli(*, apply: bool) -> int:
+    result = migrate_grade_workspaces(apply=apply)
+    action = "applied" if apply else "preview"
+    sys.stdout.write(
+        f"grade workspace migration {action}\n"
+        f"  manifest: {result.manifest_path}\n"
+        f"  planned: {result.planned_count}\n"
+        f"  applied: {result.applied_count}\n"
+        f"  skipped: {result.skipped_count}\n"
+    )
+    for move in result.moves:
+        status = "applied" if move.applied else "skipped" if move.skipped else "planned"
+        sys.stdout.write(
+            f"  - {status} {move.kind} {move.source_path} -> {move.target_path} "
+            f"({move.target_grade}; {move.reason})\n"
+        )
+    sys.stdout.flush()
+    return 0
+
+
 def emit_rendered_artifact_drop(
     stage: str,
     *,
@@ -895,6 +1004,7 @@ def parse_source_material_cli(
     source_path: Path,
     output_root: Path,
     source_id: str | None,
+    target_grade: str,
     parse_pdf: bool,
     render_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
@@ -904,6 +1014,7 @@ def parse_source_material_cli(
             source_path,
             output_root=output_root,
             source_id=source_id,
+            target_grade=target_grade,
             parse_pdf=parse_pdf,
             render_dpi=render_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
@@ -936,6 +1047,7 @@ def parse_source_materials_cli(
     *,
     source_dir: Path,
     output_root: Path,
+    target_grade: str,
     parse_pdf: bool,
     render_dpi: int,
     paddleocr_vl_settings: PaddleOCRVLSettings | None,
@@ -944,6 +1056,7 @@ def parse_source_materials_cli(
         result = parse_source_materials(
             source_dir,
             output_root=output_root,
+            target_grade=target_grade,
             parse_pdf=parse_pdf,
             render_dpi=render_dpi,
             paddleocr_vl_settings=paddleocr_vl_settings,
@@ -1628,6 +1741,7 @@ def generate_after_class_reading_report_cli(
     model: str,
     base_url: str | None,
     font_path: Path | None,
+    target_grade: str,
 ) -> int:
     client = ollama_client(
         model=model,
@@ -1642,6 +1756,7 @@ def generate_after_class_reading_report_cli(
                 output_root=output_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 font_path=font_path,
                 progress=emit_after_class_report_progress,
             )
@@ -1690,7 +1805,7 @@ def build_usage_signals_cli(
     *,
     archive_root: Path,
     output_root: Path,
-    target_grade: str | None,
+    target_grade: str,
     include_punctuation: bool,
     include_numbers: bool,
     model: str,
@@ -1701,6 +1816,7 @@ def build_usage_signals_cli(
         base_url=base_url,
         timeout_seconds=300.0,
         max_output_tokens=1024,
+        client_factory=ollama_client,
     )
     try:
         try:
@@ -1748,6 +1864,7 @@ def emit_usage_signal_progress(phase: str, detail: str) -> None:
 
 def update_live_lexicon_cli(
     *,
+    target_grade: str,
     canonical_dictionary_path: Path,
     usage_candidates_path: Path,
     usage_summary_path: Path | None,
@@ -1757,6 +1874,7 @@ def update_live_lexicon_cli(
 ) -> int:
     try:
         result = update_live_lexicon(
+            target_grade=target_grade,
             canonical_dictionary_path=canonical_dictionary_path,
             usage_candidates_path=usage_candidates_path,
             usage_summary_path=usage_summary_path,
@@ -1806,7 +1924,13 @@ def resolve_dictionary_source_duplicates_cli(
     *,
     archive_root: Path,
     yes: bool,
+    target_grade: str,
 ) -> int:
+    try:
+        validate_managed_dictionary_source_grades(archive_root, target_grade=target_grade)
+    except DictionarySourceArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
     try:
         preview = resolve_dictionary_source_duplicates(archive_root, apply=False)
     except DictionarySourceArchiveError as error:
@@ -1880,7 +2004,13 @@ def resolve_archive_duplicates_cli(
     include_near_duplicates: bool,
     model: str,
     base_url: str | None,
+    target_grade: str,
 ) -> int:
+    try:
+        validate_managed_class_archive_grades(archive_root, target_grade=target_grade)
+    except ClassSessionArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
     near_duplicate_client: LazyOllamaCompletionClient | None = None
     if include_near_duplicates:
         near_duplicate_client = LazyOllamaCompletionClient(
@@ -1888,6 +2018,7 @@ def resolve_archive_duplicates_cli(
             base_url=base_url,
             timeout_seconds=300.0,
             max_output_tokens=1024,
+            client_factory=ollama_client,
         )
     try:
         try:
@@ -1986,7 +2117,13 @@ def rename_class_session_archive_cli(
     model: str,
     base_url: str | None,
     apply: bool,
+    target_grade: str,
 ) -> int:
+    try:
+        validate_managed_class_archive_grades(archive_root, target_grade=target_grade)
+    except ClassSessionArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
     client = ollama_client(
         model=model,
         base_url=base_url,
@@ -1999,6 +2136,7 @@ def rename_class_session_archive_cli(
                 archive_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 apply=apply,
                 progress=emit_archive_rename_progress,
             )
@@ -2039,7 +2177,13 @@ def rename_dictionary_source_archive_cli(
     model: str,
     base_url: str | None,
     apply: bool,
+    target_grade: str,
 ) -> int:
+    try:
+        validate_managed_dictionary_source_grades(archive_root, target_grade=target_grade)
+    except DictionarySourceArchiveError as error:
+        sys.stderr.write(f"wordbyword: {error}\n")
+        return 1
     client = ollama_client(
         model=model,
         base_url=base_url,
@@ -2052,6 +2196,7 @@ def rename_dictionary_source_archive_cli(
                 archive_root,
                 client=client,
                 model=model,
+                target_grade=target_grade,
                 apply=apply,
                 progress=emit_dictionary_source_rename_progress,
             )
@@ -2097,125 +2242,40 @@ def warn_if_model_unload_fails(client: SupportsCompletion) -> None:
 
 
 def paddleocr_vl_settings_from_args(args: argparse.Namespace) -> PaddleOCRVLSettings | None:
-    sidecar_env = (
-        args.paddleocr_vl_sidecar_env.as_posix()
-        if args.paddleocr_vl_sidecar_env is not None
-        else None
-    )
-    sidecar_python = (
-        args.paddleocr_vl_sidecar_python.as_posix()
-        if args.paddleocr_vl_sidecar_python is not None
-        else None
-    )
-    if sidecar_env is None and sidecar_python is None:
-        sidecar_python = os.environ.get(PADDLEOCR_VL_SIDECAR_PYTHON_ENV_VAR) or None
-        sidecar_env = os.environ.get(PADDLEOCR_VL_SIDECAR_ENV_VAR) or None
-    if sidecar_env is None and sidecar_python is None:
-        discovered_sidecar_env = discover_paddleocr_vl_sidecar_env()
-        sidecar_env = discovered_sidecar_env.as_posix() if discovered_sidecar_env is not None else None
-
-    if sidecar_env is not None or sidecar_python is not None:
-        validate_paddleocr_vl_sidecar(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
-    elif not current_python_has_paddleocr():
-        raise PipelineUsageError(
-            "PaddleOCR-VL parser is selected, but PaddleOCR-VL is not available. "
-            "Create .venv-paddleocr-vl, set WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV, "
-            "or pass --paddleocr-vl-sidecar-env /path/to/env. Use --skip-pdf-parse "
-            "only when you intentionally want workspace preparation without PDF parsing."
-        )
-
-    return PaddleOCRVLSettings(
-        device=args.paddleocr_vl_device,
-        engine=args.paddleocr_vl_engine,
-        vl_rec_backend=args.paddleocr_vl_rec_backend,
-        vl_rec_server_url=args.paddleocr_vl_rec_server_url,
-        vl_rec_api_model_name=args.paddleocr_vl_rec_api_model_name,
-        vl_rec_api_key=args.paddleocr_vl_rec_api_key,
-        use_doc_orientation_classify=args.paddleocr_vl_doc_orientation or None,
-        use_doc_unwarping=args.paddleocr_vl_doc_unwarping or None,
-        use_layout_detection=False if args.paddleocr_vl_no_layout_detection else None,
-        use_chart_recognition=args.paddleocr_vl_chart_recognition or None,
-        use_seal_recognition=args.paddleocr_vl_seal_recognition or None,
-        use_ocr_for_image_block=False if args.paddleocr_vl_no_ocr_for_image_block else None,
-        max_new_tokens=args.paddleocr_vl_max_new_tokens,
-        sidecar_env=sidecar_env,
-        sidecar_python=sidecar_python,
-        sidecar_timeout_seconds=args.paddleocr_vl_sidecar_timeout_seconds,
+    return application_paddleocr_vl_settings_from_args(
+        args,
+        discover_sidecar_env=discover_paddleocr_vl_sidecar_env,
+        validate_sidecar=validate_paddleocr_vl_sidecar,
+        current_python_available=current_python_has_paddleocr,
     )
 
 
 def discover_paddleocr_vl_sidecar_env(*, roots: Sequence[Path] | None = None) -> Path | None:
-    for root in roots or paddleocr_vl_sidecar_search_roots():
-        for env_name in DEFAULT_PADDLEOCR_VL_SIDECAR_ENVS:
-            candidate = root / env_name
-            if candidate.is_dir():
-                python_path = paddleocr_vl_sidecar_python_path(sidecar_env=candidate.as_posix(), sidecar_python=None)
-                if python_path is not None and paddleocr_vl_python_can_locate_paddleocr(python_path):
-                    return candidate
-    return None
+    return application_discover_paddleocr_vl_sidecar_env(roots=roots)
 
 
 def paddleocr_vl_sidecar_search_roots() -> tuple[Path, ...]:
-    roots = [Path.cwd(), wordbyword_project_root()]
-    unique_roots: list[Path] = []
-    for root in roots:
-        resolved = root.resolve()
-        if resolved not in unique_roots:
-            unique_roots.append(resolved)
-    return tuple(unique_roots)
+    return application_paddleocr_vl_sidecar_search_roots()
 
 
 def wordbyword_project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return application_wordbyword_project_root()
 
 
 def current_python_has_paddleocr() -> bool:
-    return importlib.util.find_spec("paddleocr") is not None
+    return application_current_python_has_paddleocr()
 
 
 def validate_paddleocr_vl_sidecar(*, sidecar_env: str | None, sidecar_python: str | None) -> None:
-    python_path = paddleocr_vl_sidecar_python_path(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
-    label = sidecar_python or sidecar_env or "unknown sidecar"
-    if python_path is None or not paddleocr_vl_python_can_locate_paddleocr(python_path):
-        raise PipelineUsageError(
-            "PaddleOCR-VL sidecar cannot import paddleocr: "
-            f"{label}. Install PaddleOCR-VL there or choose a valid sidecar with "
-            "--paddleocr-vl-sidecar-env /path/to/env."
-        )
+    application_validate_paddleocr_vl_sidecar(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
 
 
 def paddleocr_vl_sidecar_python_path(*, sidecar_env: str | None, sidecar_python: str | None) -> Path | None:
-    if sidecar_python:
-        return Path(sidecar_python).expanduser()
-    if not sidecar_env:
-        return None
-    sidecar_env_path = Path(sidecar_env).expanduser()
-    for candidate in (
-        sidecar_env_path / "bin" / "python",
-        sidecar_env_path / "Scripts" / "python.exe",
-    ):
-        if candidate.is_file():
-            return candidate
-    return None
+    return application_paddleocr_vl_sidecar_python_path(sidecar_env=sidecar_env, sidecar_python=sidecar_python)
 
 
 def paddleocr_vl_python_can_locate_paddleocr(python_path: Path) -> bool:
-    if not python_path.is_file():
-        return False
-    try:
-        result = subprocess.run(
-            [
-                python_path.as_posix(),
-                "-c",
-                "import importlib.util; raise SystemExit(0 if importlib.util.find_spec('paddleocr') else 1)",
-            ],
-            capture_output=True,
-            check=False,
-            timeout=30.0,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+    return application_paddleocr_vl_python_can_locate_paddleocr(python_path)
 
 
 def prompt_generated_example_retry(

@@ -18,16 +18,20 @@ from wordbyword.dictionary_build.candidates import (
 )
 from wordbyword.dictionary_build.output_files import read_jsonl, write_jsonl
 from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
     default_live_lexicon_path,
     default_supplemental_lexicon_path,
     default_unmatched_usage_output_path,
+    grade_workspace,
+    normalize_target_grade,
 )
 
-DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(Path("build-dictionary"), ArtifactId.FINAL_DICTIONARY)
+DEFAULT_CANONICAL_DICTIONARY_PATH = artifact_path(grade_workspace().dictionary_output_dir, ArtifactId.FINAL_DICTIONARY)
 DEFAULT_LIVE_LEXICON_PATH = default_live_lexicon_path()
 DEFAULT_SUPPLEMENTAL_LEXICON_PATH = default_supplemental_lexicon_path()
 DEFAULT_USAGE_CANDIDATES_PATH = artifact_path(DEFAULT_USAGE_SIGNAL_OUTPUT_ROOT, ArtifactId.DICTIONARY_CANDIDATES)
 DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH = default_unmatched_usage_output_path()
+LIVE_LEXICON_MANIFEST_FILENAME = "manifest.json"
 CANONICAL_SOURCE_DICTIONARY_SEED = "seeded_from_dictionary"
 CANONICAL_SOURCE_LIVE_LEXICON = "existing_live_lexicon"
 SUPPLEMENTAL_SOURCE_TIER = "supplemental_private"
@@ -50,12 +54,14 @@ REMOVED_CANONICAL_FIELDS = {
 
 @dataclass(frozen=True)
 class LiveLexiconUpdateResult:
+    target_grade: str
     canonical_dictionary_path: Path
     usage_candidates_path: Path
     usage_summary_path: Path
     live_lexicon_path: Path
     supplemental_lexicon_path: Path
     unmatched_usage_output_path: Path
+    manifest_path: Path
     canonical_source: str
     canonical_rows: int
     live_lexicon_rows: int
@@ -87,6 +93,7 @@ class LiveLexiconUpdateError(RuntimeError):
 
 def update_live_lexicon(
     *,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     canonical_dictionary_path: Path = DEFAULT_CANONICAL_DICTIONARY_PATH,
     usage_candidates_path: Path = DEFAULT_USAGE_CANDIDATES_PATH,
     usage_summary_path: Path | None = None,
@@ -95,10 +102,16 @@ def update_live_lexicon(
     unmatched_usage_output_path: Path = DEFAULT_UNMATCHED_USAGE_OUTPUT_PATH,
     progress: ProgressCallback | None = None,
 ) -> LiveLexiconUpdateResult:
+    resolved_target_grade = normalize_target_grade(target_grade)
     resolved_usage_summary_path = usage_summary_path or artifact_path(usage_candidates_path.parent, ArtifactId.SUMMARY)
     _report(progress, "load", f"reading usage candidates from {usage_candidates_path}")
     usage_candidates = read_jsonl_objects(usage_candidates_path, label="usage candidates")
     usage_summary = read_json_object(resolved_usage_summary_path, label="usage summary")
+    validate_usage_summary_target_grade(
+        usage_summary,
+        target_grade=resolved_target_grade,
+        usage_summary_path=resolved_usage_summary_path,
+    )
     total_class_printouts = parse_nonnegative_int(
         usage_summary.get("document_count"),
         field="document_count",
@@ -172,6 +185,25 @@ def update_live_lexicon(
     write_jsonl_atomic(live_lexicon_path, updated_rows)
     write_jsonl_atomic(supplemental_lexicon_path, supplemental_result.rows)
     write_jsonl_atomic(unmatched_usage_output_path, unmatched_usage_candidates)
+    manifest_path = live_lexicon_path.parent / LIVE_LEXICON_MANIFEST_FILENAME
+    write_live_lexicon_manifest(
+        manifest_path,
+        target_grade=resolved_target_grade,
+        canonical_dictionary_path=canonical_dictionary_path,
+        usage_candidates_path=usage_candidates_path,
+        usage_summary_path=resolved_usage_summary_path,
+        live_lexicon_path=live_lexicon_path,
+        supplemental_lexicon_path=supplemental_lexicon_path,
+        unmatched_usage_output_path=unmatched_usage_output_path,
+        canonical_source=canonical_source,
+        canonical_rows=len(canonical_source_rows),
+        live_lexicon_rows=len(updated_rows),
+        usage_candidate_rows=len(usage_candidates),
+        total_class_printouts=total_class_printouts,
+        matched_count=matched_count,
+        unmatched_count=len(unmatched_usage_candidates),
+        supplemental_result=supplemental_result,
+    )
     _report(
         progress,
         "complete",
@@ -179,12 +211,14 @@ def update_live_lexicon(
     )
 
     return LiveLexiconUpdateResult(
+        target_grade=resolved_target_grade,
         canonical_dictionary_path=canonical_dictionary_path,
         usage_candidates_path=usage_candidates_path,
         usage_summary_path=resolved_usage_summary_path,
         live_lexicon_path=live_lexicon_path,
         supplemental_lexicon_path=supplemental_lexicon_path,
         unmatched_usage_output_path=unmatched_usage_output_path,
+        manifest_path=manifest_path,
         canonical_source=canonical_source,
         canonical_rows=len(canonical_source_rows),
         live_lexicon_rows=len(updated_rows),
@@ -199,6 +233,75 @@ def update_live_lexicon(
         supplemental_inactive_count=supplemental_result.inactive_count,
         supplemental_promoted_count=supplemental_result.promoted_count,
     )
+
+
+def validate_usage_summary_target_grade(
+    usage_summary: Mapping[str, Any],
+    *,
+    target_grade: str,
+    usage_summary_path: Path,
+) -> None:
+    summary_grade = str(usage_summary.get("target_grade") or "").strip()
+    if not summary_grade:
+        raise LiveLexiconUpdateError(f"Usage summary has no target_grade: {usage_summary_path}")
+    try:
+        normalized_summary_grade = normalize_target_grade(summary_grade)
+    except ValueError as error:
+        raise LiveLexiconUpdateError(f"Usage summary has invalid target_grade: {usage_summary_path}") from error
+    if normalized_summary_grade != target_grade:
+        raise LiveLexiconUpdateError(
+            f"Usage summary grade {normalized_summary_grade} does not match target grade {target_grade}: {usage_summary_path}"
+        )
+
+
+def write_live_lexicon_manifest(
+    path: Path,
+    *,
+    target_grade: str,
+    canonical_dictionary_path: Path,
+    usage_candidates_path: Path,
+    usage_summary_path: Path,
+    live_lexicon_path: Path,
+    supplemental_lexicon_path: Path,
+    unmatched_usage_output_path: Path,
+    canonical_source: str,
+    canonical_rows: int,
+    live_lexicon_rows: int,
+    usage_candidate_rows: int,
+    total_class_printouts: int,
+    matched_count: int,
+    unmatched_count: int,
+    supplemental_result: SupplementalLexiconUpdate,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "wordbyword.live_grade_lexicon.v1",
+        "target_grade": target_grade,
+        "inputs": {
+            "canonical_dictionary_path": str(canonical_dictionary_path),
+            "usage_candidates_path": str(usage_candidates_path),
+            "usage_summary_path": str(usage_summary_path),
+        },
+        "outputs": {
+            "live_lexicon_path": str(live_lexicon_path),
+            "supplemental_lexicon_path": str(supplemental_lexicon_path),
+            "unmatched_usage_output_path": str(unmatched_usage_output_path),
+        },
+        "canonical_source": canonical_source,
+        "canonical_rows": canonical_rows,
+        "live_lexicon_rows": live_lexicon_rows,
+        "usage_candidate_rows": usage_candidate_rows,
+        "total_class_printouts": total_class_printouts,
+        "matched_count": matched_count,
+        "unmatched_count": unmatched_count,
+        "supplemental_rows": len(supplemental_result.rows),
+        "supplemental_active_rows": supplemental_result.active_rows,
+        "supplemental_added_count": supplemental_result.added_count,
+        "supplemental_updated_count": supplemental_result.updated_count,
+        "supplemental_inactive_count": supplemental_result.inactive_count,
+        "supplemental_promoted_count": supplemental_result.promoted_count,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def read_jsonl_objects(path: Path, *, label: str) -> list[dict[str, Any]]:

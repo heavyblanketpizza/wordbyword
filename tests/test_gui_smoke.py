@@ -26,12 +26,107 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertEqual(bridge.workflowDefinitions[0]["key"], "before_start")
         self.assertIn("dictionary", bridge.workflowReadiness)
         self.assertEqual(bridge.languageState["selected"], "system")
+        self.assertEqual(bridge.appearanceState["theme"], "standard")
+        self.assertIn({"value": "neobrutalist", "label": "Neo Pop"}, bridge.appearanceState["theme_options"])
+        self.assertEqual(bridge.appearanceState["theme_palette"]["app_bg"], "#f7f7f4")
+        self.assertEqual(bridge.appearanceState["text_scale"], 1.0)
+        self.assertEqual(bridge.appearanceState["text_scale_percent"], 100)
 
         self.assertTrue(bridge.setLanguage("ko"))
         self.assertEqual(bridge.languageState["selected"], "ko")
         self.assertEqual(bridge.texts["workflow.dictionary.title"], "사전 구축")
+        self.assertIn({"value": "neobrutalist", "label": "컬러 네오팝"}, bridge.appearanceState["theme_options"])
         self.assertEqual(bridge.workflowDefinitions[1]["title"], "사전 구축")
         self.assertEqual(bridge.artifactText, "아직 산출물이 없습니다.")
+        self.assertTrue(bridge.setTheme("neobrutalist"))
+        self.assertEqual(bridge.appearanceState["theme"], "neobrutalist")
+        self.assertEqual(bridge.appearanceState["theme_palette"]["primary_bg"], "#ffe15a")
+        self.assertEqual(bridge.settings["gui_theme"], "neobrutalist")
+        self.assertTrue(bridge.setTheme("bogus"))
+        self.assertEqual(bridge.appearanceState["theme"], "standard")
+        self.assertTrue(bridge.setTextScale(1.24))
+        self.assertEqual(bridge.appearanceState["text_scale"], 1.25)
+        self.assertEqual(bridge.settings["gui_text_scale"], 1.25)
+
+    def test_bridge_rejects_external_workspace_guard_without_starting_worker(self) -> None:
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as error:
+            self.skipTest(f"PySide6 is not installed: {error}")
+
+        from wordbyword.execution_guard import acquire_workspace_command_guard
+        from wordbyword.gui.bridge import WordByWordBridge
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication(["test", "-platform", "offscreen"])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bridge = WordByWordBridge(settings_path=root / "settings.json", workspace_root=root)
+            with acquire_workspace_command_guard("external cli", workspace_root=root):
+                self.assertFalse(bridge.runJob("dictionary_build", {}))
+
+            self.assertFalse(bridge.jobState["busy"])
+            self.assertEqual(bridge.jobState["status"], "failed")
+            self.assertEqual(bridge.jobState["phase"], "blocked")
+            self.assertIn("external cli", bridge.logText)
+            self.assertIsNone(bridge._thread)
+
+    def test_bridge_rejects_second_job_without_overwriting_running_state(self) -> None:
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as error:
+            self.skipTest(f"PySide6 is not installed: {error}")
+
+        from wordbyword.gui.bridge import WordByWordBridge
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication(["test", "-platform", "offscreen"])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bridge = WordByWordBridge(settings_path=root / "settings.json", workspace_root=root)
+            bridge._set_job_state(
+                {
+                    "busy": True,
+                    "workflow": "class_printouts",
+                    "phase": "rewrite",
+                    "detail": "rewriting",
+                    "status": "running",
+                    "current": 1,
+                    "total": 2,
+                    "error": "",
+                }
+            )
+
+            self.assertFalse(bridge.runJob("dictionary_build", {}))
+
+            self.assertTrue(bridge.jobState["busy"])
+            self.assertEqual(bridge.jobState["workflow"], "class_printouts")
+            self.assertEqual(bridge.jobState["phase"], "rewrite")
+            self.assertEqual(bridge.jobState["status"], "running")
+
+    def test_bridge_releases_workspace_guard_when_job_finishes(self) -> None:
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as error:
+            self.skipTest(f"PySide6 is not installed: {error}")
+
+        from wordbyword.execution_guard import acquire_workspace_command_guard
+        from wordbyword.gui.bridge import WordByWordBridge
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication(["test", "-platform", "offscreen"])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            bridge = WordByWordBridge(settings_path=root / "settings.json", workspace_root=root)
+            bridge._job_guard = acquire_workspace_command_guard("gui job", workspace_root=root)
+
+            bridge._on_finished({"status": "complete"})
+
+            with acquire_workspace_command_guard("later job", workspace_root=root):
+                pass
 
     def test_redesigned_qml_loads_offscreen(self) -> None:
         try:
@@ -62,29 +157,42 @@ class GuiSmokeTests(unittest.TestCase):
             qml_path = Path(__file__).resolve().parents[1] / "wordbyword" / "gui" / "qml" / "Main.qml"
 
             for initial_language in ("system", "en", "ko"):
-                with self.subTest(initial_language=initial_language):
-                    with tempfile.TemporaryDirectory() as workspace:
-                        settings_path = Path(workspace) / "settings.json"
-                        settings = default_settings()
-                        settings["gui_language"] = initial_language
-                        save_settings(settings, settings_path)
-                        engine = QQmlApplicationEngine()
-                        bridge = WordByWordBridge(settings_path=settings_path)
-                        bridge.setParent(app)
-                        engine.rootContext().setContextProperty("bridge", bridge)
-                        engine.rootContext().setContextProperty("guiUiFontFamily", font_families["ui"])
-                        engine.rootContext().setContextProperty("guiMonoFontFamily", font_families["mono"])
-                        engine.load(QUrl.fromLocalFile(str(qml_path)))
+                for initial_scale in (0.9, 1.0, 1.3):
+                    for initial_theme in ("standard", "neobrutalist"):
+                        with self.subTest(
+                            initial_language=initial_language,
+                            initial_scale=initial_scale,
+                            initial_theme=initial_theme,
+                        ):
+                            with tempfile.TemporaryDirectory() as workspace:
+                                settings_path = Path(workspace) / "settings.json"
+                                settings = default_settings()
+                                settings["gui_language"] = initial_language
+                                settings["gui_text_scale"] = initial_scale
+                                settings["gui_theme"] = initial_theme
+                                save_settings(settings, settings_path)
+                                engine = QQmlApplicationEngine()
+                                bridge = WordByWordBridge(settings_path=settings_path)
+                                bridge.setParent(app)
+                                engine.rootContext().setContextProperty("bridge", bridge)
+                                engine.rootContext().setContextProperty("guiUiFontFamily", font_families["ui"])
+                                engine.rootContext().setContextProperty("guiMonoFontFamily", font_families["mono"])
+                                engine.load(QUrl.fromLocalFile(str(qml_path)))
 
-                        self.assertTrue(engine.rootObjects())
-                        def switch_language_and_quit(bridge: WordByWordBridge = bridge) -> None:
-                            bridge.setLanguage("ko")
-                            app.quit()
+                                self.assertTrue(engine.rootObjects())
 
-                        QTimer.singleShot(0, switch_language_and_quit)
-                        app.exec()
-                        self.assertEqual(bridge.languageState["selected"], "ko")
-                        _release_qml_engine(engine)
+                                def switch_appearance_and_quit(bridge: WordByWordBridge = bridge) -> None:
+                                    bridge.setLanguage("ko")
+                                    bridge.setTheme("neobrutalist")
+                                    bridge.setTextScale(1.3)
+                                    app.quit()
+
+                                QTimer.singleShot(0, switch_appearance_and_quit)
+                                app.exec()
+                                self.assertEqual(bridge.languageState["selected"], "ko")
+                                self.assertEqual(bridge.appearanceState["theme"], "neobrutalist")
+                                self.assertEqual(bridge.appearanceState["text_scale"], 1.3)
+                                _release_qml_engine(engine)
         finally:
             qInstallMessageHandler(previous_handler)
 

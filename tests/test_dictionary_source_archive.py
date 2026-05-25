@@ -57,6 +57,25 @@ class DictionarySourceArchiveTest(unittest.TestCase):
             )
             self.assertEqual(len(client.calls), 1)
 
+    def test_rename_uses_selected_target_grade_over_model_grade(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace) / "original"
+            root.mkdir()
+            source = root / "loose.txt"
+            source.write_text("중학교 1학년 국어 교과서입니다.", encoding="utf-8")
+            client = RecordingClient({**metadata_response(), "grade_level": "grade7"})
+
+            result = rename_dictionary_source_archive(
+                root,
+                client=client,
+                model="fake",
+                target_grade="grade1",
+                apply=False,
+            )
+
+            self.assertEqual(result.plans[0].metadata.grade_level, "grade1")
+            self.assertIn("_grade1_", result.plans[0].target_name)
+
     def test_apply_renames_file_and_writes_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace) / "original"

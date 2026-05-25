@@ -23,6 +23,7 @@ from wordbyword.dictionary_build.resumable import (
     CheckpointAction,
     UnresolvedGeneratedExampleFailures,
     build_resumable_dictionary,
+    validate_artifact_schema,
 )
 from wordbyword.dictionary_build.source_archive import (
     DEFAULT_DICTIONARY_SOURCE_LEDGER_FILENAME,
@@ -105,6 +106,44 @@ class ResumableDictionaryBuildTest(unittest.TestCase):
                 )
 
             self.assertEqual(run_keys, ["06-08", "09", "10", "11", "12", "13", "14", "15"])
+
+    def test_jsonl_artifact_schema_checks_every_required_row(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "08_dictionary_candidates.jsonl"
+            write_jsonl(
+                path,
+                [
+                    {
+                        "canonical_key": "학교",
+                        "display": "학교",
+                        "example": "학교에 갑니다.",
+                        "curation_status": "accepted",
+                    },
+                    {
+                        "canonical_key": "수업",
+                        "display": "수업",
+                        "example": "수업을 시작합니다.",
+                    },
+                ],
+            )
+
+            with self.assertRaisesRegex(ValueError, r"08_dictionary_candidates\.jsonl row 2 .*curation_status"):
+                validate_artifact_schema(ArtifactId.DICTIONARY_CANDIDATES, path)
+
+    def test_required_key_jsonl_artifact_cannot_be_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "08_dictionary_candidates.jsonl"
+            path.write_text("", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, r"08_dictionary_candidates\.jsonl has no rows"):
+                validate_artifact_schema(ArtifactId.DICTIONARY_CANDIDATES, path)
+
+    def test_empty_jsonl_sidecar_schema_is_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / "13_generated_example_attempts.jsonl"
+            path.write_text("", encoding="utf-8")
+
+            validate_artifact_schema(ArtifactId.GENERATED_EXAMPLE_ATTEMPTS, path)
 
     def test_force_rebuilds_every_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

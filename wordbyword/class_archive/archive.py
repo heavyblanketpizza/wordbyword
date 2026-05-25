@@ -34,11 +34,19 @@ from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
     parse_json_object,
 )
-from wordbyword.grade_profiles import GRADE_WITH_UNKNOWN_PATTERN, normalize_grade_level as normalize_shared_grade_level
+from wordbyword.grade_profiles import (
+    CLASS_SESSION_ARCHIVE_ROOT,
+    GRADE_WITH_UNKNOWN_PATTERN,
+    UNKNOWN_GRADE,
+    extract_grade_from_source_id,
+    VOCABULARY_INTELLIGENCE_ROOT,
+    normalize_target_grade,
+    normalize_grade_level as normalize_shared_grade_level,
+)
 
 ARCHIVE_SCHEMA_VERSION = "wordbyword.class_session_archive.v1"
-DEFAULT_VOCABULARY_INTELLIGENCE_ROOT = Path("wbw-vocabulary-intelligence")
-DEFAULT_CLASS_SESSION_ARCHIVE_ROOT = DEFAULT_VOCABULARY_INTELLIGENCE_ROOT / "class-session-archive"
+DEFAULT_VOCABULARY_INTELLIGENCE_ROOT = VOCABULARY_INTELLIGENCE_ROOT
+DEFAULT_CLASS_SESSION_ARCHIVE_ROOT = CLASS_SESSION_ARCHIVE_ROOT
 DEFAULT_ARCHIVE_LEDGER_FILENAME = ".wordbyword-archive-ledger.json"
 SUPPORTED_ARCHIVE_EXTENSIONS = {".docx", ".pdf"}
 MAX_ARCHIVE_PROMPT_TEXT_CHARS = 12000
@@ -317,6 +325,7 @@ def rename_class_session_archive(
     *,
     client: SupportsCompletion,
     model: str,
+    target_grade: str | None = None,
     apply: bool = False,
     ledger_path: Path | None = None,
     clock: Callable[[], datetime] | None = None,
@@ -325,6 +334,7 @@ def rename_class_session_archive(
     root = archive_root.resolve()
     if not root.is_dir():
         raise ClassSessionArchiveError(f"class-session archive folder does not exist: {archive_root}")
+    forced_target_grade = normalize_target_grade(target_grade) if target_grade is not None else None
 
     resolved_ledger_path = (ledger_path or root / DEFAULT_ARCHIVE_LEDGER_FILENAME).resolve()
     ensure_inside_archive(root, resolved_ledger_path, allow_equal=False)
@@ -349,6 +359,8 @@ def rename_class_session_archive(
             progress(f"classifying {material.name}")
 
         metadata = classify_archive_material(material, client=client)
+        if forced_target_grade is not None:
+            metadata = metadata.model_copy(update={"grade_level": forced_target_grade})
         target_path = unique_target_path(
             root,
             filename=archive_filename(material, metadata),
@@ -1394,6 +1406,23 @@ def extract_pdf_text(path: Path, *, max_chars: int | None = MAX_ARCHIVE_PROMPT_T
 
 def is_managed_archive_name(stem: str) -> bool:
     return bool(ARCHIVE_NAME_PATTERN.fullmatch(stem))
+
+
+def validate_managed_class_archive_grades(archive_root: Path, *, target_grade: str) -> None:
+    mismatches: list[Path] = []
+    if not archive_root.exists() or not archive_root.is_dir():
+        return
+    for path in archive_root.iterdir():
+        if not path.is_file() or not is_managed_archive_name(path.stem):
+            continue
+        grade = extract_grade_from_source_id(path.stem)
+        if grade not in {target_grade, UNKNOWN_GRADE}:
+            mismatches.append(path)
+    if mismatches:
+        details = "\n".join(f"  - {path}" for path in sorted(mismatches, key=str))
+        raise ClassSessionArchiveError(
+            f"class-session archive contains managed files outside target grade {target_grade}:\n{details}"
+        )
 
 
 def normalize_grade_level(value: object) -> str:

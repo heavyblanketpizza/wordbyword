@@ -50,6 +50,7 @@ def write_summary(
     documents: list[Path],
     cleaned_example_outputs: CleanedExampleOutputs | None = None,
     cleaned_dictionary_outputs: CleanedDictionaryOutputs | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     include_cleaned_example_sentences = cleaned_example_outputs is not None
     include_cleaned_dictionary_candidates = cleaned_dictionary_outputs is not None
@@ -74,6 +75,8 @@ def write_summary(
             include_cleaned_dictionary_candidates=include_cleaned_dictionary_candidates,
         ),
     }
+    if metadata:
+        summary.update(metadata)
     if cleaned_example_outputs is not None:
         summary["reviewed_example_sentences"] = cleaned_example_outputs.reviewed_count
         summary["cleaned_example_sentences"] = len(cleaned_example_outputs.rows)

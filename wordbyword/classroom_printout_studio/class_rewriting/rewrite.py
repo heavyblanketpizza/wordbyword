@@ -202,6 +202,7 @@ class RewritePage:
 @dataclass(frozen=True)
 class ContextPacket:
     source_id: str
+    target_grade: str
     source_sha256: str
     source_filename: str
     parser_name: str
@@ -324,6 +325,7 @@ def rewrite_whole_source_material(
         target_profile=target_profile,
     )
     context = build_context_packet(parsed_bundle_dir)
+    validate_context_target_grade(context, resolved_target_grade, parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
 
@@ -526,6 +528,7 @@ def rewrite_vocabulary_guided_source_material(
         target_profile=target_profile,
     )
     context = build_context_packet(parsed_bundle_dir)
+    validate_context_target_grade(context, resolved_target_grade, parsed_bundle_dir)
     if not context.pages:
         raise SourceRewriteError(f"No page chunks found in {parsed_bundle_dir}.")
 
@@ -907,6 +910,13 @@ def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
         raise SourceRewriteError(f"Source bundle is not parsed: {parsed_bundle_dir}")
     source = mapping_value(manifest, "source")
     files = mapping_value(manifest, "files")
+    manifest_target_grade = str(manifest.get("target_grade") or "").strip()
+    if not manifest_target_grade:
+        raise SourceRewriteError(f"Parsed source bundle has no target_grade: {manifest_path}")
+    try:
+        resolved_target_grade = normalize_target_grade(manifest_target_grade)
+    except ValueError as error:
+        raise SourceRewriteError(f"Parsed source bundle has invalid target_grade: {manifest_path}") from error
     chunks_path = parsed_bundle_dir / str(files.get("chunks_json") or "chunks.json")
     content_path = parsed_bundle_dir / str(files.get("content_markdown") or "content.md")
     quality_report_path = parsed_bundle_dir / str(files.get("quality_report_json") or "quality_report.json")
@@ -952,6 +962,7 @@ def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
     )
     return ContextPacket(
         source_id=source_id,
+        target_grade=resolved_target_grade,
         source_sha256=str(source.get("sha256") or ""),
         source_filename=str(source.get("filename") or ""),
         parser_name=str(parser.get("name") or ""),
@@ -961,6 +972,17 @@ def build_context_packet(parsed_bundle_dir: Path) -> ContextPacket:
         pages=tuple(pages),
         assets=tuple(assets),
     )
+
+
+def validate_context_target_grade(
+    context: ContextPacket,
+    target_grade: str,
+    parsed_bundle_dir: Path,
+) -> None:
+    if context.target_grade != target_grade:
+        raise SourceRewriteError(
+            f"Parsed source bundle grade {context.target_grade} does not match target grade {target_grade}: {parsed_bundle_dir}"
+        )
 
 
 def discover_parsed_bundles(parsed_root: Path) -> list[Path]:
@@ -2205,6 +2227,7 @@ def build_rewrite_manifest(
         "schema_version": SOURCE_REWRITE_SCHEMA_VERSION,
         "source": {
             "id": context.source_id,
+            "target_grade": context.target_grade,
             "filename": context.source_filename,
             "sha256": context.source_sha256,
         },

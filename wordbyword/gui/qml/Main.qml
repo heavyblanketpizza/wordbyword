@@ -10,23 +10,69 @@ ApplicationWindow {
     minimumHeight: 700
     visible: true
     title: "wordbyword"
-    color: "#f7f7f4"
+    color: root.colorAppBg
 
     property int currentSection: 0
     property string uiFontFamily: (typeof guiUiFontFamily === "undefined" || guiUiFontFamily.length === 0) ? "Pretendard Variable" : guiUiFontFamily
     property string monoFontFamily: (typeof guiMonoFontFamily === "undefined" || guiMonoFontFamily.length === 0) ? "JetBrains Mono" : guiMonoFontFamily
-    property int fontSizeBadge: 10
-    property int fontSizeTiny: 11
-    property int fontSizeLabel: 12
-    property int fontSizeBody: 13
-    property int fontSizePurpose: 14
-    property int fontSizeBrand: 22
-    property int fontSizeSection: 28
+    property var backend: (typeof bridge === "undefined" || bridge === null) ? null : bridge
+    property var safeAppearanceState: backend ? backend.appearanceState : ({
+        "text_scale": 1.0,
+        "min_text_scale": 0.9,
+        "max_text_scale": 1.3,
+        "text_scale_step": 0.05,
+        "text_scale_percent": 100,
+        "theme": "standard",
+        "theme_options": [
+            {"value": "standard", "label": "Standard"},
+            {"value": "neobrutalist", "label": "Neo Pop"}
+        ],
+        "theme_palette": root.standardThemePalette()
+    })
+    property var themePalette: safeAppearanceState.theme_palette || root.standardThemePalette()
+    property string guiTheme: String(safeAppearanceState.theme || "standard")
+    property bool neoTheme: guiTheme === "neobrutalist"
+    property real textScale: Number(safeAppearanceState.text_scale || 1.0)
+    property int fontSizeBadge: scaled(11)
+    property int fontSizeTiny: scaled(12)
+    property int fontSizeLabel: scaled(13)
+    property int fontSizeBody: scaled(14)
+    property int fontSizePurpose: scaled(15)
+    property int fontSizeBrand: scaled(22)
+    property int fontSizeSection: scaled(28)
+    property int controlHeight: scaled(42)
+    property int compactControlHeight: scaled(36)
+    property int iconButtonWidth: Math.max(44, scaled(46))
+    property int sidebarWidth: scaled(280)
+    property int navRowHeight: scaled(76)
+    property int statusPillHeight: scaled(26)
+    property int checkboxSize: scaled(20)
+    property int stageMarkerSize: scaled(36)
+    property int runDrawerClosedHeight: scaled(78)
+    property int runDrawerOpenHeight: scaled(252)
+    property int themeShadowOffset: neoTheme ? root.scaled(4) : 0
+    property color colorInk: root.themeColor("ink", "#111111")
+    property color colorInkSoft: root.themeColor("ink_soft", "#333333")
+    property color colorTextMuted: root.themeColor("text_muted", "#555555")
+    property color colorTextSubtle: root.themeColor("text_subtle", "#666666")
+    property color colorAppBg: root.themeColor("app_bg", "#f7f7f4")
+    property color colorSidebarBg: root.themeColor("sidebar_bg", "#ffffff")
+    property color colorPanelBg: root.themeColor("panel_bg", "#ffffff")
+    property color colorMutedBg: root.themeColor("muted_bg", "#f7f7f4")
+    property color colorControlBg: root.themeColor("control_bg", "#ffffff")
+    property color colorDisabledBg: root.themeColor("disabled_bg", "#e7e7e2")
+    property color colorPrimaryBg: root.themeColor("primary_bg", "#111111")
+    property color colorPrimaryInk: root.themeColor("primary_ink", "#ffffff")
+    property color colorActiveBg: root.themeColor("active_bg", "#111111")
+    property color colorActiveInk: root.themeColor("active_ink", "#ffffff")
+    property color colorProgressBg: root.themeColor("progress_bg", "#f7f7f4")
+    property color colorProgressFill: root.themeColor("progress_fill", "#111111")
+    property color colorRuntimeBg: root.themeColor("runtime_bg", "#f7f7f4")
+    property color colorStageMarkerBg: root.themeColor("stage_marker_bg", "#f7f7f4")
     property int fontWeightRegular: Font.Normal
     property int fontWeightMedium: Font.Medium
     property int fontWeightSemibold: Font.DemiBold
     property int fontWeightBold: Font.Bold
-    property var backend: (typeof bridge === "undefined" || bridge === null) ? null : bridge
     property var safeLanguageState: backend ? backend.languageState : ({
         "selected": "system",
         "resolved": "en",
@@ -71,6 +117,70 @@ ApplicationWindow {
         {"value": "grade11", "label": "고2 / grade11"},
         {"value": "grade12", "label": "고3 / grade12"}
     ]
+
+    function scaled(value) {
+        return Math.max(1, Math.round(Number(value) * root.textScale))
+    }
+
+    function standardThemePalette() {
+        return {
+            "ink": "#111111",
+            "ink_soft": "#333333",
+            "text_muted": "#555555",
+            "text_subtle": "#666666",
+            "app_bg": "#f7f7f4",
+            "sidebar_bg": "#ffffff",
+            "panel_bg": "#ffffff",
+            "muted_bg": "#f7f7f4",
+            "control_bg": "#ffffff",
+            "disabled_bg": "#e7e7e2",
+            "primary_bg": "#111111",
+            "primary_ink": "#ffffff",
+            "active_bg": "#111111",
+            "active_ink": "#ffffff",
+            "progress_bg": "#f7f7f4",
+            "progress_fill": "#111111",
+            "status_ready_bg": "#f7f7f4",
+            "status_done_bg": "#111111",
+            "status_running_bg": "#333333",
+            "status_problem_bg": "#ffffff",
+            "runtime_bg": "#f7f7f4",
+            "stage_marker_bg": "#f7f7f4",
+            "workflow_accents": ["#f7f7f4", "#f7f7f4", "#f7f7f4", "#f7f7f4", "#f7f7f4"]
+        }
+    }
+
+    function themeColor(key, fallback) {
+        var value = root.themePalette ? root.themePalette[key] : null
+        return value === undefined || value === null || String(value).length === 0 ? fallback : String(value)
+    }
+
+    function workflowAccent(index) {
+        var accents = root.themePalette ? root.themePalette.workflow_accents : null
+        if (!accents || accents.length === 0)
+            return root.colorMutedBg
+        return String(accents[Math.max(0, Math.min(index, accents.length - 1))])
+    }
+
+    function activeIconInverted() {
+        return !root.neoTheme
+    }
+
+    function activeTextColor() {
+        return root.colorActiveInk
+    }
+
+    function buttonTextColor(down, primary) {
+        if (down)
+            return root.colorActiveInk
+        if (primary)
+            return root.colorPrimaryInk
+        return root.colorInk
+    }
+
+    function buttonIconInverted(down, primary) {
+        return !root.neoTheme && (down || primary)
+    }
 
     function tr(key) {
         var value = textMap[key]
@@ -183,8 +293,29 @@ ApplicationWindow {
         return backend.setLanguage(value)
     }
 
+    function setTextScale(value) {
+        if (!backend)
+            return false
+        return backend.setTextScale(Number(value))
+    }
+
+    function setTheme(value) {
+        if (!backend)
+            return false
+        return backend.setTheme(String(value))
+    }
+
     function languageOptionIndex(value) {
         var options = safeLanguageState.options || []
+        for (var i = 0; i < options.length; i++) {
+            if (String(options[i].value || "") === value)
+                return i
+        }
+        return 0
+    }
+
+    function themeOptionIndex(value) {
+        var options = safeAppearanceState.theme_options || []
         for (var i = 0; i < options.length; i++) {
             if (String(options[i].value || "") === value)
                 return i
@@ -246,19 +377,28 @@ ApplicationWindow {
     }
 
     function statusTone(status) {
+        if (root.neoTheme) {
+            if (status === "done")
+                return root.themeColor("status_done_bg", "#b8ff9f")
+            if (status === "running")
+                return root.themeColor("status_running_bg", "#ffe15a")
+            if (status === "failed" || status === "missing_input")
+                return root.themeColor("status_problem_bg", "#ffb4e6")
+            return root.themeColor("status_ready_bg", "#fffaf0")
+        }
         if (status === "done")
-            return "#111111"
+            return root.colorInk
         if (status === "running")
-            return "#333333"
+            return root.colorInkSoft
         if (status === "failed" || status === "missing_input")
-            return "#ffffff"
-        return "#f7f7f4"
+            return root.colorControlBg
+        return root.colorMutedBg
     }
 
     function statusInk(status) {
-        if (status === "done" || status === "running")
-            return "#ffffff"
-        return "#111111"
+        if (!root.neoTheme && (status === "done" || status === "running"))
+            return root.colorActiveInk
+        return root.colorInk
     }
 
     function pathForStageKey(key) {
@@ -298,14 +438,14 @@ ApplicationWindow {
     }
 
     component LabelText: Text {
-        color: "#111111"
+        color: root.colorInk
         font.family: root.uiFontFamily
         font.pixelSize: root.fontSizeLabel
         font.weight: root.fontWeightBold
     }
 
     component BodyText: Text {
-        color: "#111111"
+        color: root.colorInk
         font.family: root.uiFontFamily
         font.pixelSize: root.fontSizeBody
         font.weight: root.fontWeightRegular
@@ -317,7 +457,7 @@ ApplicationWindow {
         id: icon
         property string iconName: ""
         property bool inverted: false
-        property int iconSize: 18
+        property int iconSize: root.scaled(18)
         visible: iconName.length > 0
         source: root.iconSource(iconName, inverted)
         fillMode: Image.PreserveAspectFit
@@ -331,16 +471,17 @@ ApplicationWindow {
 
     component WTextField: TextField {
         id: control
-        color: "#111111"
-        selectedTextColor: "#ffffff"
-        selectionColor: "#111111"
+        enabled: !root.busy
+        color: root.colorInk
+        selectedTextColor: root.colorControlBg
+        selectionColor: root.colorInk
         font.family: root.uiFontFamily
         font.pixelSize: root.fontSizeBody
         font.weight: root.fontWeightRegular
-        padding: 9
+        padding: root.scaled(9)
         background: Rectangle {
-            color: "#ffffff"
-            border.color: "#111111"
+            color: root.colorControlBg
+            border.color: root.colorInk
             border.width: 1
             radius: 0
         }
@@ -352,7 +493,7 @@ ApplicationWindow {
         property string iconName: ""
         property bool iconOnly: false
         property string toolTipText: ""
-        Layout.preferredHeight: 38
+        Layout.preferredHeight: root.controlHeight
         enabled: !root.busy
         font.family: root.uiFontFamily
         font.pixelSize: root.fontSizeLabel
@@ -360,29 +501,42 @@ ApplicationWindow {
         ToolTip.text: toolTipText
         ToolTip.visible: hovered && toolTipText.length > 0
         ToolTip.delay: 600
-        background: Rectangle {
-            color: control.down || control.primary ? "#111111" : (control.enabled ? "#ffffff" : "#e7e7e2")
-            border.color: "#111111"
-            border.width: control.primary ? 2 : 1
-            radius: 0
+        background: Item {
+            Rectangle {
+                visible: root.neoTheme && !control.iconOnly && control.enabled
+                x: root.themeShadowOffset
+                y: root.themeShadowOffset
+                width: parent.width
+                height: parent.height
+                color: root.colorInk
+                radius: 0
+            }
+            Rectangle {
+                width: parent.width
+                height: parent.height
+                color: control.down ? root.colorActiveBg : (control.primary ? root.colorPrimaryBg : (control.enabled ? root.colorControlBg : root.colorDisabledBg))
+                border.color: root.colorInk
+                border.width: control.primary ? 2 : 1
+                radius: 0
+            }
         }
         contentItem: RowLayout {
             anchors.fill: parent
-            anchors.margins: control.iconOnly ? 9 : 10
-            spacing: control.iconOnly ? 0 : 8
+            anchors.margins: control.iconOnly ? root.scaled(9) : root.scaled(10)
+            spacing: control.iconOnly ? 0 : root.scaled(8)
             Item {
                 visible: control.iconOnly
                 Layout.fillWidth: true
             }
             WIcon {
                 iconName: control.iconName
-                inverted: control.down || control.primary
+                inverted: root.buttonIconInverted(control.down, control.primary)
                 Layout.alignment: Qt.AlignCenter
             }
             Text {
                 visible: !control.iconOnly
                 text: control.text
-                color: control.down || control.primary ? "#ffffff" : "#111111"
+                color: root.buttonTextColor(control.down, control.primary)
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 font: control.font
@@ -398,23 +552,24 @@ ApplicationWindow {
 
     component WCheckBox: CheckBox {
         id: control
-        spacing: 10
+        enabled: !root.busy
+        spacing: root.scaled(10)
         font.family: root.uiFontFamily
         font.pixelSize: root.fontSizeBody
         font.weight: root.fontWeightRegular
         indicator: Rectangle {
-            implicitWidth: 18
-            implicitHeight: 18
+            implicitWidth: root.checkboxSize
+            implicitHeight: root.checkboxSize
             x: control.leftPadding
             y: parent.height / 2 - height / 2
-            color: "#ffffff"
-            border.color: "#111111"
+            color: root.colorControlBg
+            border.color: root.colorInk
             border.width: 1
             radius: 0
             Text {
                 anchors.centerIn: parent
                 text: control.checked ? "X" : ""
-                color: "#111111"
+                color: root.colorInk
                 font.family: root.uiFontFamily
                 font.pixelSize: root.fontSizeLabel
                 font.weight: root.fontWeightBold
@@ -422,7 +577,7 @@ ApplicationWindow {
         }
         contentItem: Text {
             text: control.text
-            color: "#111111"
+            color: root.colorInk
             font: control.font
             verticalAlignment: Text.AlignVCenter
             leftPadding: control.indicator.width + control.spacing
@@ -433,10 +588,10 @@ ApplicationWindow {
         id: pill
         property string status: "ready"
         property string label: root.statusLabel(status)
-        implicitWidth: pillText.implicitWidth + 18
-        implicitHeight: 24
+        implicitWidth: pillText.implicitWidth + root.scaled(18)
+        implicitHeight: root.statusPillHeight
         color: root.statusTone(status)
-        border.color: "#111111"
+        border.color: root.colorInk
         border.width: 1
         radius: 0
         Text {
@@ -455,18 +610,18 @@ ApplicationWindow {
         property string title: ""
         property string purpose: ""
         property string iconName: ""
-        spacing: 8
+        spacing: root.scaled(8)
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: root.scaled(12)
             WIcon {
                 iconName: header.iconName
-                iconSize: 20
+                iconSize: root.scaled(20)
                 Layout.alignment: Qt.AlignVCenter
             }
             Text {
                 text: header.title
-                color: "#111111"
+                color: root.colorInk
                 font.family: root.uiFontFamily
                 font.pixelSize: root.fontSizeSection
                 font.weight: root.fontWeightBold
@@ -479,7 +634,7 @@ ApplicationWindow {
         }
         BodyText {
             text: header.purpose
-            color: "#333333"
+            color: root.colorInkSoft
             font.pixelSize: root.fontSizePurpose
             Layout.fillWidth: true
         }
@@ -490,25 +645,25 @@ ApplicationWindow {
         property string label: ""
         property alias text: field.text
         property bool directory: true
-        spacing: 6
+        spacing: root.scaled(6)
         Layout.fillWidth: true
         Layout.maximumWidth: 960
         LabelText { text: pathField.label }
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: root.scaled(8)
             WTextField {
                 id: field
                 Layout.fillWidth: true
-                Layout.preferredHeight: 38
+                Layout.preferredHeight: root.controlHeight
             }
             WButton {
                 iconName: pathField.directory ? "folder-open" : "file-search"
                 iconOnly: true
                 toolTipText: pathField.directory ? root.tr("dialog.choose_folder") : root.tr("dialog.choose_file")
-                Layout.preferredWidth: 44
-                Layout.minimumWidth: 44
-                Layout.maximumWidth: 44
+                Layout.preferredWidth: root.iconButtonWidth
+                Layout.minimumWidth: root.iconButtonWidth
+                Layout.maximumWidth: root.iconButtonWidth
                 onClicked: {
                     field.text = root.choosePath(field.text, pathField.directory)
                     root.saveSettings(root.workflowValues())
@@ -522,36 +677,36 @@ ApplicationWindow {
         property var definition: ({})
         property var readiness: ({})
         Layout.fillWidth: true
-        Layout.preferredHeight: 70
+        Layout.preferredHeight: root.navRowHeight
         onClicked: root.currentSection = index
         background: Rectangle {
-            color: root.currentSection === index ? "#111111" : "#ffffff"
-            border.color: "#111111"
+            color: root.currentSection === index ? root.colorActiveBg : root.colorControlBg
+            border.color: root.colorInk
             border.width: root.currentSection === index ? 2 : 1
             radius: 0
         }
         contentItem: RowLayout {
             anchors.fill: parent
-            anchors.margins: 12
-            spacing: 10
+            anchors.margins: root.scaled(12)
+            spacing: root.scaled(10)
             Text {
                 text: String(control.definition.number || "")
-                color: root.currentSection === index ? "#ffffff" : "#111111"
+                color: root.currentSection === index ? root.activeTextColor() : root.colorInk
                 font.family: root.uiFontFamily
                 font.pixelSize: root.fontSizeLabel
                 font.weight: root.fontWeightBold
-                Layout.preferredWidth: 22
+                Layout.preferredWidth: root.scaled(24)
             }
             WIcon {
                 iconName: String(control.definition.icon_name || "")
-                inverted: root.currentSection === index
+                inverted: root.currentSection === index && root.activeIconInverted()
             }
             ColumnLayout {
-                spacing: 4
+                spacing: root.scaled(4)
                 Layout.fillWidth: true
                 Text {
                     text: String(control.definition.title || "")
-                    color: root.currentSection === index ? "#ffffff" : "#111111"
+                    color: root.currentSection === index ? root.activeTextColor() : root.colorInk
                     font.family: root.uiFontFamily
                     font.pixelSize: root.fontSizeBody
                     font.weight: root.fontWeightBold
@@ -560,7 +715,7 @@ ApplicationWindow {
                 }
                 Text {
                     text: root.statusLabel(String(control.readiness.status || "ready"))
-                    color: root.currentSection === index ? "#ffffff" : "#555555"
+                    color: root.currentSection === index ? root.activeTextColor() : root.colorTextMuted
                     font.family: root.uiFontFamily
                     font.pixelSize: root.fontSizeBadge
                     font.weight: root.fontWeightBold
@@ -571,20 +726,34 @@ ApplicationWindow {
         }
     }
 
-    component Panel: Rectangle {
+    component Panel: Item {
         id: panel
         default property alias content: panelBody.data
         Layout.fillWidth: true
-        color: "#ffffff"
-        border.color: "#111111"
-        border.width: 2
-        radius: 0
-        implicitHeight: panelBody.implicitHeight + 40
-        ColumnLayout {
-            id: panelBody
-            anchors.fill: parent
-            anchors.margins: 20
-            spacing: 16
+        implicitHeight: panelFrame.height + root.themeShadowOffset
+        Rectangle {
+            visible: root.neoTheme
+            x: root.themeShadowOffset
+            y: root.themeShadowOffset
+            width: panelFrame.width
+            height: panelFrame.height
+            color: root.colorInk
+            radius: 0
+        }
+        Rectangle {
+            id: panelFrame
+            width: Math.max(0, panel.width - root.themeShadowOffset)
+            height: panelBody.implicitHeight + root.scaled(40)
+            color: root.colorPanelBg
+            border.color: root.colorInk
+            border.width: 2
+            radius: 0
+            ColumnLayout {
+                id: panelBody
+                anchors.fill: parent
+                anchors.margins: root.scaled(20)
+                spacing: root.scaled(16)
+            }
         }
     }
 
@@ -594,32 +763,32 @@ ApplicationWindow {
         property bool open: false
         default property alias content: body.data
         Layout.fillWidth: true
-        spacing: 12
+        spacing: root.scaled(12)
         Button {
             id: advancedButton
             text: block.title
-            Layout.preferredHeight: 34
-            Layout.preferredWidth: 190
+            Layout.preferredHeight: root.compactControlHeight
+            Layout.preferredWidth: root.scaled(206)
             font.family: root.uiFontFamily
             font.pixelSize: root.fontSizeLabel
             font.weight: root.fontWeightBold
             onClicked: block.open = !block.open
             background: Rectangle {
-                color: "#ffffff"
-                border.color: "#111111"
+                color: root.colorControlBg
+                border.color: root.colorInk
                 border.width: 1
                 radius: 0
             }
             contentItem: RowLayout {
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 8
+                anchors.margins: root.scaled(8)
+                spacing: root.scaled(8)
                 WIcon {
                     iconName: block.open ? "chevron-down" : "chevron-right"
                 }
                 Text {
                     text: advancedButton.text
-                    color: "#111111"
+                    color: root.colorInk
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     font: advancedButton.font
@@ -632,7 +801,7 @@ ApplicationWindow {
             id: body
             visible: block.open
             Layout.fillWidth: true
-            spacing: 12
+            spacing: root.scaled(12)
         }
     }
 
@@ -641,31 +810,40 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
-            Layout.preferredWidth: 260
+            Layout.preferredWidth: root.sidebarWidth
             Layout.fillHeight: true
-            color: "#ffffff"
-            border.color: "#111111"
+            color: root.colorSidebarBg
+            border.color: root.colorInk
             border.width: 2
 
-            ColumnLayout {
+            ScrollView {
+                id: sidebarScroll
                 anchors.fill: parent
-                anchors.margins: 20
-                spacing: 12
+                clip: true
+                leftPadding: root.scaled(20)
+                rightPadding: root.scaled(20)
+                topPadding: root.scaled(20)
+                bottomPadding: root.scaled(20)
+                contentWidth: availableWidth
+
+                ColumnLayout {
+                    width: sidebarScroll.availableWidth
+                    spacing: root.scaled(12)
 
                 Text {
                     text: "wordbyword"
-                    color: "#111111"
+                    color: root.colorInk
                     font.family: root.uiFontFamily
                     font.pixelSize: root.fontSizeBrand
                     font.weight: root.fontWeightBold
-                    Layout.bottomMargin: 8
+                    Layout.bottomMargin: root.scaled(8)
                 }
 
                 BodyText {
                     text: root.tr("sidebar.guide_flow")
-                    color: "#555555"
+                    color: root.colorTextMuted
                     font.pixelSize: root.fontSizeLabel
-                    Layout.bottomMargin: 4
+                    Layout.bottomMargin: root.scaled(4)
                 }
 
                 Repeater {
@@ -676,24 +854,24 @@ ApplicationWindow {
                     }
                 }
 
-                Item { Layout.fillHeight: true }
+                Item { Layout.preferredHeight: root.scaled(4) }
 
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: languageBody.implicitHeight + 28
-                    color: "#ffffff"
-                    border.color: "#111111"
+                    implicitHeight: languageBody.implicitHeight + root.scaled(28)
+                    color: root.colorPanelBg
+                    border.color: root.colorInk
                     border.width: 1
                     ColumnLayout {
                         id: languageBody
                         anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 10
+                        anchors.margins: root.scaled(14)
+                        spacing: root.scaled(10)
                         LabelText { text: root.tr("language.label") }
                         ComboBox {
                             id: languageCombo
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 38
+                            Layout.preferredHeight: root.controlHeight
                             model: root.safeLanguageState.options || []
                             textRole: "label"
                             valueRole: "value"
@@ -707,24 +885,24 @@ ApplicationWindow {
                                     root.setLanguage(String(options[index].value || "system"))
                             }
                             background: Rectangle {
-                                color: "#ffffff"
-                                border.color: "#111111"
+                                color: root.colorControlBg
+                                border.color: root.colorInk
                                 border.width: 1
                                 radius: 0
                             }
                             contentItem: Text {
                                 text: languageCombo.displayText
-                                color: "#111111"
+                                color: root.colorInk
                                 font: languageCombo.font
                                 verticalAlignment: Text.AlignVCenter
-                                leftPadding: 10
-                                rightPadding: 34
+                                leftPadding: root.scaled(10)
+                                rightPadding: root.scaled(34)
                                 elide: Text.ElideRight
                             }
                             indicator: WIcon {
                                 iconName: "chevron-down"
                                 anchors.right: parent.right
-                                anchors.rightMargin: 10
+                                anchors.rightMargin: root.scaled(10)
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                             popup: Popup {
@@ -739,27 +917,27 @@ ApplicationWindow {
                                     currentIndex: languageCombo.highlightedIndex
                                 }
                                 background: Rectangle {
-                                    color: "#ffffff"
-                                    border.color: "#111111"
+                                    color: root.colorControlBg
+                                    border.color: root.colorInk
                                     border.width: 1
                                     radius: 0
                                 }
                             }
                             delegate: ItemDelegate {
                                 width: languageCombo.width
-                                height: 34
+                                height: root.compactControlHeight
                                 highlighted: languageCombo.highlightedIndex === index
                                 background: Rectangle {
-                                    color: highlighted ? "#111111" : "#ffffff"
+                                    color: highlighted ? root.colorActiveBg : root.colorControlBg
                                 }
                                 contentItem: Text {
                                     text: modelData.label
-                                    color: highlighted ? "#ffffff" : "#111111"
+                                    color: highlighted ? root.activeTextColor() : root.colorInk
                                     font.family: root.uiFontFamily
                                     font.pixelSize: root.fontSizeBody
                                     font.weight: root.fontWeightRegular
                                     verticalAlignment: Text.AlignVCenter
-                                    leftPadding: 10
+                                    leftPadding: root.scaled(10)
                                     elide: Text.ElideRight
                                 }
                             }
@@ -769,15 +947,169 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: runtimeBody.implicitHeight + 28
-                    color: "#f7f7f4"
-                    border.color: "#111111"
+                    implicitHeight: themeBody.implicitHeight + root.scaled(28)
+                    color: root.colorPanelBg
+                    border.color: root.colorInk
+                    border.width: 1
+                    ColumnLayout {
+                        id: themeBody
+                        anchors.fill: parent
+                        anchors.margins: root.scaled(14)
+                        spacing: root.scaled(10)
+                        LabelText { text: root.tr("theme.label") }
+                        ComboBox {
+                            id: themeCombo
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: root.controlHeight
+                            model: root.safeAppearanceState.theme_options || []
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: root.themeOptionIndex(root.guiTheme)
+                            font.family: root.uiFontFamily
+                            font.pixelSize: root.fontSizeBody
+                            font.weight: root.fontWeightRegular
+                            onActivated: function(index) {
+                                var options = root.safeAppearanceState.theme_options || []
+                                if (index >= 0 && index < options.length)
+                                    root.setTheme(String(options[index].value || "standard"))
+                            }
+                            background: Rectangle {
+                                color: root.colorControlBg
+                                border.color: root.colorInk
+                                border.width: 1
+                                radius: 0
+                            }
+                            contentItem: Text {
+                                text: themeCombo.displayText
+                                color: root.colorInk
+                                font: themeCombo.font
+                                verticalAlignment: Text.AlignVCenter
+                                leftPadding: root.scaled(10)
+                                rightPadding: root.scaled(34)
+                                elide: Text.ElideRight
+                            }
+                            indicator: WIcon {
+                                iconName: "chevron-down"
+                                anchors.right: parent.right
+                                anchors.rightMargin: root.scaled(10)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            popup: Popup {
+                                y: themeCombo.height - 1
+                                width: themeCombo.width
+                                implicitHeight: contentItem.implicitHeight
+                                padding: 0
+                                contentItem: ListView {
+                                    clip: true
+                                    implicitHeight: contentHeight
+                                    model: themeCombo.popup.visible ? themeCombo.delegateModel : null
+                                    currentIndex: themeCombo.highlightedIndex
+                                }
+                                background: Rectangle {
+                                    color: root.colorControlBg
+                                    border.color: root.colorInk
+                                    border.width: 1
+                                    radius: 0
+                                }
+                            }
+                            delegate: ItemDelegate {
+                                width: themeCombo.width
+                                height: root.compactControlHeight
+                                highlighted: themeCombo.highlightedIndex === index
+                                background: Rectangle {
+                                    color: highlighted ? root.colorActiveBg : root.colorControlBg
+                                }
+                                contentItem: Text {
+                                    text: modelData.label
+                                    color: highlighted ? root.activeTextColor() : root.colorInk
+                                    font.family: root.uiFontFamily
+                                    font.pixelSize: root.fontSizeBody
+                                    font.weight: root.fontWeightRegular
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: root.scaled(10)
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: textSizeBody.implicitHeight + root.scaled(28)
+                    color: root.colorPanelBg
+                    border.color: root.colorInk
+                    border.width: 1
+                    ColumnLayout {
+                        id: textSizeBody
+                        anchors.fill: parent
+                        anchors.margins: root.scaled(14)
+                        spacing: root.scaled(10)
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.scaled(10)
+                            LabelText {
+                                text: root.tr("appearance.text_size_label")
+                                Layout.fillWidth: true
+                            }
+                            BodyText {
+                                text: String(root.safeAppearanceState.text_scale_percent || Math.round(root.textScale * 100)) + root.tr("appearance.text_size_value_suffix")
+                                color: root.colorTextMuted
+                                font.pixelSize: root.fontSizeLabel
+                                horizontalAlignment: Text.AlignRight
+                            }
+                        }
+                        Slider {
+                            id: textSizeSlider
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: root.scaled(30)
+                            from: Number(root.safeAppearanceState.min_text_scale || 0.9)
+                            to: Number(root.safeAppearanceState.max_text_scale || 1.3)
+                            stepSize: Number(root.safeAppearanceState.text_scale_step || 0.05)
+                            snapMode: Slider.SnapAlways
+                            value: root.textScale
+                            onMoved: root.setTextScale(value)
+                            background: Rectangle {
+                                x: textSizeSlider.leftPadding
+                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
+                                width: textSizeSlider.availableWidth
+                                height: root.scaled(6)
+                                color: root.colorControlBg
+                                border.color: root.colorInk
+                                border.width: 1
+                                radius: 0
+                                Rectangle {
+                                    width: textSizeSlider.visualPosition * parent.width
+                                    height: parent.height
+                                    color: root.colorProgressFill
+                                    radius: 0
+                                }
+                            }
+                            handle: Rectangle {
+                                x: textSizeSlider.leftPadding + textSizeSlider.visualPosition * (textSizeSlider.availableWidth - width)
+                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
+                                implicitWidth: root.scaled(18)
+                                implicitHeight: root.scaled(22)
+                                color: root.colorControlBg
+                                border.color: root.colorInk
+                                border.width: 2
+                                radius: 0
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: runtimeBody.implicitHeight + root.scaled(28)
+                    color: root.colorRuntimeBg
+                    border.color: root.colorInk
                     border.width: 1
                     ColumnLayout {
                         id: runtimeBody
                         anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 10
+                        anchors.margins: root.scaled(14)
+                        spacing: root.scaled(10)
                         LabelText { text: root.tr("runtime.label") }
                         WTextField {
                             id: modelField
@@ -795,8 +1127,9 @@ ApplicationWindow {
                         LabelText { text: "Target grade" }
                         ComboBox {
                             id: targetGradeCombo
+                            enabled: !root.busy
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 38
+                            Layout.preferredHeight: root.controlHeight
                             model: root.gradeOptions
                             textRole: "label"
                             valueRole: "value"
@@ -806,28 +1139,29 @@ ApplicationWindow {
                             font.weight: root.fontWeightRegular
                             onActivated: root.saveSettings(root.workflowValues())
                             background: Rectangle {
-                                color: "#ffffff"
-                                border.color: "#111111"
+                                color: root.colorControlBg
+                                border.color: root.colorInk
                                 border.width: 1
                                 radius: 0
                             }
                             contentItem: Text {
                                 text: targetGradeCombo.displayText
-                                color: "#111111"
+                                color: root.colorInk
                                 font: targetGradeCombo.font
                                 verticalAlignment: Text.AlignVCenter
-                                leftPadding: 10
-                                rightPadding: 34
+                                leftPadding: root.scaled(10)
+                                rightPadding: root.scaled(34)
                                 elide: Text.ElideRight
                             }
                             indicator: WIcon {
                                 iconName: "chevron-down"
                                 anchors.right: parent.right
-                                anchors.rightMargin: 10
+                                anchors.rightMargin: root.scaled(10)
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -842,16 +1176,16 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                leftPadding: 24
-                rightPadding: 24
-                topPadding: 24
-                bottomPadding: 24
+                leftPadding: root.scaled(24)
+                rightPadding: root.scaled(24)
+                topPadding: root.scaled(24)
+                bottomPadding: root.scaled(24)
                 contentWidth: availableWidth
 
                 ColumnLayout {
-                    width: Math.min(mainScroll.availableWidth, 1080)
+                    width: Math.min(mainScroll.availableWidth, root.scaled(1080))
                     x: Math.max(0, (mainScroll.availableWidth - width) / 2)
-                    spacing: 28
+                    spacing: root.scaled(28)
 
                     SectionTitle {
                         title: String(root.currentDefinition.number || "") + " / " + String(root.currentDefinition.title || "")
@@ -863,31 +1197,31 @@ ApplicationWindow {
                     Panel {
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 14
+                            spacing: root.scaled(14)
                             LabelText { text: root.tr("panel.end_to_end_flow") }
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                spacing: root.scaled(8)
                                 Repeater {
                                     model: root.definitions
                                     delegate: Rectangle {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: 74
-                                        color: root.currentSection === index ? "#111111" : "#f7f7f4"
-                                        border.color: "#111111"
+                                        Layout.preferredHeight: root.scaled(78)
+                                        color: root.currentSection === index ? (root.neoTheme ? root.colorActiveBg : root.colorInk) : (root.neoTheme ? root.workflowAccent(index) : root.colorMutedBg)
+                                        border.color: root.colorInk
                                         border.width: root.currentSection === index ? 2 : 1
                                         ColumnLayout {
                                             anchors.fill: parent
-                                            anchors.margins: 10
-                                            spacing: 5
+                                            anchors.margins: root.scaled(10)
+                                            spacing: root.scaled(5)
                                             WIcon {
                                                 iconName: String(modelData.icon_name || "")
-                                                inverted: root.currentSection === index
+                                                inverted: root.currentSection === index && root.activeIconInverted()
                                                 Layout.alignment: Qt.AlignHCenter
                                             }
                                             Text {
                                                 text: String(modelData.number || "") + " / " + String(modelData.title || "")
-                                                color: root.currentSection === index ? "#ffffff" : "#111111"
+                                                color: root.currentSection === index ? root.activeTextColor() : root.colorInk
                                                 font.family: root.uiFontFamily
                                                 font.pixelSize: root.fontSizeTiny
                                                 font.weight: root.fontWeightBold
@@ -906,17 +1240,17 @@ ApplicationWindow {
                     Panel {
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 14
+                            spacing: root.scaled(14)
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 12
+                                spacing: root.scaled(12)
                                 LabelText {
                                     text: root.tr("panel.pipeline_stages")
                                     Layout.fillWidth: true
                                 }
                                 BodyText {
                                     text: String(root.currentReadiness.next_action || "")
-                                    color: "#555555"
+                                    color: root.colorTextMuted
                                     Layout.maximumWidth: 420
                                     horizontalAlignment: Text.AlignRight
                                 }
@@ -925,25 +1259,25 @@ ApplicationWindow {
                                 model: root.currentDefinition.stages || []
                                 delegate: Rectangle {
                                     Layout.fillWidth: true
-                                    implicitHeight: stageBody.implicitHeight + 22
-                                    color: "#ffffff"
-                                    border.color: "#111111"
+                                    implicitHeight: stageBody.implicitHeight + root.scaled(22)
+                                    color: root.neoTheme ? root.workflowAccent(root.currentSection) : root.colorControlBg
+                                    border.color: root.colorInk
                                     border.width: 1
                                     RowLayout {
                                         id: stageBody
                                         anchors.fill: parent
-                                        anchors.margins: 11
-                                        spacing: 14
+                                        anchors.margins: root.scaled(11)
+                                        spacing: root.scaled(14)
                                         Rectangle {
-                                            Layout.preferredWidth: 34
-                                            Layout.preferredHeight: 34
-                                            color: "#f7f7f4"
-                                            border.color: "#111111"
+                                            Layout.preferredWidth: root.stageMarkerSize
+                                            Layout.preferredHeight: root.stageMarkerSize
+                                            color: root.colorStageMarkerBg
+                                            border.color: root.colorInk
                                             border.width: 1
                                             Text {
                                                 anchors.centerIn: parent
                                                 text: (index + 1 < 10 ? "0" : "") + String(index + 1)
-                                                color: "#111111"
+                                                color: root.colorInk
                                                 font.family: root.uiFontFamily
                                                 font.pixelSize: root.fontSizeTiny
                                                 font.weight: root.fontWeightBold
@@ -951,10 +1285,10 @@ ApplicationWindow {
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
-                                            spacing: 5
+                                            spacing: root.scaled(5)
                                             RowLayout {
                                                 Layout.fillWidth: true
-                                                spacing: 8
+                                                spacing: root.scaled(8)
                                                 WIcon {
                                                     iconName: String(modelData.icon_name || "")
                                                 }
@@ -966,7 +1300,7 @@ ApplicationWindow {
                                             }
                                             BodyText {
                                                 text: String(modelData.detail || "")
-                                                color: "#333333"
+                                                color: root.colorInkSoft
                                                 Layout.fillWidth: true
                                             }
                                             BodyText {
@@ -981,7 +1315,7 @@ ApplicationWindow {
                                                         pieces.push(String(modelData.output_label || root.tr("common.output")) + ": " + outputPath)
                                                     return pieces.join("    ")
                                                 }
-                                                color: "#666666"
+                                                color: root.colorTextSubtle
                                                 font.pixelSize: root.fontSizeTiny
                                                 Layout.fillWidth: true
                                             }
@@ -995,22 +1329,22 @@ ApplicationWindow {
                     Panel {
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 16
+                            spacing: root.scaled(16)
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 12
+                                spacing: root.scaled(12)
                                 ColumnLayout {
                                     Layout.fillWidth: true
-                                    spacing: 6
+                                    spacing: root.scaled(6)
                                     LabelText { text: root.tr("panel.next_action") }
                                     BodyText {
                                         text: String(root.currentReadiness.detail || "")
-                                        color: "#333333"
+                                        color: root.colorInkSoft
                                         Layout.fillWidth: true
                                     }
                                     BodyText {
                                         text: String(root.currentReadiness.next_action || "")
-                                        color: "#555555"
+                                        color: root.colorTextMuted
                                         Layout.fillWidth: true
                                     }
                                 }
@@ -1026,20 +1360,20 @@ ApplicationWindow {
                                 Layout.fillWidth: true
 
                                 ColumnLayout {
-                                    spacing: 12
+                                    spacing: root.scaled(12)
                                     PathField { id: setupDictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
                                     PathField { id: setupClassSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
                                 }
 
                                 ColumnLayout {
-                                    spacing: 12
+                                    spacing: root.scaled(12)
                                     PathField { id: dictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
                                     PathField { id: referenceDictionary; label: root.tr("dictionary.reference_dictionary"); directory: false; text: String(root.safeSettings.reference_dictionary_path || "") }
                                     AdvancedBlock {
                                         title: root.tr("dictionary.advanced_title")
                                         PathField { id: dictionaryOutput; label: root.tr("dictionary.output_folder"); text: String(root.safeSettings.dictionary_output_dir || "") }
                                         RowLayout {
-                                            spacing: 18
+                                            spacing: root.scaled(18)
                                             WCheckBox { id: dictionaryForce; text: root.tr("dictionary.force_rebuild"); checked: Boolean(root.safeSettings.dictionary_force) }
                                             WCheckBox { id: dictionaryNumbers; text: root.tr("dictionary.include_numbers"); checked: Boolean(root.safeSettings.include_numbers) }
                                             WCheckBox { id: dictionaryPunctuation; text: root.tr("dictionary.include_punctuation"); checked: Boolean(root.safeSettings.include_punctuation) }
@@ -1048,7 +1382,7 @@ ApplicationWindow {
                                 }
 
                                 ColumnLayout {
-                                    spacing: 12
+                                    spacing: root.scaled(12)
                                     PathField { id: classSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
                                     AdvancedBlock {
                                         title: root.tr("class.advanced_title")
@@ -1058,38 +1392,38 @@ ApplicationWindow {
                                         PathField { id: rewriteDictionary; label: root.tr("class.override_rewrite_dictionary"); directory: false; text: String(root.safeSettings.rewrite_dictionary_path || "") }
                                         GridLayout {
                                             columns: 2
-                                            columnSpacing: 18
-                                            rowSpacing: 12
+                                            columnSpacing: root.scaled(18)
+                                            rowSpacing: root.scaled(12)
                                             WCheckBox { id: forcePrintouts; text: root.tr("class.force_printouts"); checked: Boolean(root.safeSettings.force_class_printouts) }
                                             WCheckBox { id: skipPdfParse; text: root.tr("class.skip_pdf_parse"); checked: Boolean(root.safeSettings.skip_pdf_parse) }
                                             LabelText { text: root.tr("class.pdf_render_dpi") }
-                                            WTextField { id: pdfDpi; text: String(root.safeSettings.pdf_render_dpi || "144"); Layout.preferredWidth: 140 }
+                                            WTextField { id: pdfDpi; text: String(root.safeSettings.pdf_render_dpi || "144"); Layout.preferredWidth: root.scaled(140) }
                                             LabelText { text: root.tr("class.body_font_size") }
-                                            WTextField { id: bodyFontSize; text: String(root.safeSettings.print_body_font_size || ""); Layout.preferredWidth: 140 }
+                                            WTextField { id: bodyFontSize; text: String(root.safeSettings.print_body_font_size || ""); Layout.preferredWidth: root.scaled(140) }
                                         }
                                         PathField { id: printFont; label: root.tr("class.print_font"); directory: false; text: String(root.safeSettings.print_font_path || "") }
                                     }
                                 }
 
                                 ColumnLayout {
-                                    spacing: 12
+                                    spacing: root.scaled(12)
                                     PathField { id: archiveRoot; label: root.tr("archive.archive_folder"); text: String(root.safeSettings.archive_root || "") }
                                     AdvancedBlock {
                                         title: root.tr("archive.advanced_title")
                                         RowLayout {
-                                            spacing: 12
-                                            WButton { text: root.tr("archive.preview_rename"); Layout.preferredWidth: 150; onClicked: root.runJob("archive_rename_preview", root.archiveValues()) }
-                                            WButton { text: root.tr("archive.apply_rename"); Layout.preferredWidth: 140; onClicked: root.runJob("archive_rename_apply", root.archiveValues()) }
+                                            spacing: root.scaled(12)
+                                            WButton { text: root.tr("archive.preview_rename"); Layout.preferredWidth: root.scaled(150); onClicked: root.runJob("archive_rename_preview", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.apply_rename"); Layout.preferredWidth: root.scaled(140); onClicked: root.runJob("archive_rename_apply", root.archiveValues()) }
                                         }
                                         WCheckBox { id: includeNearDuplicates; text: root.tr("archive.include_near_duplicates"); checked: Boolean(root.safeSettings.include_near_duplicates) }
                                         RowLayout {
-                                            spacing: 12
-                                            WButton { text: root.tr("archive.preview_duplicates"); Layout.preferredWidth: 170; onClicked: root.runJob("archive_duplicates_preview", root.archiveValues()) }
-                                            WButton { text: root.tr("archive.apply_duplicates"); Layout.preferredWidth: 160; onClicked: root.runJob("archive_duplicates_apply", root.archiveValues()) }
+                                            spacing: root.scaled(12)
+                                            WButton { text: root.tr("archive.preview_duplicates"); Layout.preferredWidth: root.scaled(170); onClicked: root.runJob("archive_duplicates_preview", root.archiveValues()) }
+                                            WButton { text: root.tr("archive.apply_duplicates"); Layout.preferredWidth: root.scaled(160); onClicked: root.runJob("archive_duplicates_apply", root.archiveValues()) }
                                         }
                                         PathField { id: usageOutputRoot; label: root.tr("archive.usage_output_folder"); text: String(root.safeSettings.usage_signal_output_root || "") }
                                         RowLayout {
-                                            spacing: 18
+                                            spacing: root.scaled(18)
                                             WCheckBox { id: usageNumbers; text: root.tr("dictionary.include_numbers"); checked: Boolean(root.safeSettings.include_numbers) }
                                             WCheckBox { id: usagePunctuation; text: root.tr("dictionary.include_punctuation"); checked: Boolean(root.safeSettings.include_punctuation) }
                                         }
@@ -1103,7 +1437,7 @@ ApplicationWindow {
                                 }
 
                                 ColumnLayout {
-                                    spacing: 12
+                                    spacing: root.scaled(12)
                                     PathField { id: reportPrintout; label: root.tr("reports.archived_printout"); directory: false; text: String(root.safeSettings.after_class_printout_path || "") }
                                     PathField { id: reportOutputRoot; label: root.tr("reports.output_folder"); text: String(root.safeSettings.after_class_report_output_root || "") }
                                     AdvancedBlock {
@@ -1115,25 +1449,25 @@ ApplicationWindow {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 12
+                                spacing: root.scaled(12)
                                 WButton {
                                     text: String(root.currentDefinition.primary_action_label || root.tr("button.save"))
                                     iconName: root.actionIcon(String(root.currentDefinition.primary_workflow_id || ""))
                                     primary: true
-                                    Layout.preferredWidth: 220
+                                    Layout.preferredWidth: root.scaled(220)
                                     onClicked: root.runWorkflow(String(root.currentDefinition.primary_workflow_id || ""))
                                 }
                                 WButton {
                                     visible: Boolean(root.currentDefinition.secondary_workflow_id)
                                     text: String(root.currentDefinition.secondary_action_label || "")
                                     iconName: root.actionIcon(String(root.currentDefinition.secondary_workflow_id || ""))
-                                    Layout.preferredWidth: 190
+                                    Layout.preferredWidth: root.scaled(190)
                                     onClicked: root.runWorkflow(String(root.currentDefinition.secondary_workflow_id || ""))
                                 }
                                 WButton {
                                     text: root.tr("button.refresh_status")
                                     iconName: "refresh-cw"
-                                    Layout.preferredWidth: 140
+                                    Layout.preferredWidth: root.scaled(140)
                                     onClicked: root.saveSettings(root.workflowValues())
                                 }
                             }
@@ -1144,26 +1478,26 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: root.runDrawerOpen ? 236 : 72
-                color: "#ffffff"
-                border.color: "#111111"
+                Layout.preferredHeight: root.runDrawerOpen ? root.runDrawerOpenHeight : root.runDrawerClosedHeight
+                color: root.colorPanelBg
+                border.color: root.colorInk
                 border.width: 2
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 16
-                    spacing: 10
+                    anchors.margins: root.scaled(16)
+                    spacing: root.scaled(10)
 
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 12
+                        spacing: root.scaled(12)
                         StatusPill {
                             status: String(root.safeJobState.status || "idle")
                             label: root.statusLabel(String(root.safeJobState.status || "idle"))
                         }
                         BodyText {
                             text: String(root.safeJobState.detail || root.tr("app.ready_detail"))
-                            color: "#333333"
+                            color: root.colorInkSoft
                             Layout.fillWidth: true
                             elide: Text.ElideRight
                             maximumLineCount: 1
@@ -1171,7 +1505,7 @@ ApplicationWindow {
                         WButton {
                             text: root.runDrawerOpen ? root.tr("run.hide_details") : root.tr("run.show_details")
                             iconName: root.runDrawerOpen ? "panel-bottom-close" : "panel-bottom-open"
-                            Layout.preferredWidth: 160
+                            Layout.preferredWidth: root.scaled(172)
                             enabled: true
                             onClicked: root.runDrawerOpen = !root.runDrawerOpen
                         }
@@ -1179,9 +1513,9 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 10
-                        color: "#f7f7f4"
-                        border.color: "#111111"
+                        Layout.preferredHeight: root.scaled(10)
+                        color: root.colorProgressBg
+                        border.color: root.colorInk
                         border.width: 1
                         Rectangle {
                             height: parent.height
@@ -1192,7 +1526,7 @@ ApplicationWindow {
                                     return root.busy ? parent.width * 0.25 : 0
                                 return Math.max(0, Math.min(parent.width, parent.width * current / total))
                             }
-                            color: "#111111"
+                            color: root.colorProgressFill
                         }
                     }
 
@@ -1200,7 +1534,7 @@ ApplicationWindow {
                         visible: root.runDrawerOpen
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 12
+                        spacing: root.scaled(12)
 
                         TextArea {
                             Layout.fillWidth: true
@@ -1208,29 +1542,29 @@ ApplicationWindow {
                             readOnly: true
                             text: root.safeLogText || root.tr("run.no_log")
                             wrapMode: TextArea.Wrap
-                            color: "#111111"
+                            color: root.colorInk
                             font.family: root.monoFontFamily
                             font.pixelSize: root.fontSizeTiny
                             background: Rectangle {
-                                color: "#ffffff"
-                                border.color: "#111111"
+                                color: root.colorControlBg
+                                border.color: root.colorInk
                                 border.width: 1
                                 radius: 0
                             }
                         }
 
                         TextArea {
-                            Layout.preferredWidth: 360
+                            Layout.preferredWidth: root.scaled(380)
                             Layout.fillHeight: true
                             readOnly: true
                             text: root.safeArtifactText
                             wrapMode: TextArea.Wrap
-                            color: "#111111"
+                            color: root.colorInk
                             font.family: root.monoFontFamily
                             font.pixelSize: root.fontSizeTiny
                             background: Rectangle {
-                                color: "#ffffff"
-                                border.color: "#111111"
+                                color: root.colorControlBg
+                                border.color: root.colorInk
                                 border.width: 1
                                 radius: 0
                             }

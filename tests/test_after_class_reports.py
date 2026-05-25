@@ -438,7 +438,10 @@ class AfterClassReportCliTest(unittest.TestCase):
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
                 patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=outputs) as generate,
             ):
-                self.assertEqual(main(["--generate-after-class-reading-report", str(source)]), 0)
+                self.assertEqual(
+                    main(["--generate-after-class-reading-report", str(source), "--target-grade", "grade7"]),
+                    0,
+                )
 
         self.assertEqual(
             generate.call_args.kwargs["output_root"],
@@ -453,9 +456,9 @@ class AfterClassReportCliTest(unittest.TestCase):
             source = archive / "2026-05-10_grade1-reading-apples.docx"
             write_docx(source, korean_fixture_text())
             parser = build_parser()
-            args = parser.parse_args(["--generate-after-class-reading-report", source.name])
+            args = parser.parse_args(["--generate-after-class-reading-report", source.name, "--target-grade", "grade1"])
 
-            with patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive):
+            with patch("wordbyword.cli.options.grade_workspace", return_value=SimpleNamespace(archive_root=archive)):
                 validate_args(parser, args)
 
             self.assertEqual(args.generate_after_class_reading_report, source)
@@ -465,12 +468,12 @@ class AfterClassReportCliTest(unittest.TestCase):
             archive = Path(workspace) / "class-session-archive"
             parser = build_parser()
             filename = "2026-05-10_grade1-reading-apples.docx"
-            args = parser.parse_args(["--generate-after-class-reading-report", filename])
+            args = parser.parse_args(["--generate-after-class-reading-report", filename, "--target-grade", "grade1"])
             stderr = io.StringIO()
 
             with (
                 patch("sys.stderr", stderr),
-                patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive),
+                patch("wordbyword.cli.options.grade_workspace", return_value=SimpleNamespace(archive_root=archive)),
                 self.assertRaises(SystemExit) as error,
             ):
                 validate_args(parser, args)
@@ -502,6 +505,8 @@ class AfterClassReportCliTest(unittest.TestCase):
                         str(output_root),
                         "--ollama-model",
                         "fake-ollama",
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -524,7 +529,7 @@ class AfterClassReportCliTest(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.options.DEFAULT_CLASS_SESSION_ARCHIVE_ROOT", archive),
+                patch("wordbyword.cli.options.grade_workspace", return_value=SimpleNamespace(archive_root=archive)),
                 patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
                 patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
                 patch("wordbyword.cli.app.ollama_client", return_value=object()),
@@ -539,6 +544,8 @@ class AfterClassReportCliTest(unittest.TestCase):
                         str(output_root),
                         "--ollama-model",
                         "fake-ollama",
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -591,6 +598,8 @@ class AfterClassReportCliTest(unittest.TestCase):
                         str(output_root),
                         "--ollama-model",
                         "fake-ollama",
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -609,7 +618,13 @@ class AfterClassReportCliTest(unittest.TestCase):
             source = Path(workspace) / "2026-05-10_grade1-reading-apples.docx"
             write_docx(source, korean_fixture_text())
             with self.assertRaises(SystemExit) as error:
-                main(["--generate-after-class-reading-report", str(source), "--update-live-lexicon"])
+                main([
+                    "--generate-after-class-reading-report",
+                    str(source),
+                    "--update-live-lexicon",
+                    "--target-grade",
+                    "grade1",
+                ])
             self.assertEqual(error.exception.code, 2)
 
 

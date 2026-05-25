@@ -1,35 +1,28 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from wordbyword.class_archive.archive import DEFAULT_CLASS_SESSION_ARCHIVE_ROOT
-from wordbyword.class_archive.live_lexicon import DEFAULT_CANONICAL_DICTIONARY_PATH
-from wordbyword.classroom_printout_studio.source_parsing.materials import (
-    DEFAULT_PARSED_SOURCE_ROOT,
-    DEFAULT_SOURCE_MATERIAL_ROOT,
-)
-from wordbyword.cli.options import DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_REFERENCE_DICTIONARY_PATH
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.grade_profiles import (
     DEFAULT_TARGET_GRADE,
-    default_after_class_report_output_root,
-    default_live_lexicon_path,
-    default_print_output_root,
-    default_supplemental_lexicon_path,
-    default_unmatched_usage_output_path,
-    default_usage_signal_output_root,
-    default_vocabulary_guided_rewrite_output_root,
+    grade_workspace,
     normalize_target_grade,
 )
 from wordbyword.gui.i18n import LANGUAGE_SYSTEM, normalize_language
+from wordbyword.gui.themes import THEME_DEFAULT, normalize_theme
 
-SETTINGS_SCHEMA_VERSION = 2
+SETTINGS_SCHEMA_VERSION = 5
 SETTINGS_DIRNAME = ".wordbyword"
 SETTINGS_FILENAME = "gui-settings.json"
+TEXT_SCALE_DEFAULT = 1.0
+TEXT_SCALE_MIN = 0.9
+TEXT_SCALE_MAX = 1.3
+TEXT_SCALE_STEP = 0.05
 
 
 def default_settings() -> dict[str, object]:
@@ -37,17 +30,19 @@ def default_settings() -> dict[str, object]:
     return {
         "schema_version": SETTINGS_SCHEMA_VERSION,
         "gui_language": LANGUAGE_SYSTEM,
+        "gui_theme": THEME_DEFAULT,
+        "gui_text_scale": TEXT_SCALE_DEFAULT,
         "target_grade": DEFAULT_TARGET_GRADE,
         "model": DEFAULT_EXAMPLE_CLEANUP_MODEL,
         "base_url": "",
-        "dictionary_input_dir": str(DEFAULT_INPUT_DIR),
-        "dictionary_output_dir": str(DEFAULT_OUTPUT_DIR),
-        "reference_dictionary_path": str(DEFAULT_REFERENCE_DICTIONARY_PATH),
+        "dictionary_input_dir": grade_defaults["dictionary_input_dir"],
+        "dictionary_output_dir": grade_defaults["dictionary_output_dir"],
+        "reference_dictionary_path": grade_defaults["reference_dictionary_path"],
         "dictionary_force": False,
         "include_numbers": False,
         "include_punctuation": False,
-        "class_source_dir": str(DEFAULT_SOURCE_MATERIAL_ROOT),
-        "source_output_root": str(DEFAULT_PARSED_SOURCE_ROOT),
+        "class_source_dir": grade_defaults["class_source_dir"],
+        "source_output_root": grade_defaults["source_output_root"],
         "rewrite_output_root": grade_defaults["rewrite_output_root"],
         "print_output_root": grade_defaults["print_output_root"],
         "rewrite_dictionary_path": "",
@@ -56,9 +51,9 @@ def default_settings() -> dict[str, object]:
         "pdf_render_dpi": 144,
         "print_font_path": "",
         "print_body_font_size": "",
-        "archive_root": str(DEFAULT_CLASS_SESSION_ARCHIVE_ROOT),
+        "archive_root": grade_defaults["archive_root"],
         "usage_signal_output_root": grade_defaults["usage_signal_output_root"],
-        "canonical_dictionary_path": str(DEFAULT_CANONICAL_DICTIONARY_PATH),
+        "canonical_dictionary_path": grade_defaults["canonical_dictionary_path"],
         "usage_candidates_path": grade_defaults["usage_candidates_path"],
         "usage_summary_path": "",
         "live_lexicon_path": grade_defaults["live_lexicon_path"],
@@ -73,17 +68,23 @@ def default_settings() -> dict[str, object]:
 
 def grade_dependent_default_settings(target_grade: object) -> dict[str, str]:
     grade = normalize_target_grade(target_grade)
-    explicit_target = grade != DEFAULT_TARGET_GRADE
-    usage_root = default_usage_signal_output_root(grade, explicit_target=explicit_target)
+    workspace = grade_workspace(grade)
     return {
-        "rewrite_output_root": str(default_vocabulary_guided_rewrite_output_root(grade)),
-        "print_output_root": str(default_print_output_root(grade)),
-        "usage_signal_output_root": str(usage_root),
-        "usage_candidates_path": str(artifact_path(usage_root, ArtifactId.DICTIONARY_CANDIDATES)),
-        "live_lexicon_path": str(default_live_lexicon_path(grade)),
-        "supplemental_lexicon_path": str(default_supplemental_lexicon_path(grade)),
-        "unmatched_usage_output_path": str(default_unmatched_usage_output_path(grade, explicit_target=explicit_target)),
-        "after_class_report_output_root": str(default_after_class_report_output_root(grade)),
+        "dictionary_input_dir": str(workspace.dictionary_input_dir),
+        "dictionary_output_dir": str(workspace.dictionary_output_dir),
+        "reference_dictionary_path": str(workspace.reference_dictionary_path),
+        "class_source_dir": str(workspace.class_source_dir),
+        "source_output_root": str(workspace.source_output_root),
+        "rewrite_output_root": str(workspace.rewrite_output_root),
+        "print_output_root": str(workspace.print_output_root),
+        "archive_root": str(workspace.archive_root),
+        "usage_signal_output_root": str(workspace.usage_signal_output_root),
+        "canonical_dictionary_path": str(artifact_path(workspace.dictionary_output_dir, ArtifactId.FINAL_DICTIONARY)),
+        "usage_candidates_path": str(workspace.usage_candidates_path),
+        "live_lexicon_path": str(workspace.live_lexicon_path),
+        "supplemental_lexicon_path": str(workspace.supplemental_lexicon_path),
+        "unmatched_usage_output_path": str(workspace.unmatched_usage_output_path),
+        "after_class_report_output_root": str(workspace.after_class_report_output_root),
     }
 
 
@@ -144,6 +145,10 @@ def _known_settings(payload: Mapping[str, object]) -> dict[str, object]:
         value = payload[key]
         if key == "gui_language":
             result[key] = normalize_language(value)
+        elif key == "gui_theme":
+            result[key] = normalize_theme(value)
+        elif key == "gui_text_scale":
+            result[key] = normalize_text_scale(value)
         elif isinstance(default_value, bool):
             result[key] = bool(value)
         elif isinstance(default_value, int):
@@ -158,3 +163,16 @@ def _int_or_default(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def normalize_text_scale(value: object) -> float:
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        return TEXT_SCALE_DEFAULT
+    if not math.isfinite(scale):
+        return TEXT_SCALE_DEFAULT
+    clamped = min(TEXT_SCALE_MAX, max(TEXT_SCALE_MIN, scale))
+    steps = round((clamped - TEXT_SCALE_MIN) / TEXT_SCALE_STEP)
+    snapped = TEXT_SCALE_MIN + steps * TEXT_SCALE_STEP
+    return round(min(TEXT_SCALE_MAX, max(TEXT_SCALE_MIN, snapped)), 2)

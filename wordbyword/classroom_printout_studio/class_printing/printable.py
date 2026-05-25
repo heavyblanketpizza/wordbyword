@@ -207,6 +207,7 @@ class PrintableAsset:
 @dataclass(frozen=True)
 class PrintableContext:
     source_id: str
+    target_grade: str
     source_filename: str
     source_sha256: str
     rewritten_bundle_dir: Path
@@ -261,6 +262,7 @@ def print_class_material(
         target_profile=target_profile,
     )
     context = build_printable_context(rewritten_bundle_dir)
+    validate_printable_context_target_grade(context, resolved_target_grade, rewritten_bundle_dir)
     validate_body_font_size_override(body_font_size)
     output_dir = output_root / context.source_id
     prevent_input_overwrite(context.rewritten_bundle_dir, output_dir)
@@ -481,13 +483,22 @@ def build_printable_context(rewritten_bundle_dir: Path) -> PrintableContext:
     manifest = read_json_object(manifest_path)
     chunks = read_json_list(chunks_path)
     source = mapping_value(manifest, "source")
+    rewrite = mapping_value(manifest, "rewrite")
     source_id = str(source.get("id") or rewritten_bundle_dir.name).strip() or rewritten_bundle_dir.name
+    manifest_target_grade = str(rewrite.get("target_grade") or source.get("target_grade") or "").strip()
+    if not manifest_target_grade:
+        raise PrintableMaterialError(f"Rewritten source bundle has no target_grade: {manifest_path}")
+    try:
+        resolved_target_grade = normalize_target_grade(manifest_target_grade)
+    except ValueError as error:
+        raise PrintableMaterialError(f"Rewritten source bundle has invalid target_grade: {manifest_path}") from error
     content_markdown = content_path.read_text(encoding="utf-8")
     if not content_markdown.strip():
         raise PrintableMaterialError(f"Rewritten content markdown is empty: {content_path}")
 
     return PrintableContext(
         source_id=source_id,
+        target_grade=resolved_target_grade,
         source_filename=str(source.get("filename") or ""),
         source_sha256=str(source.get("sha256") or ""),
         rewritten_bundle_dir=rewritten_bundle_dir,
@@ -496,6 +507,17 @@ def build_printable_context(rewritten_bundle_dir: Path) -> PrintableContext:
         assets=tuple(discover_printable_assets(rewritten_bundle_dir, chunks)),
         rewrite_manifest=manifest,
     )
+
+
+def validate_printable_context_target_grade(
+    context: PrintableContext,
+    target_grade: str,
+    rewritten_bundle_dir: Path,
+) -> None:
+    if context.target_grade != target_grade:
+        raise PrintableMaterialError(
+            f"Rewritten source bundle grade {context.target_grade} does not match target grade {target_grade}: {rewritten_bundle_dir}"
+        )
 
 
 def build_printable_prompt(
@@ -1234,6 +1256,7 @@ def build_printable_manifest(
         "schema_version": PRINTABLE_SCHEMA_VERSION,
         "source": {
             "id": context.source_id,
+            "target_grade": context.target_grade,
             "filename": context.source_filename,
             "sha256": context.source_sha256,
         },

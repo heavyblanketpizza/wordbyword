@@ -42,6 +42,8 @@ class ArtifactSpec:
     description: str = ""
     event_name: str = ""
     sidecar_of: ArtifactId | None = None
+    csv_header: tuple[str, ...] = ()
+    required_jsonl_keys: tuple[str, ...] = ()
 
     @property
     def is_pipeline_stage(self) -> bool:
@@ -92,6 +94,81 @@ LEGACY_OUTPUT_FILES: tuple[str, ...] = (
     "README.md",
 )
 
+EXTRACTED_PAGES_CSV_HEADER = ("document", "page", "raw_character_count", "clean_character_count", "text")
+SENTENCES_CSV_HEADER = ("document", "page", "sentence_index", "sentence")
+TOKENS_CSV_HEADER = ("document", "page", "sentence_index", "token_index", "form", "pos", "start", "end", "sentence")
+SURFACE_WORDS_CSV_HEADER = ("surface", "count", "document_count", "example")
+VOCABULARY_RAW_CSV_HEADER = ("term", "pos", "count", "document_count", "example")
+CANDIDATE_TERMS_CSV_HEADER = (
+    "canonical_key",
+    "display",
+    "kind",
+    "pos_group",
+    "count",
+    "surface_count",
+    "document_count",
+    "variant_count",
+    "variants",
+    "learning_signal_score",
+    "frequency_signal_score",
+    "dispersion_signal_score",
+    "pos_signal_score",
+    "variant_signal_score",
+    "frequency_rate_per_10k",
+    "example",
+)
+REJECTED_TERMS_CSV_HEADER = ("kind", "candidate", "canonical_key", "reason", "count", "document_count", "example")
+EXAMPLE_SENTENCES_CSV_HEADER = (
+    "document",
+    "page",
+    "sentence_index",
+    "sentence",
+    "quality_score",
+    "matched_canonical_key_count",
+    "covered_canonical_key_count",
+    "covered_canonical_keys",
+    "matched_canonical_keys",
+)
+CLEANED_EXAMPLE_SENTENCES_CSV_HEADER = (
+    "document",
+    "page",
+    "sentence_index",
+    "source_sentence",
+    "cleaned_sentence",
+    "cleanup_action",
+    "cleanup_reason",
+    "model_confidence",
+    "source_similarity",
+    "source_quality_score",
+    "source_matched_canonical_key_count",
+    "source_covered_canonical_key_count",
+    "source_covered_canonical_keys",
+    "source_matched_canonical_keys",
+    "cleaned_quality_score",
+    "cleaned_matched_canonical_key_count",
+    "cleaned_covered_canonical_key_count",
+    "cleaned_covered_canonical_keys",
+    "cleaned_matched_canonical_keys",
+)
+
+DICTIONARY_CANDIDATE_JSONL_KEYS = ("canonical_key", "display", "example", "curation_status")
+LINKED_DICTIONARY_CANDIDATE_JSONL_KEYS = (
+    "canonical_key",
+    "display",
+    "example",
+    "curation_status",
+    "example_replaced_with_cleaned_sentence",
+)
+GENERATED_EXAMPLE_DICTIONARY_JSONL_KEYS = ("canonical_key", "display", "example")
+MEANING_DICTIONARY_CANDIDATE_JSONL_KEYS = ("canonical_key", "display", "example", "meaning")
+FINAL_DICTIONARY_JSONL_KEYS = (
+    "canonical_key",
+    "display",
+    "example",
+    "meaning",
+    "meaning_generated_with_ollama",
+)
+
 _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
     ArtifactId.SUMMARY: ArtifactSpec(
         id=ArtifactId.SUMMARY,
@@ -106,6 +183,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="01",
         description="Cleaned page-level text extracted from each PDF or text source.",
+        csv_header=EXTRACTED_PAGES_CSV_HEADER,
     ),
     ArtifactId.SENTENCES: ArtifactSpec(
         id=ArtifactId.SENTENCES,
@@ -113,6 +191,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="02",
         description="Sentence-like chunks after layout cleanup and noise filtering.",
+        csv_header=SENTENCES_CSV_HEADER,
     ),
     ArtifactId.TOKENS: ArtifactSpec(
         id=ArtifactId.TOKENS,
@@ -120,6 +199,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="03",
         description="Kiwi tokenizer output with forms, POS tags, offsets, and source sentence.",
+        csv_header=TOKENS_CSV_HEADER,
     ),
     ArtifactId.SURFACE_WORDS: ArtifactSpec(
         id=ArtifactId.SURFACE_WORDS,
@@ -127,6 +207,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="04",
         description="Visible word forms as they appeared in the cleaned source text.",
+        csv_header=SURFACE_WORDS_CSV_HEADER,
     ),
     ArtifactId.VOCABULARY_RAW: ArtifactSpec(
         id=ArtifactId.VOCABULARY_RAW,
@@ -134,6 +215,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="05",
         description="Raw lexical vocabulary terms counted from Kiwi morphology.",
+        csv_header=VOCABULARY_RAW_CSV_HEADER,
     ),
     ArtifactId.CANDIDATE_TERMS: ArtifactSpec(
         id=ArtifactId.CANDIDATE_TERMS,
@@ -141,6 +223,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="06",
         description="Cleaned, grouped, and scored word candidates.",
+        csv_header=CANDIDATE_TERMS_CSV_HEADER,
     ),
     ArtifactId.REJECTED_TERMS: ArtifactSpec(
         id=ArtifactId.REJECTED_TERMS,
@@ -148,6 +231,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="07",
         description="Vocabulary terms removed by deterministic cleanup rules.",
+        csv_header=REJECTED_TERMS_CSV_HEADER,
     ),
     ArtifactId.DICTIONARY_CANDIDATES: ArtifactSpec(
         id=ArtifactId.DICTIONARY_CANDIDATES,
@@ -155,6 +239,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="08",
         description="Vocabulary candidate packets for later manual or LLM curation.",
+        required_jsonl_keys=DICTIONARY_CANDIDATE_JSONL_KEYS,
     ),
     ArtifactId.EXAMPLE_SENTENCES: ArtifactSpec(
         id=ArtifactId.EXAMPLE_SENTENCES,
@@ -165,6 +250,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
             "High-signal sentence catalog filtered by canonical-key coverage, density, "
             "sentence shape, and normalized quality scores."
         ),
+        csv_header=EXAMPLE_SENTENCES_CSV_HEADER,
     ),
     ArtifactId.CLEANED_EXAMPLE_SENTENCES: ArtifactSpec(
         id=ArtifactId.CLEANED_EXAMPLE_SENTENCES,
@@ -172,6 +258,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.CSV,
         stage="10",
         description="Ollama-curated source sentences kept, lightly fixed, rebuilt, or deleted with minimal-edit bias.",
+        csv_header=CLEANED_EXAMPLE_SENTENCES_CSV_HEADER,
     ),
     ArtifactId.CLEANED_DICTIONARY_CANDIDATES: ArtifactSpec(
         id=ArtifactId.CLEANED_DICTIONARY_CANDIDATES,
@@ -179,6 +266,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="11",
         description="Ollama-filtered learner-dictionary candidates with low-signal names and debris removed.",
+        required_jsonl_keys=DICTIONARY_CANDIDATE_JSONL_KEYS,
     ),
     ArtifactId.LINKED_DICTIONARY_CANDIDATES: ArtifactSpec(
         id=ArtifactId.LINKED_DICTIONARY_CANDIDATES,
@@ -186,6 +274,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="12",
         description="Dictionary candidates whose examples are replaced with unique cleaned sentences from stage 10 when available.",
+        required_jsonl_keys=LINKED_DICTIONARY_CANDIDATE_JSONL_KEYS,
     ),
     ArtifactId.GENERATED_EXAMPLE_DICTIONARY: ArtifactSpec(
         id=ArtifactId.GENERATED_EXAMPLE_DICTIONARY,
@@ -193,6 +282,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="13",
         description="Selected vocabulary with new Ollama-written examples for rows that still lacked a cleaned replacement.",
+        required_jsonl_keys=GENERATED_EXAMPLE_DICTIONARY_JSONL_KEYS,
     ),
     ArtifactId.GENERATED_EXAMPLE_ATTEMPTS: ArtifactSpec(
         id=ArtifactId.GENERATED_EXAMPLE_ATTEMPTS,
@@ -212,6 +302,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="14",
         description="Confirmed vocabulary enriched with reference-dictionary meanings when canonical keys match.",
+        required_jsonl_keys=MEANING_DICTIONARY_CANDIDATE_JSONL_KEYS,
     ),
     ArtifactId.FINAL_DICTIONARY: ArtifactSpec(
         id=ArtifactId.FINAL_DICTIONARY,
@@ -219,6 +310,7 @@ _ARTIFACT_SPECS: dict[ArtifactId, ArtifactSpec] = {
         format=ArtifactFormat.JSONL,
         stage="15",
         description="Final dictionary with Ollama-written meanings for rows that still had empty meanings.",
+        required_jsonl_keys=FINAL_DICTIONARY_JSONL_KEYS,
     ),
 }
 

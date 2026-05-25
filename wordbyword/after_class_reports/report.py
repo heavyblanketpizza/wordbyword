@@ -54,10 +54,12 @@ from wordbyword.dictionary_build.output_files import (
 from wordbyword.dictionary_build.text import clean_example_text
 from wordbyword.dictionary_build.writers import write_outputs
 from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
     UNKNOWN_GRADE,
     default_after_class_report_output_root,
     extract_grade_from_source_id,
     grade_label,
+    normalize_target_grade,
     report_target_profile_for_grade,
 )
 
@@ -411,9 +413,10 @@ def validate_after_class_report_input(printout_path: Path) -> str:
 def generate_after_class_reading_report(
     printout_path: Path,
     *,
-    output_root: Path = DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT,
+    output_root: Path | None = None,
     client: SupportsCompletion,
     model: str,
+    target_grade: str | None = None,
     target_profile: str = DEFAULT_TARGET_PROFILE,
     font_path: Path | None = None,
     include_punctuation: bool = False,
@@ -422,7 +425,16 @@ def generate_after_class_reading_report(
 ) -> AfterClassReportOutputs:
     source_path = Path(printout_path)
     source_id = validate_after_class_report_input(source_path)
-    output_dir = Path(output_root) / source_id
+    source_grade = after_class_grade_level(source_id)
+    resolved_target_grade = normalize_target_grade(target_grade) if target_grade is not None else (
+        normalize_target_grade(source_grade) if source_grade != UNKNOWN_GRADE_LEVEL else DEFAULT_TARGET_GRADE
+    )
+    if source_grade != UNKNOWN_GRADE_LEVEL and normalize_target_grade(source_grade) != resolved_target_grade:
+        raise AfterClassReportError(
+            f"after-class report input grade {source_grade} does not match target grade {resolved_target_grade}: {source_path}"
+        )
+    resolved_output_root = output_root or default_after_class_report_output_root(resolved_target_grade)
+    output_dir = Path(resolved_output_root) / source_id
     heuristic_analysis_dir = output_dir / HEURISTIC_ANALYSIS_DIRNAME
     prevent_input_overwrite(source_path, output_dir)
     prevent_reserved_maintenance_output(output_dir)
@@ -461,6 +473,7 @@ def generate_after_class_reading_report(
         build_isolated_heuristic_analysis(
             source_path,
             heuristic_analysis_dir=heuristic_analysis_dir,
+            target_grade=resolved_target_grade,
             include_punctuation=include_punctuation,
             include_numbers=include_numbers,
         )
@@ -468,6 +481,7 @@ def generate_after_class_reading_report(
             source_path,
             output_dir=output_dir,
             heuristic_analysis_dir=heuristic_analysis_dir,
+            target_grade=resolved_target_grade,
         )
         prompt = build_after_class_report_prompt(context)
 
@@ -503,7 +517,7 @@ def generate_after_class_reading_report(
             prompt=prompt,
             document=document,
             model=model,
-            target_profile=target_profile,
+            target_profile=context.prompt_target_profile,
             font_path=resolved_font_path,
             font_name=resolved_font_name,
         )
@@ -561,7 +575,7 @@ def generate_after_class_reading_report(
             context=context,
             prompt=prompt,
             model=model,
-            target_profile=target_profile,
+            target_profile=context.prompt_target_profile if context is not None else target_profile,
             failure_reason=failure_reason,
         )
 
@@ -602,11 +616,13 @@ def build_isolated_heuristic_analysis(
     printout_path: Path,
     *,
     heuristic_analysis_dir: Path,
+    target_grade: str | None = None,
     include_punctuation: bool = False,
     include_numbers: bool = False,
 ) -> HeuristicAnalysisResult:
     source_path = Path(printout_path)
     source_id = validate_after_class_report_input(source_path)
+    grade_level = normalize_target_grade(target_grade) if target_grade is not None else after_class_grade_level(source_id)
     kiwi = Kiwi()
     analyzer = KoreanAnalyzer(
         include_punctuation=include_punctuation,
@@ -627,6 +643,7 @@ def build_isolated_heuristic_analysis(
         document_totals=analysis["document_totals"],
         documents=[Path(source_id)],
         kiwi=kiwi,
+        metadata={"target_grade": grade_level},
     )
     return HeuristicAnalysisResult(
         source_id=source_id,
@@ -644,6 +661,7 @@ def build_after_class_report_context(
     *,
     output_dir: Path,
     heuristic_analysis_dir: Path,
+    target_grade: str | None = None,
 ) -> AfterClassReportContext:
     source_path = Path(printout_path)
     source_id = validate_after_class_report_input(source_path)
@@ -674,13 +692,18 @@ def build_after_class_report_context(
     top_vocabulary = tuple(sorted(vocabulary_candidates, key=vocabulary_candidate_sort_key)[:VOCABULARY_CONTEXT_LIMIT])
     top_examples = tuple(sorted(example_rows, key=example_sentence_sort_key)[:EXAMPLE_CONTEXT_LIMIT])
     grade_level = after_class_grade_level(source_id)
+    resolved_grade_level = normalize_target_grade(target_grade) if target_grade is not None else grade_level
+    if grade_level != UNKNOWN_GRADE_LEVEL and normalize_target_grade(grade_level) != resolved_grade_level:
+        raise AfterClassReportError(
+            f"after-class report input grade {grade_level} does not match target grade {resolved_grade_level}: {source_path}"
+        )
     return AfterClassReportContext(
         source_id=source_id,
         source_path=source_path,
         source_filename=source_path.name,
-        grade_level=grade_level,
-        grade_label=after_class_grade_label(grade_level),
-        prompt_target_profile=after_class_prompt_target_profile(grade_level),
+        grade_level=resolved_grade_level,
+        grade_label=after_class_grade_label(resolved_grade_level),
+        prompt_target_profile=after_class_prompt_target_profile(resolved_grade_level),
         output_dir=output_dir,
         heuristic_analysis_dir=heuristic_analysis_dir,
         summary=summary,
@@ -1393,6 +1416,8 @@ def build_quality_report(
     return {
         "schema_version": AFTER_CLASS_REPORT_SCHEMA_VERSION,
         "source_id": source_id,
+        "target_grade": context.grade_level if context is not None else "",
+        "grade_label": context.grade_label if context is not None else "",
         "target_profile": target_profile,
         "model": model,
         "status": "written" if accepted else "failed",
@@ -1451,6 +1476,8 @@ def build_after_class_manifest(
             "path": str(source_path),
         },
         "after_class_report": {
+            "target_grade": context.grade_level if context is not None else "",
+            "grade_label": context.grade_label if context is not None else "",
             "target_profile": target_profile,
             "model": model,
             "status": "written" if accepted else "failed",

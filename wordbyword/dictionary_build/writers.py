@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from kiwipiepy import Kiwi
 
@@ -140,6 +141,7 @@ def write_outputs(
     dictionary_cleanup_client: SupportsCompletion | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
     artifact_callback: ArtifactCallback | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     cleanup_previous_outputs(
@@ -251,5 +253,6 @@ def write_outputs(
         documents=documents,
         cleaned_example_outputs=cleaned_example_outputs,
         cleaned_dictionary_outputs=cleaned_dictionary_outputs,
+        metadata=metadata,
     )
     refresh_saved_output_metadata(output_dir)

@@ -75,7 +75,7 @@ class PrintableMaterialTest(unittest.TestCase):
         font_path = korean_font_or_skip(self)
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
-            bundle_dir = write_rewritten_fixture(root / "rewritten")
+            bundle_dir = write_rewritten_fixture(root / "rewritten", target_grade="grade10")
             output_root = root / "printable"
             client = RecordingPrintableClient()
             progress_events: list[PrintableProgress] = []
@@ -344,6 +344,8 @@ class PrintableCliTest(unittest.TestCase):
                         str(font_path),
                         "--ollama-model",
                         "fake-ollama",
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -380,6 +382,8 @@ class PrintableCliTest(unittest.TestCase):
                         str(font_path),
                         "--ollama-model",
                         "fake-ollama",
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -464,6 +468,7 @@ def write_rewritten_fixture(
     root: Path,
     *,
     source_id: str = "lesson",
+    target_grade: str = "grade1",
     include_extracted_asset: bool = True,
 ) -> Path:
     bundle_dir = root / source_id
@@ -527,10 +532,12 @@ def write_rewritten_fixture(
                     "id": source_id,
                     "filename": f"{source_id}.pdf",
                     "sha256": "sha",
+                    "target_grade": target_grade,
                 },
                 "parser": {"name": "test-parser", "version": "1"},
                 "rewrite": {
-                    "target_profile": "grade1-ko",
+                    "target_grade": target_grade,
+                    "target_profile": f"{target_grade}-ko",
                     "mode": "vocabulary_guided",
                     "model": "fake-ollama",
                 },

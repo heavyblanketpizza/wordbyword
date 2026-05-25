@@ -21,14 +21,16 @@ from wordbyword.dictionary_build.analyzer import (
     is_vocabulary_token,
 )
 from wordbyword.dictionary_build.artifacts import (
+    ArtifactFormat,
     ArtifactId,
     artifact_event_name,
     artifact_filename,
     artifact_path,
+    artifact_spec,
     legacy_output_filenames,
 )
 from wordbyword.dictionary_build.candidates import build_candidate_outputs
-from wordbyword.dictionary_build.example_cleanup import CleanupProgressCallback, cleaned_example_sentence_fields
+from wordbyword.dictionary_build.example_cleanup import CleanupProgressCallback
 from wordbyword.dictionary_build.example_sentences import example_sentence_rows
 from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
@@ -64,6 +66,7 @@ from wordbyword.dictionary_build.saved_outputs import (
 from wordbyword.dictionary_build.source_archive import validate_managed_dictionary_source_archive
 from wordbyword.dictionary_build.output_metadata import RENAMED_SUMMARY_KEYS
 from wordbyword.dictionary_build.artifacts import output_filenames, pipeline_stage_rows
+from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade
 
 ArtifactCallback = Callable[[str, Sequence[Mapping[str, object]]], None]
 ProgressCallback = Callable[[str, str], None]
@@ -114,6 +117,7 @@ class SourceFingerprint:
 
 @dataclass
 class BuildState:
+    target_grade: str
     documents: list[Path]
     source_fingerprints: list[SourceFingerprint]
     managed_source_metadata_by_sha256: dict[str, Mapping[str, object]]
@@ -325,6 +329,7 @@ CHECKPOINT_ARTIFACT_IDS_FROM: dict[str, tuple[ArtifactId, ...]] = {
 
 def build_resumable_dictionary(
     *,
+    target_grade: str = DEFAULT_TARGET_GRADE,
     input_dir: Path,
     output_dir: Path,
     reference_dictionary_path: Path,
@@ -347,6 +352,7 @@ def build_resumable_dictionary(
         valid_targets = ", ".join(checkpoint.key for checkpoint in CHECKPOINTS)
         raise ValueError(f"Unknown dictionary build target checkpoint: {target_checkpoint}. Valid targets: {valid_targets}.")
 
+    resolved_target_grade = normalize_target_grade(target_grade)
     documents = discover_documents(input_dir)
     managed_source_validation = (
         validate_managed_dictionary_source_archive(input_dir, documents=documents)
@@ -356,11 +362,13 @@ def build_resumable_dictionary(
     output_dir.mkdir(parents=True, exist_ok=True)
     source_fingerprints = fingerprint_documents(documents, input_dir)
     options = build_options(
+        target_grade=resolved_target_grade,
         input_dir=input_dir,
         include_punctuation=include_punctuation,
         include_numbers=include_numbers,
     )
     state = BuildState(
+        target_grade=resolved_target_grade,
         documents=documents,
         source_fingerprints=source_fingerprints,
         managed_source_metadata_by_sha256=(
@@ -749,60 +757,29 @@ def validate_checkpoint_schema(checkpoint: CheckpointSpec, output_dir: Path) -> 
 
 
 def validate_artifact_schema(artifact_id: ArtifactId, path: Path) -> None:
-    csv_headers = {
-        ArtifactId.EXTRACTED_PAGES: page_fields(),
-        ArtifactId.SENTENCES: sentence_fields(),
-        ArtifactId.TOKENS: token_fields(),
-        ArtifactId.SURFACE_WORDS: ["surface", "count", "document_count", "example"],
-        ArtifactId.VOCABULARY_RAW: ["term", "pos", "count", "document_count", "example"],
-        ArtifactId.CANDIDATE_TERMS: candidate_term_fields(),
-        ArtifactId.REJECTED_TERMS: rejected_candidate_fields(),
-        ArtifactId.EXAMPLE_SENTENCES: example_sentence_fields(),
-        ArtifactId.CLEANED_EXAMPLE_SENTENCES: cleaned_example_sentence_fields(),
-    }
-    required_jsonl_keys = {
-        ArtifactId.DICTIONARY_CANDIDATES: {"canonical_key", "display", "example", "curation_status"},
-        ArtifactId.CLEANED_DICTIONARY_CANDIDATES: {"canonical_key", "display", "example", "curation_status"},
-        ArtifactId.LINKED_DICTIONARY_CANDIDATES: {
-            "canonical_key",
-            "display",
-            "example",
-            "curation_status",
-            "example_replaced_with_cleaned_sentence",
-        },
-        ArtifactId.GENERATED_EXAMPLE_DICTIONARY: {"canonical_key", "display", "example"},
-        ArtifactId.MEANING_DICTIONARY_CANDIDATES: {"canonical_key", "display", "example", "meaning"},
-        ArtifactId.FINAL_DICTIONARY: {
-            "canonical_key",
-            "display",
-            "example",
-            "meaning",
-            "meaning_generated_with_ollama",
-        },
-    }
-    if artifact_id in csv_headers:
+    spec = artifact_spec(artifact_id)
+    if spec.csv_header:
         with path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.reader(handle)
             try:
                 header = next(reader)
             except StopIteration as error:
                 raise ValueError(f"{path.name} is empty") from error
-        if header != csv_headers[artifact_id]:
+        if header != list(spec.csv_header):
             raise ValueError(f"{path.name} header does not match the current schema")
         return
 
-    if artifact_id in required_jsonl_keys:
+    if spec.format == ArtifactFormat.JSONL:
         rows = read_jsonl(path)
-        if not rows:
+        if spec.required_jsonl_keys and not rows:
             raise ValueError(f"{path.name} has no rows")
-        required_keys = required_jsonl_keys[artifact_id]
-        missing_keys = required_keys - set(rows[0].keys())
-        if missing_keys:
-            joined = ", ".join(sorted(missing_keys))
-            raise ValueError(f"{path.name} is missing required key(s): {joined}")
+        required_keys = set(spec.required_jsonl_keys)
+        for row_number, row in enumerate(rows, start=1):
+            missing_keys = required_keys - set(row.keys())
+            if missing_keys:
+                joined = ", ".join(sorted(missing_keys))
+                raise ValueError(f"{path.name} row {row_number} is missing required key(s): {joined}")
         return
-
-    read_jsonl(path)
 
 
 def validate_legacy_checkpoint(
@@ -937,9 +914,16 @@ def fingerprint_documents(documents: Sequence[Path], input_dir: Path) -> list[So
     return fingerprints
 
 
-def build_options(*, input_dir: Path, include_punctuation: bool, include_numbers: bool) -> dict[str, object]:
+def build_options(
+    *,
+    target_grade: str,
+    input_dir: Path,
+    include_punctuation: bool,
+    include_numbers: bool,
+) -> dict[str, object]:
     return {
         "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "target_grade": target_grade,
         "input_root": input_dir.resolve().as_posix(),
         "include_punctuation": include_punctuation,
         "include_numbers": include_numbers,
@@ -1016,6 +1000,7 @@ def refresh_base_summary(output_dir: Path, state: BuildState) -> None:
     summary.update(
         {
             "documents": [str(path) for path in state.documents],
+            "target_grade": state.target_grade,
             "document_count": len(state.documents),
             "extracted_page_count": len(pages),
             "sentence_count": len(sentences),

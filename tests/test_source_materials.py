@@ -361,6 +361,8 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                         str(source_path),
                         "--source-output-root",
                         str(output_root),
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 
@@ -371,6 +373,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertFalse((output_root / "lesson" / "content.md").exists())
             manifest = json.loads((output_root / "lesson" / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["parser"]["status"], "skipped")
+            self.assertEqual(manifest["target_grade"], "grade1")
 
     def test_batch_prepares_separate_folder_for_each_source_file(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -411,6 +414,8 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                         str(source_dir),
                         "--source-output-root",
                         str(output_root),
+                        "--target-grade",
+                        "grade1",
                     ]
                 )
 

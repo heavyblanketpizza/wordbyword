@@ -24,12 +24,17 @@ from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
     PaddleOCRVLSettings,
     run_paddleocr_vl,
 )
+from wordbyword.grade_profiles import (
+    CLASS_PARSED_SOURCE_ROOT,
+    CLASS_SOURCE_MATERIAL_ROOT,
+    normalize_target_grade,
+)
 
 WORKSPACE_SCHEMA_VERSION = "wordbyword.source_material_workspace.v1"
 PADDLEOCR_VL_PARSE_SCHEMA_VERSION = "wordbyword.paddleocr_vl_pdf_parse.v1"
 SourceMaterialProgressPhase = Literal["start", "render", "load", "ocr", "write", "complete"]
-DEFAULT_SOURCE_MATERIAL_ROOT = Path("classroom-printout-studio/class-source-materials")
-DEFAULT_PARSED_SOURCE_ROOT = DEFAULT_SOURCE_MATERIAL_ROOT / "parsed"
+DEFAULT_SOURCE_MATERIAL_ROOT = CLASS_SOURCE_MATERIAL_ROOT
+DEFAULT_PARSED_SOURCE_ROOT = CLASS_PARSED_SOURCE_ROOT
 SUPPORTED_SOURCE_EXTENSIONS = {
     ".pdf",
     ".epub",
@@ -104,6 +109,7 @@ class SourceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: str
+    target_grade: str
     source: SourceMetadata
     parser: ParserMetadata
     files: FileManifest
@@ -226,6 +232,7 @@ def parse_source_material(
     parse_pdf: bool = True,
     render_dpi: int = 144,
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+    target_grade: str | None = None,
     progress: SourceMaterialProgressCallback | None = None,
     source_index: int = 1,
     total_sources: int = 1,
@@ -241,6 +248,7 @@ def parse_source_material(
         )
 
     resolved_source_id = source_id or source_id_for(source_path)
+    resolved_target_grade = normalize_target_grade(target_grade)
     output_dir = output_root / resolved_source_id
     assets_dir = output_dir / "assets"
     _emit_source_material_progress(
@@ -277,6 +285,7 @@ def parse_source_material(
         manifest = _build_parsed_manifest(
             source_metadata=source_metadata,
             parser_metadata=parse_result.parser,
+            target_grade=resolved_target_grade,
         )
     else:
         parser_metadata = _parser_metadata(
@@ -292,6 +301,7 @@ def parse_source_material(
         manifest = _build_workspace_manifest(
             source_metadata=source_metadata,
             parser_metadata=parser_metadata,
+            target_grade=resolved_target_grade,
         )
 
     manifest_path = output_dir / "manifest.json"
@@ -322,6 +332,7 @@ def parse_source_materials(
     parse_pdf: bool = True,
     render_dpi: int = 144,
     paddleocr_vl_settings: PaddleOCRVLSettings | None = None,
+    target_grade: str | None = None,
     progress: SourceMaterialProgressCallback | None = None,
 ) -> SourceMaterialBatchResult:
     source_paths = discover_source_materials(source_dir, output_root=output_root)
@@ -336,6 +347,7 @@ def parse_source_materials(
                 parse_pdf=parse_pdf,
                 render_dpi=render_dpi,
                 paddleocr_vl_settings=paddleocr_vl_settings,
+                target_grade=target_grade,
                 progress=progress,
                 source_index=index,
                 total_sources=len(source_paths),
@@ -988,9 +1000,11 @@ def _build_workspace_manifest(
     *,
     source_metadata: SourceMetadata,
     parser_metadata: ParserMetadata,
+    target_grade: str,
 ) -> dict[str, Any]:
     manifest = SourceManifest(
         schema_version=WORKSPACE_SCHEMA_VERSION,
+        target_grade=target_grade,
         source=source_metadata,
         parser=parser_metadata,
         files=FileManifest(),
@@ -1002,9 +1016,11 @@ def _build_parsed_manifest(
     *,
     source_metadata: SourceMetadata,
     parser_metadata: ParserMetadata,
+    target_grade: str,
 ) -> dict[str, Any]:
     manifest = SourceManifest(
         schema_version=WORKSPACE_SCHEMA_VERSION,
+        target_grade=target_grade,
         source=source_metadata,
         parser=parser_metadata,
         files=FileManifest(

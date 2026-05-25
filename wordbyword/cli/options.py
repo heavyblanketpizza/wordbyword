@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 
 from wordbyword.after_class_reports import DEFAULT_AFTER_CLASS_REPORT_OUTPUT_ROOT
@@ -22,26 +21,26 @@ from wordbyword.class_archive.usage_signals import DEFAULT_USAGE_SIGNAL_OUTPUT_R
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.dictionary_build.source_archive import DEFAULT_DICTIONARY_SOURCE_ROOT
 from wordbyword.classroom_printout_studio.source_parsing.materials import DEFAULT_PARSED_SOURCE_ROOT, DEFAULT_SOURCE_MATERIAL_ROOT
-from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, VALID_TARGET_GRADES, normalize_target_grade
+from wordbyword.application.workspace import SourceParseOptions as SourceParseOptions
+from wordbyword.grade_profiles import (
+    DEFAULT_TARGET_GRADE,
+    REFERENCE_DICTIONARY_PATH,
+    VALID_TARGET_GRADES,
+    grade_workspace,
+    normalize_target_grade,
+    path_mentions_other_grade,
+)
 
-DEFAULT_OUTPUT_DIR = Path("build-dictionary")
-DEFAULT_INPUT_DIR = DEFAULT_DICTIONARY_SOURCE_ROOT
-DEFAULT_REFERENCE_DICTIONARY_PATH = DEFAULT_OUTPUT_DIR / "references" / "reference-dictionary.jsonl"
+DEFAULT_WORKSPACE = grade_workspace(DEFAULT_TARGET_GRADE)
+DEFAULT_OUTPUT_DIR = DEFAULT_WORKSPACE.dictionary_output_dir
+DEFAULT_INPUT_DIR = DEFAULT_WORKSPACE.dictionary_input_dir
+DEFAULT_REFERENCE_DICTIONARY_PATH = REFERENCE_DICTIONARY_PATH
 PIPELINE_CLEANUP_FLAGS = (
     "clean_example_sentences",
     "clean_dictionary_candidates",
     "generate_missing_examples",
     "retry_generated_examples",
 )
-
-
-@dataclass(frozen=True)
-class SourceParseOptions:
-    output_root: Path
-    parse_pdf: bool
-    render_dpi: int
-    paddleocr_vl_settings: PaddleOCRVLSettings | None
 
 
 class ExplicitPathAction(argparse.Action):
@@ -79,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(
         target_grade_explicit=False,
+        input_explicit=False,
+        output_explicit=False,
+        source_output_root_explicit=False,
+        usage_signal_input_root_explicit=False,
+        canonical_dictionary_explicit=False,
+        rewrite_dictionary_explicit=False,
+        rewrite_output_root_explicit=False,
         print_output_root_explicit=False,
         usage_signal_output_root_explicit=False,
         usage_candidates_explicit=False,
@@ -91,13 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         type=Path,
         default=DEFAULT_INPUT_DIR,
-        help="Folder containing source PDFs, .txt, or .md files. Defaults to ./build-dictionary/original.",
+        action=ExplicitPathAction,
+        help="Folder containing source PDFs, .txt, or .md files. Defaults to the selected grade workspace.",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="Folder where dictionary build artifacts are written. Defaults to ./build-dictionary.",
+        action=ExplicitPathAction,
+        help="Folder where dictionary build artifacts are written. Defaults to the selected grade workspace.",
     )
     parser.add_argument(
         "--include-punctuation",
@@ -210,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="GRADE",
         help=(
             "Korean K-12 target grade for class printouts, usage signals, live lexicons, and reports. "
-            f"Use one of {', '.join(VALID_TARGET_GRADES)}. Defaults to {DEFAULT_TARGET_GRADE}."
+            f"Use one of {', '.join(VALID_TARGET_GRADES)}. Required for grade-scoped commands."
         ),
     )
     parser.add_argument(
@@ -383,6 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-output-root",
         type=Path,
         default=DEFAULT_PARSED_SOURCE_ROOT,
+        action=ExplicitPathAction,
         help=(
             "Root folder for source-material parse bundles. "
             "Defaults to classroom-printout-studio/class-source-materials/parsed."
@@ -442,6 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--rewrite-dictionary",
         type=Path,
         default=None,
+        action=ExplicitPathAction,
         help=(
             "Dictionary or canonical live-lexicon JSONL for vocabulary-guided rewrites. Defaults to the "
             "canonical live lexicon when it exists, otherwise <--output>/15_final_dictionary.jsonl."
@@ -451,6 +461,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--rewrite-output-root",
         type=Path,
         default=None,
+        action=ExplicitPathAction,
         help=(
             "Root folder for rewritten source-material outputs. Defaults to "
             f"{DEFAULT_WHOLE_REWRITE_OUTPUT_ROOT} for whole-document rewrites, and "
@@ -518,14 +529,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional printable body font size override from 11 to 15 points.",
     )
     parser.add_argument(
+        "--migrate-grade-workspaces",
+        action="store_true",
+        help=(
+            "Preview migration from legacy shared folders into per-grade workspaces. "
+            "Use --apply to perform the planned moves."
+        ),
+    )
+    parser.add_argument(
+        "--apply",
+        dest="apply_grade_workspace_migration",
+        action="store_true",
+        help="Apply --migrate-grade-workspaces. Without this flag, the migration is a dry-run preview.",
+    )
+    parser.add_argument(
         "--generate-after-class-reading-report",
         type=Path,
         default=None,
         metavar="CLASS_PRINTOUT",
         help=(
             "Create one adult-facing after-class Korean reading report from one managed archived .docx/.pdf "
-            "class printout. Bare filenames are resolved inside wbw-vocabulary-intelligence/class-session-archive; "
-            "paths are used exactly as supplied."
+            "class printout. Bare filenames are resolved inside the selected grade archive; paths are used exactly "
+            "as supplied."
         ),
     )
     parser.add_argument(
@@ -553,8 +578,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Classify and safely rename direct .docx/.pdf files in a class-session archive. "
-            "Defaults to wbw-vocabulary-intelligence/class-session-archive when no DIR is supplied. Dry-run unless "
-            "--apply-archive-renames is also supplied."
+            "Defaults to wbw-vocabulary-intelligence/class-session-archive/<grade> when no DIR is supplied. Dry-run "
+            "unless --apply-archive-renames is also supplied."
         ),
     )
     parser.add_argument(
@@ -572,7 +597,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Resolve duplicate direct .docx/.pdf files in a class-session archive by moving recommended duplicates "
             "to a hidden quarantine folder after confirmation. Defaults to wbw-vocabulary-intelligence/"
-            "class-session-archive when no DIR is supplied."
+            "class-session-archive/<grade> when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -593,17 +618,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Build deterministic 00-09 vocabulary usage signal artifacts from named class printouts. "
-            "Reads wbw-vocabulary-intelligence/class-session-archive and writes "
-            "wbw-vocabulary-intelligence/usage-signal-build by default."
+            "Reads wbw-vocabulary-intelligence/class-session-archive/<grade> and writes "
+            "wbw-vocabulary-intelligence/usage-signal-build/<grade> by default."
         ),
     )
     parser.add_argument(
         "--usage-signal-input-root",
         type=Path,
         default=DEFAULT_CLASS_SESSION_ARCHIVE_ROOT,
+        action=ExplicitPathAction,
         help=(
             "Folder of named class printouts for --build-usage-signals. "
-            "Defaults to wbw-vocabulary-intelligence/class-session-archive."
+            "Defaults to wbw-vocabulary-intelligence/class-session-archive/<grade>."
         ),
     )
     parser.add_argument(
@@ -613,7 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=ExplicitPathAction,
         help=(
             "Output folder for --build-usage-signals artifacts. "
-            "Defaults to wbw-vocabulary-intelligence/usage-signal-build."
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/<grade>."
         ),
     )
     parser.add_argument(
@@ -621,16 +647,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Maintain canonical and supplemental live grade lexicons with class usage counts and ROI from "
-            "wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
+            "wbw-vocabulary-intelligence/usage-signal-build/<grade>/08_dictionary_candidates.jsonl."
         ),
     )
     parser.add_argument(
         "--canonical-dictionary",
         type=Path,
         default=DEFAULT_CANONICAL_DICTIONARY_PATH,
+        action=ExplicitPathAction,
         help=(
             "Canonical stage-15 dictionary JSONL for --update-live-lexicon. "
-            "Defaults to build-dictionary/15_final_dictionary.jsonl."
+            "Defaults to build-dictionary/output/<grade>/15_final_dictionary.jsonl."
         ),
     )
     parser.add_argument(
@@ -640,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=ExplicitPathAction,
         help=(
             "Usage candidate JSONL for --update-live-lexicon. "
-            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl."
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/<grade>/08_dictionary_candidates.jsonl."
         ),
     )
     parser.add_argument(
@@ -659,7 +686,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=ExplicitPathAction,
         help=(
             "Canonical live lexicon JSONL to maintain with class usage signals. "
-            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl."
+            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/<grade>/canonical.jsonl."
         ),
     )
     parser.add_argument(
@@ -669,7 +696,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=ExplicitPathAction,
         help=(
             "Supplemental non-canonical live lexicon JSONL to maintain from unmatched class usage. "
-            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-supplemental.jsonl."
+            "Defaults to wbw-vocabulary-intelligence/live-grade-lexicon/<grade>/supplemental.jsonl."
         ),
     )
     parser.add_argument(
@@ -679,7 +706,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=ExplicitPathAction,
         help=(
             "Output JSONL for usage candidates not found in the live lexicon. "
-            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl."
+            "Defaults to wbw-vocabulary-intelligence/usage-signal-build/<grade>/10_unmatched_usage_candidates.jsonl."
         ),
     )
     return parser
@@ -687,6 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     immediate_commands = [
+        args.migrate_grade_workspaces,
         args.parse_source_material is not None,
         args.parse_source_materials is not None,
         args.rewrite_whole_source_material is not None,
@@ -713,6 +741,11 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.add_reference_meanings,
         args.generate_missing_meanings,
     ]
+    if args.apply_grade_workspace_migration and not args.migrate_grade_workspaces:
+        parser.exit(
+            2,
+            "wordbyword: error: --apply requires --migrate-grade-workspaces.\n",
+        )
     if args.force and not (args.prep_dictionary or args.build_dictionary):
         parser.exit(
             2,
@@ -742,6 +775,19 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.exit(
             2,
             "wordbyword: error: --prep-dictionary cannot be combined with --build-dictionary.\n",
+        )
+    if args.migrate_grade_workspaces and any(
+        [
+            args.prep_dictionary,
+            args.build_dictionary,
+            *dictionary_stage_commands,
+            *immediate_commands[1:],
+            args.show_distribution is not None,
+        ]
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --migrate-grade-workspaces cannot be combined with other commands.\n",
         )
     if args.build_dictionary and any(
         dictionary_stage_commands + immediate_commands + [args.show_distribution is not None]
@@ -801,6 +847,21 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             2,
             "wordbyword: error: --include-near-duplicates requires --resolve-archive-duplicates.\n",
         )
+    grade_scoped_command = any(
+        [
+            args.prep_dictionary,
+            args.build_dictionary,
+            *dictionary_stage_commands,
+            *immediate_commands[1:],
+        ]
+    )
+    if grade_scoped_command and not args.target_grade_explicit:
+        parser.exit(
+            2,
+            "wordbyword: error: --target-grade is required for this grade-scoped command.\n",
+        )
+    if grade_scoped_command:
+        validate_grade_scoped_paths(parser, args)
     if args.parse_source_materials is not None and args.source_id:
         parser.exit(
             2,
@@ -830,6 +891,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.generate_after_class_reading_report = validate_after_class_report_cli_input(
             parser,
             args.generate_after_class_reading_report,
+            target_grade=args.target_grade,
         )
     if args.print_body_font_size is not None and not 11 <= args.print_body_font_size <= 15:
         parser.exit(
@@ -846,15 +908,90 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         )
 
 
-def resolve_after_class_report_cli_input(path: Path) -> Path:
+def validate_grade_scoped_paths(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    target_grade = normalize_target_grade(args.target_grade)
+    candidate_paths = [
+        ("--input", args.input, bool(getattr(args, "input_explicit", False))),
+        ("--output", args.output, bool(getattr(args, "output_explicit", False))),
+        ("--parse-source-material", args.parse_source_material, args.parse_source_material is not None),
+        ("--parse-source-materials", args.parse_source_materials, args.parse_source_materials is not None),
+        ("--source-output-root", args.source_output_root, bool(getattr(args, "source_output_root_explicit", False))),
+        ("--rewrite-whole-source-material", args.rewrite_whole_source_material, args.rewrite_whole_source_material is not None),
+        ("--rewrite-whole-source-materials", args.rewrite_whole_source_materials, args.rewrite_whole_source_materials is not None),
+        (
+            "--rewrite-vocabulary-guided-source-material",
+            args.rewrite_vocabulary_guided_source_material,
+            args.rewrite_vocabulary_guided_source_material is not None,
+        ),
+        (
+            "--rewrite-vocabulary-guided-source-materials",
+            args.rewrite_vocabulary_guided_source_materials,
+            args.rewrite_vocabulary_guided_source_materials is not None,
+        ),
+        ("--rewrite-dictionary", args.rewrite_dictionary, args.rewrite_dictionary is not None),
+        ("--rewrite-output-root", args.rewrite_output_root, args.rewrite_output_root is not None),
+        ("--print-class-material", args.print_class_material, args.print_class_material is not None),
+        ("--print-class-materials", args.print_class_materials, args.print_class_materials is not None),
+        ("--build-class-printouts", args.build_class_printouts, args.build_class_printouts is not None),
+        ("--print-output-root", args.print_output_root, bool(getattr(args, "print_output_root_explicit", False))),
+        (
+            "--generate-after-class-reading-report",
+            args.generate_after_class_reading_report,
+            args.generate_after_class_reading_report is not None,
+        ),
+        ("--rename-class-session-archive", args.rename_class_session_archive, args.rename_class_session_archive is not None),
+        ("--resolve-archive-duplicates", args.resolve_archive_duplicates, args.resolve_archive_duplicates is not None),
+        (
+            "--rename-dictionary-source-archive",
+            args.rename_dictionary_source_archive,
+            args.rename_dictionary_source_archive is not None,
+        ),
+        (
+            "--resolve-dictionary-source-duplicates",
+            args.resolve_dictionary_source_duplicates,
+            args.resolve_dictionary_source_duplicates is not None,
+        ),
+        (
+            "--after-class-report-output-root",
+            args.after_class_report_output_root,
+            bool(getattr(args, "after_class_report_output_root_explicit", False)),
+        ),
+        ("--usage-signal-input-root", args.usage_signal_input_root, bool(getattr(args, "usage_signal_input_root_explicit", False))),
+        ("--usage-signal-output-root", args.usage_signal_output_root, bool(getattr(args, "usage_signal_output_root_explicit", False))),
+        ("--canonical-dictionary", args.canonical_dictionary, bool(getattr(args, "canonical_dictionary_explicit", False))),
+        ("--usage-candidates", args.usage_candidates, bool(getattr(args, "usage_candidates_explicit", False))),
+        ("--live-lexicon", args.live_lexicon, bool(getattr(args, "live_lexicon_explicit", False))),
+        ("--supplemental-lexicon", args.supplemental_lexicon, bool(getattr(args, "supplemental_lexicon_explicit", False))),
+        (
+            "--unmatched-usage-output",
+            args.unmatched_usage_output,
+            bool(getattr(args, "unmatched_usage_output_explicit", False)),
+        ),
+    ]
+    for option, path, explicit in candidate_paths:
+        if explicit and path is not None and path_mentions_other_grade(path, target_grade):
+            parser.exit(
+                2,
+                f"wordbyword: error: {option} contains a different grade token than --target-grade {target_grade}: {path}\n",
+            )
+
+
+def resolve_after_class_report_cli_input(path: Path, *, target_grade: str | None = None) -> Path:
     candidate = Path(path)
     if candidate.is_absolute() or candidate.parent != Path("."):
         return candidate
+    if target_grade is not None:
+        return grade_workspace(target_grade).archive_root / candidate
     return DEFAULT_CLASS_SESSION_ARCHIVE_ROOT / candidate
 
 
-def validate_after_class_report_cli_input(parser: argparse.ArgumentParser, path: Path) -> Path:
-    resolved_path = resolve_after_class_report_cli_input(path)
+def validate_after_class_report_cli_input(
+    parser: argparse.ArgumentParser,
+    path: Path,
+    *,
+    target_grade: str | None = None,
+) -> Path:
+    resolved_path = resolve_after_class_report_cli_input(path, target_grade=target_grade)
     if not resolved_path.exists():
         parser.exit(2, f"wordbyword: error: after-class report input does not exist: {resolved_path}\n")
     if resolved_path.is_dir():
