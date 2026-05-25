@@ -180,18 +180,36 @@ class GuiSmokeTests(unittest.TestCase):
                                 engine.load(QUrl.fromLocalFile(str(qml_path)))
 
                                 self.assertTrue(engine.rootObjects())
+                                root_object = engine.rootObjects()[0]
+                                self.assertEqual(root_object.property("activePage"), "workflow")
+                                self.assertEqual(root_object.property("settingsTab"), "appearance")
+                                saved_dictionary_input = str(Path(workspace) / "dictionary-source")
 
-                                def switch_appearance_and_quit(bridge: WordByWordBridge = bridge) -> None:
+                                def switch_appearance_and_quit(
+                                    bridge: WordByWordBridge = bridge,
+                                    root_object: object = root_object,
+                                    saved_dictionary_input: str = saved_dictionary_input,
+                                ) -> None:
+                                    root_object.setProperty("activePage", "settings")
+                                    root_object.setProperty("settingsTab", "files_paths")
+                                    bridge.saveSettings({"dictionary_input_dir": saved_dictionary_input})
+                                    root_object.setProperty("settingsTab", "appearance")
                                     bridge.setLanguage("ko")
                                     bridge.setTheme("neobrutalist")
                                     bridge.setTextScale(1.3)
+                                    root_object.setProperty("activePage", "workflow")
+                                    root_object.setProperty("currentSection", 1)
                                     app.quit()
 
                                 QTimer.singleShot(0, switch_appearance_and_quit)
                                 app.exec()
+                                self.assertEqual(root_object.property("activePage"), "workflow")
+                                self.assertEqual(root_object.property("settingsTab"), "appearance")
+                                self.assertEqual(root_object.property("currentSection"), 1)
                                 self.assertEqual(bridge.languageState["selected"], "ko")
                                 self.assertEqual(bridge.appearanceState["theme"], "neobrutalist")
                                 self.assertEqual(bridge.appearanceState["text_scale"], 1.3)
+                                self.assertEqual(bridge.settings["dictionary_input_dir"], saved_dictionary_input)
                                 _release_qml_engine(engine)
         finally:
             qInstallMessageHandler(previous_handler)

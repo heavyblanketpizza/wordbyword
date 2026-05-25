@@ -13,6 +13,8 @@ ApplicationWindow {
     color: root.colorAppBg
 
     property int currentSection: 0
+    property string activePage: "workflow"
+    property string settingsTab: "appearance"
     property string uiFontFamily: (typeof guiUiFontFamily === "undefined" || guiUiFontFamily.length === 0) ? "Pretendard Variable" : guiUiFontFamily
     property string monoFontFamily: (typeof guiMonoFontFamily === "undefined" || guiMonoFontFamily.length === 0) ? "JetBrains Mono" : guiMonoFontFamily
     property var backend: (typeof bridge === "undefined" || bridge === null) ? null : bridge
@@ -162,6 +164,18 @@ ApplicationWindow {
         return String(accents[Math.max(0, Math.min(index, accents.length - 1))])
     }
 
+    function showWorkflow(index) {
+        if (index >= 0 && index < root.definitions.length)
+            root.currentSection = index
+        root.activePage = "workflow"
+    }
+
+    function showSettings(tab) {
+        if (tab && tab.length > 0)
+            root.settingsTab = tab
+        root.activePage = "settings"
+    }
+
     function activeIconInverted() {
         return !root.neoTheme
     }
@@ -195,18 +209,51 @@ ApplicationWindow {
         }
     }
 
-    function setupValues() {
-        var values = commonValues()
-        values.dictionary_input_dir = setupDictionaryInput.text
-        values.class_source_dir = setupClassSource.text
+    function settingValue(key) {
+        var value = root.safeSettings[key]
+        return value === undefined || value === null ? "" : String(value)
+    }
+
+    function pathSettingsValues() {
+        return {
+            "dictionary_input_dir": root.settingValue("dictionary_input_dir"),
+            "dictionary_output_dir": root.settingValue("dictionary_output_dir"),
+            "reference_dictionary_path": root.settingValue("reference_dictionary_path"),
+            "class_source_dir": root.settingValue("class_source_dir"),
+            "source_output_root": root.settingValue("source_output_root"),
+            "rewrite_output_root": root.settingValue("rewrite_output_root"),
+            "print_output_root": root.settingValue("print_output_root"),
+            "rewrite_dictionary_path": root.settingValue("rewrite_dictionary_path"),
+            "print_font_path": root.settingValue("print_font_path"),
+            "archive_root": root.settingValue("archive_root"),
+            "usage_signal_output_root": root.settingValue("usage_signal_output_root"),
+            "canonical_dictionary_path": root.settingValue("canonical_dictionary_path"),
+            "usage_candidates_path": root.settingValue("usage_candidates_path"),
+            "usage_summary_path": root.settingValue("usage_summary_path"),
+            "live_lexicon_path": root.settingValue("live_lexicon_path"),
+            "supplemental_lexicon_path": root.settingValue("supplemental_lexicon_path"),
+            "unmatched_usage_output_path": root.settingValue("unmatched_usage_output_path"),
+            "after_class_printout_path": root.settingValue("after_class_printout_path"),
+            "after_class_report_output_root": root.settingValue("after_class_report_output_root"),
+            "after_class_report_font_path": root.settingValue("after_class_report_font_path")
+        }
+    }
+
+    function mergeValues(base, extra) {
+        var values = {}
+        for (var baseKey in base)
+            values[baseKey] = base[baseKey]
+        for (var extraKey in extra)
+            values[extraKey] = extra[extraKey]
         return values
     }
 
+    function setupValues() {
+        return root.mergeValues(root.pathSettingsValues(), commonValues())
+    }
+
     function dictionaryValues() {
-        var values = commonValues()
-        values.dictionary_input_dir = dictionaryInput.text
-        values.dictionary_output_dir = dictionaryOutput.text
-        values.reference_dictionary_path = referenceDictionary.text
+        var values = root.mergeValues(root.pathSettingsValues(), commonValues())
         values.dictionary_force = dictionaryForce.checked
         values.include_numbers = dictionaryNumbers.checked
         values.include_punctuation = dictionaryPunctuation.checked
@@ -214,32 +261,16 @@ ApplicationWindow {
     }
 
     function classPrintoutValues() {
-        var values = commonValues()
-        values.dictionary_output_dir = dictionaryOutput.text
-        values.live_lexicon_path = liveLexicon.text
-        values.class_source_dir = classSource.text
-        values.source_output_root = parsedRoot.text
-        values.rewrite_output_root = rewriteRoot.text
-        values.print_output_root = printRoot.text
-        values.rewrite_dictionary_path = rewriteDictionary.text
+        var values = root.mergeValues(root.pathSettingsValues(), commonValues())
         values.force_class_printouts = forcePrintouts.checked
         values.skip_pdf_parse = skipPdfParse.checked
         values.pdf_render_dpi = pdfDpi.text
-        values.print_font_path = printFont.text
         values.print_body_font_size = bodyFontSize.text
         return values
     }
 
     function archiveValues() {
-        var values = commonValues()
-        values.archive_root = archiveRoot.text
-        values.usage_signal_output_root = usageOutputRoot.text
-        values.canonical_dictionary_path = canonicalDictionary.text
-        values.usage_candidates_path = usageCandidates.text
-        values.usage_summary_path = usageSummary.text
-        values.live_lexicon_path = liveLexicon.text
-        values.supplemental_lexicon_path = supplementalLexicon.text
-        values.unmatched_usage_output_path = unmatchedUsage.text
+        var values = root.mergeValues(root.pathSettingsValues(), commonValues())
         values.include_near_duplicates = includeNearDuplicates.checked
         values.include_numbers = usageNumbers.checked
         values.include_punctuation = usagePunctuation.checked
@@ -247,11 +278,7 @@ ApplicationWindow {
     }
 
     function reportValues() {
-        var values = commonValues()
-        values.after_class_printout_path = reportPrintout.text
-        values.after_class_report_output_root = reportOutputRoot.text
-        values.after_class_report_font_path = reportFont.text
-        return values
+        return root.mergeValues(root.pathSettingsValues(), commonValues())
     }
 
     function workflowValues() {
@@ -279,6 +306,12 @@ ApplicationWindow {
         if (!backend)
             return false
         return backend.saveSettings(values)
+    }
+
+    function saveSetting(key, value) {
+        var values = {}
+        values[key] = value
+        return root.saveSettings(values)
     }
 
     function runJob(workflowId, values) {
@@ -404,37 +437,15 @@ ApplicationWindow {
     function pathForStageKey(key) {
         if (!key)
             return ""
-        if (key === "dictionary_input_dir")
-            return dictionaryInput.text
-        if (key === "dictionary_output_dir")
-            return dictionaryOutput.text
-        if (key === "reference_dictionary_path")
-            return referenceDictionary.text
-        if (key === "dictionary_final")
-            return dictionaryOutput.text + "/15_final_dictionary.jsonl"
-        if (key === "class_source_dir")
-            return classSource.text
-        if (key === "source_output_root")
-            return parsedRoot.text
-        if (key === "rewrite_output_root")
-            return rewriteRoot.text
-        if (key === "print_output_root")
-            return printRoot.text
-        if (key === "vocabulary_source")
-            return rewriteDictionary.text || liveLexicon.text || dictionaryOutput.text + "/15_final_dictionary.jsonl"
-        if (key === "archive_root")
-            return archiveRoot.text
-        if (key === "usage_signal_output_root")
-            return usageOutputRoot.text
-        if (key === "live_lexicon_path")
-            return liveLexicon.text
-        if (key === "after_class_printout_path")
-            return reportPrintout.text
-        if (key === "after_class_report_output_root")
-            return reportOutputRoot.text
         if (key === "model")
             return modelField.text
-        return backendPathForKey(key)
+        var path = backendPathForKey(key)
+        return path || root.settingValue(key)
+    }
+
+    function pathDisplay(value) {
+        var text = String(value || "")
+        return text.length > 0 ? text : root.tr("settings.not_set")
     }
 
     component LabelText: Text {
@@ -643,6 +654,7 @@ ApplicationWindow {
     component PathField: ColumnLayout {
         id: pathField
         property string label: ""
+        property string settingKey: ""
         property alias text: field.text
         property bool directory: true
         spacing: root.scaled(6)
@@ -656,6 +668,10 @@ ApplicationWindow {
                 id: field
                 Layout.fillWidth: true
                 Layout.preferredHeight: root.controlHeight
+                onEditingFinished: {
+                    if (pathField.settingKey.length > 0)
+                        root.saveSetting(pathField.settingKey, field.text)
+                }
             }
             WButton {
                 iconName: pathField.directory ? "folder-open" : "file-search"
@@ -666,9 +682,59 @@ ApplicationWindow {
                 Layout.maximumWidth: root.iconButtonWidth
                 onClicked: {
                     field.text = root.choosePath(field.text, pathField.directory)
-                    root.saveSettings(root.workflowValues())
+                    if (pathField.settingKey.length > 0)
+                        root.saveSetting(pathField.settingKey, field.text)
                 }
             }
+        }
+    }
+
+    component PathSummaryRow: RowLayout {
+        id: summaryRow
+        property string label: ""
+        property string pathText: ""
+        Layout.fillWidth: true
+        spacing: root.scaled(12)
+        LabelText {
+            text: summaryRow.label
+            Layout.preferredWidth: root.scaled(210)
+            elide: Text.ElideRight
+        }
+        Text {
+            text: root.pathDisplay(summaryRow.pathText)
+            color: summaryRow.pathText.length > 0 ? root.colorInkSoft : root.colorTextSubtle
+            font.family: root.monoFontFamily
+            font.pixelSize: root.fontSizeTiny
+            font.weight: root.fontWeightRegular
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideMiddle
+            Layout.fillWidth: true
+        }
+    }
+
+    component SettingsTabButton: Button {
+        id: control
+        property string tabKey: ""
+        property string label: ""
+        Layout.preferredHeight: root.compactControlHeight
+        Layout.preferredWidth: root.scaled(172)
+        font.family: root.uiFontFamily
+        font.pixelSize: root.fontSizeLabel
+        font.weight: root.fontWeightBold
+        onClicked: root.settingsTab = control.tabKey
+        background: Rectangle {
+            color: root.settingsTab === control.tabKey ? root.colorActiveBg : root.colorControlBg
+            border.color: root.colorInk
+            border.width: root.settingsTab === control.tabKey ? 2 : 1
+            radius: 0
+        }
+        contentItem: Text {
+            text: control.label
+            color: root.settingsTab === control.tabKey ? root.activeTextColor() : root.colorInk
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            font: control.font
+            elide: Text.ElideRight
         }
     }
 
@@ -678,11 +744,11 @@ ApplicationWindow {
         property var readiness: ({})
         Layout.fillWidth: true
         Layout.preferredHeight: root.navRowHeight
-        onClicked: root.currentSection = index
+        onClicked: root.showWorkflow(index)
         background: Rectangle {
-            color: root.currentSection === index ? root.colorActiveBg : root.colorControlBg
+            color: root.activePage === "workflow" && root.currentSection === index ? root.colorActiveBg : root.colorControlBg
             border.color: root.colorInk
-            border.width: root.currentSection === index ? 2 : 1
+            border.width: root.activePage === "workflow" && root.currentSection === index ? 2 : 1
             radius: 0
         }
         contentItem: RowLayout {
@@ -691,7 +757,7 @@ ApplicationWindow {
             spacing: root.scaled(10)
             Text {
                 text: String(control.definition.number || "")
-                color: root.currentSection === index ? root.activeTextColor() : root.colorInk
+                color: root.activePage === "workflow" && root.currentSection === index ? root.activeTextColor() : root.colorInk
                 font.family: root.uiFontFamily
                 font.pixelSize: root.fontSizeLabel
                 font.weight: root.fontWeightBold
@@ -699,14 +765,14 @@ ApplicationWindow {
             }
             WIcon {
                 iconName: String(control.definition.icon_name || "")
-                inverted: root.currentSection === index && root.activeIconInverted()
+                inverted: root.activePage === "workflow" && root.currentSection === index && root.activeIconInverted()
             }
             ColumnLayout {
                 spacing: root.scaled(4)
                 Layout.fillWidth: true
                 Text {
                     text: String(control.definition.title || "")
-                    color: root.currentSection === index ? root.activeTextColor() : root.colorInk
+                    color: root.activePage === "workflow" && root.currentSection === index ? root.activeTextColor() : root.colorInk
                     font.family: root.uiFontFamily
                     font.pixelSize: root.fontSizeBody
                     font.weight: root.fontWeightBold
@@ -715,13 +781,46 @@ ApplicationWindow {
                 }
                 Text {
                     text: root.statusLabel(String(control.readiness.status || "ready"))
-                    color: root.currentSection === index ? root.activeTextColor() : root.colorTextMuted
+                    color: root.activePage === "workflow" && root.currentSection === index ? root.activeTextColor() : root.colorTextMuted
                     font.family: root.uiFontFamily
                     font.pixelSize: root.fontSizeBadge
                     font.weight: root.fontWeightBold
                     elide: Text.ElideRight
                     Layout.fillWidth: true
                 }
+            }
+        }
+    }
+
+    component SidebarSettingsButton: Button {
+        id: control
+        Layout.fillWidth: true
+        Layout.preferredHeight: root.controlHeight
+        font.family: root.uiFontFamily
+        font.pixelSize: root.fontSizeBody
+        font.weight: root.fontWeightBold
+        onClicked: root.showSettings()
+        background: Rectangle {
+            color: root.activePage === "settings" ? root.colorActiveBg : root.colorControlBg
+            border.color: root.colorInk
+            border.width: root.activePage === "settings" ? 2 : 1
+            radius: 0
+        }
+        contentItem: RowLayout {
+            anchors.fill: parent
+            anchors.margins: root.scaled(10)
+            spacing: root.scaled(10)
+            WIcon {
+                iconName: "settings"
+                inverted: root.activePage === "settings" && root.activeIconInverted()
+            }
+            Text {
+                text: root.tr("settings.label")
+                color: root.activePage === "settings" ? root.activeTextColor() : root.colorInk
+                font: control.font
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                Layout.fillWidth: true
             }
         }
     }
@@ -816,129 +915,111 @@ ApplicationWindow {
             border.color: root.colorInk
             border.width: 2
 
-            ScrollView {
-                id: sidebarScroll
+            ColumnLayout {
                 anchors.fill: parent
-                clip: true
-                leftPadding: root.scaled(20)
-                rightPadding: root.scaled(20)
-                topPadding: root.scaled(20)
-                bottomPadding: root.scaled(20)
-                contentWidth: availableWidth
+                spacing: 0
 
-                ColumnLayout {
-                    width: sidebarScroll.availableWidth
-                    spacing: root.scaled(12)
-
-                Text {
-                    text: "wordbyword"
-                    color: root.colorInk
-                    font.family: root.uiFontFamily
-                    font.pixelSize: root.fontSizeBrand
-                    font.weight: root.fontWeightBold
-                    Layout.bottomMargin: root.scaled(8)
-                }
-
-                BodyText {
-                    text: root.tr("sidebar.guide_flow")
-                    color: root.colorTextMuted
-                    font.pixelSize: root.fontSizeLabel
-                    Layout.bottomMargin: root.scaled(4)
-                }
-
-                Repeater {
-                    model: root.definitions
-                    delegate: FlowNavButton {
-                        definition: modelData
-                        readiness: root.readinessMap[modelData.key] || ({})
-                    }
-                }
-
-                Item { Layout.preferredHeight: root.scaled(4) }
-
-                Rectangle {
+                ScrollView {
+                    id: sidebarScroll
                     Layout.fillWidth: true
-                    implicitHeight: languageBody.implicitHeight + root.scaled(28)
-                    color: root.colorPanelBg
-                    border.color: root.colorInk
-                    border.width: 1
+                    Layout.fillHeight: true
+                    clip: true
+                    leftPadding: root.scaled(20)
+                    rightPadding: root.scaled(20)
+                    topPadding: root.scaled(20)
+                    bottomPadding: root.scaled(16)
+                    contentWidth: availableWidth
+
                     ColumnLayout {
-                        id: languageBody
-                        anchors.fill: parent
-                        anchors.margins: root.scaled(14)
-                        spacing: root.scaled(10)
-                        LabelText { text: root.tr("language.label") }
-                        ComboBox {
-                            id: languageCombo
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: root.controlHeight
-                            model: root.safeLanguageState.options || []
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: root.languageOptionIndex(String(root.safeLanguageState.selected || "system"))
+                        width: sidebarScroll.availableWidth
+                        spacing: root.scaled(12)
+
+                        Text {
+                            text: "wordbyword"
+                            color: root.colorInk
                             font.family: root.uiFontFamily
-                            font.pixelSize: root.fontSizeBody
-                            font.weight: root.fontWeightRegular
-                            onActivated: function(index) {
-                                var options = root.safeLanguageState.options || []
-                                if (index >= 0 && index < options.length)
-                                    root.setLanguage(String(options[index].value || "system"))
+                            font.pixelSize: root.fontSizeBrand
+                            font.weight: root.fontWeightBold
+                            Layout.bottomMargin: root.scaled(8)
+                        }
+
+                        BodyText {
+                            text: root.tr("sidebar.guide_flow")
+                            color: root.colorTextMuted
+                            font.pixelSize: root.fontSizeLabel
+                            Layout.bottomMargin: root.scaled(4)
+                        }
+
+                        Repeater {
+                            model: root.definitions
+                            delegate: FlowNavButton {
+                                definition: modelData
+                                readiness: root.readinessMap[modelData.key] || ({})
                             }
-                            background: Rectangle {
-                                color: root.colorControlBg
-                                border.color: root.colorInk
-                                border.width: 1
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: languageCombo.displayText
-                                color: root.colorInk
-                                font: languageCombo.font
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: root.scaled(10)
-                                rightPadding: root.scaled(34)
-                                elide: Text.ElideRight
-                            }
-                            indicator: WIcon {
-                                iconName: "chevron-down"
-                                anchors.right: parent.right
-                                anchors.rightMargin: root.scaled(10)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            popup: Popup {
-                                y: languageCombo.height - 1
-                                width: languageCombo.width
-                                implicitHeight: contentItem.implicitHeight
-                                padding: 0
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: languageCombo.popup.visible ? languageCombo.delegateModel : null
-                                    currentIndex: languageCombo.highlightedIndex
+                        }
+
+                        Item { Layout.preferredHeight: root.scaled(4) }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: runtimeBody.implicitHeight + root.scaled(28)
+                            color: root.colorRuntimeBg
+                            border.color: root.colorInk
+                            border.width: 1
+                            ColumnLayout {
+                                id: runtimeBody
+                                anchors.fill: parent
+                                anchors.margins: root.scaled(14)
+                                spacing: root.scaled(10)
+                                LabelText { text: root.tr("runtime.label") }
+                                WTextField {
+                                    id: modelField
+                                    Layout.fillWidth: true
+                                    text: String(root.safeSettings.model || "")
+                                    onEditingFinished: root.saveSettings(root.workflowValues())
                                 }
-                                background: Rectangle {
-                                    color: root.colorControlBg
-                                    border.color: root.colorInk
-                                    border.width: 1
-                                    radius: 0
+                                WTextField {
+                                    id: baseUrlField
+                                    Layout.fillWidth: true
+                                    placeholderText: root.tr("placeholder.ollama_base_url")
+                                    text: String(root.safeSettings.base_url || "")
+                                    onEditingFinished: root.saveSettings(root.workflowValues())
                                 }
-                            }
-                            delegate: ItemDelegate {
-                                width: languageCombo.width
-                                height: root.compactControlHeight
-                                highlighted: languageCombo.highlightedIndex === index
-                                background: Rectangle {
-                                    color: highlighted ? root.colorActiveBg : root.colorControlBg
-                                }
-                                contentItem: Text {
-                                    text: modelData.label
-                                    color: highlighted ? root.activeTextColor() : root.colorInk
+                                LabelText { text: "Target grade" }
+                                ComboBox {
+                                    id: targetGradeCombo
+                                    enabled: !root.busy
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: root.controlHeight
+                                    model: root.gradeOptions
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    currentIndex: root.gradeOptionIndex(String(root.safeSettings.target_grade || "grade1"))
                                     font.family: root.uiFontFamily
                                     font.pixelSize: root.fontSizeBody
                                     font.weight: root.fontWeightRegular
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: root.scaled(10)
-                                    elide: Text.ElideRight
+                                    onActivated: root.saveSettings(root.workflowValues())
+                                    background: Rectangle {
+                                        color: root.colorControlBg
+                                        border.color: root.colorInk
+                                        border.width: 1
+                                        radius: 0
+                                    }
+                                    contentItem: Text {
+                                        text: targetGradeCombo.displayText
+                                        color: root.colorInk
+                                        font: targetGradeCombo.font
+                                        verticalAlignment: Text.AlignVCenter
+                                        leftPadding: root.scaled(10)
+                                        rightPadding: root.scaled(34)
+                                        elide: Text.ElideRight
+                                    }
+                                    indicator: WIcon {
+                                        iconName: "chevron-down"
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: root.scaled(10)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
                                 }
                             }
                         }
@@ -947,221 +1028,17 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: themeBody.implicitHeight + root.scaled(28)
-                    color: root.colorPanelBg
+                    implicitHeight: settingsNavBody.implicitHeight + root.scaled(40)
+                    color: root.colorSidebarBg
                     border.color: root.colorInk
-                    border.width: 1
+                    border.width: 0
                     ColumnLayout {
-                        id: themeBody
+                        id: settingsNavBody
                         anchors.fill: parent
-                        anchors.margins: root.scaled(14)
-                        spacing: root.scaled(10)
-                        LabelText { text: root.tr("theme.label") }
-                        ComboBox {
-                            id: themeCombo
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: root.controlHeight
-                            model: root.safeAppearanceState.theme_options || []
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: root.themeOptionIndex(root.guiTheme)
-                            font.family: root.uiFontFamily
-                            font.pixelSize: root.fontSizeBody
-                            font.weight: root.fontWeightRegular
-                            onActivated: function(index) {
-                                var options = root.safeAppearanceState.theme_options || []
-                                if (index >= 0 && index < options.length)
-                                    root.setTheme(String(options[index].value || "standard"))
-                            }
-                            background: Rectangle {
-                                color: root.colorControlBg
-                                border.color: root.colorInk
-                                border.width: 1
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: themeCombo.displayText
-                                color: root.colorInk
-                                font: themeCombo.font
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: root.scaled(10)
-                                rightPadding: root.scaled(34)
-                                elide: Text.ElideRight
-                            }
-                            indicator: WIcon {
-                                iconName: "chevron-down"
-                                anchors.right: parent.right
-                                anchors.rightMargin: root.scaled(10)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            popup: Popup {
-                                y: themeCombo.height - 1
-                                width: themeCombo.width
-                                implicitHeight: contentItem.implicitHeight
-                                padding: 0
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: themeCombo.popup.visible ? themeCombo.delegateModel : null
-                                    currentIndex: themeCombo.highlightedIndex
-                                }
-                                background: Rectangle {
-                                    color: root.colorControlBg
-                                    border.color: root.colorInk
-                                    border.width: 1
-                                    radius: 0
-                                }
-                            }
-                            delegate: ItemDelegate {
-                                width: themeCombo.width
-                                height: root.compactControlHeight
-                                highlighted: themeCombo.highlightedIndex === index
-                                background: Rectangle {
-                                    color: highlighted ? root.colorActiveBg : root.colorControlBg
-                                }
-                                contentItem: Text {
-                                    text: modelData.label
-                                    color: highlighted ? root.activeTextColor() : root.colorInk
-                                    font.family: root.uiFontFamily
-                                    font.pixelSize: root.fontSizeBody
-                                    font.weight: root.fontWeightRegular
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: root.scaled(10)
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
+                        anchors.margins: root.scaled(20)
+                        spacing: 0
+                        SidebarSettingsButton {}
                     }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: textSizeBody.implicitHeight + root.scaled(28)
-                    color: root.colorPanelBg
-                    border.color: root.colorInk
-                    border.width: 1
-                    ColumnLayout {
-                        id: textSizeBody
-                        anchors.fill: parent
-                        anchors.margins: root.scaled(14)
-                        spacing: root.scaled(10)
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: root.scaled(10)
-                            LabelText {
-                                text: root.tr("appearance.text_size_label")
-                                Layout.fillWidth: true
-                            }
-                            BodyText {
-                                text: String(root.safeAppearanceState.text_scale_percent || Math.round(root.textScale * 100)) + root.tr("appearance.text_size_value_suffix")
-                                color: root.colorTextMuted
-                                font.pixelSize: root.fontSizeLabel
-                                horizontalAlignment: Text.AlignRight
-                            }
-                        }
-                        Slider {
-                            id: textSizeSlider
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: root.scaled(30)
-                            from: Number(root.safeAppearanceState.min_text_scale || 0.9)
-                            to: Number(root.safeAppearanceState.max_text_scale || 1.3)
-                            stepSize: Number(root.safeAppearanceState.text_scale_step || 0.05)
-                            snapMode: Slider.SnapAlways
-                            value: root.textScale
-                            onMoved: root.setTextScale(value)
-                            background: Rectangle {
-                                x: textSizeSlider.leftPadding
-                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
-                                width: textSizeSlider.availableWidth
-                                height: root.scaled(6)
-                                color: root.colorControlBg
-                                border.color: root.colorInk
-                                border.width: 1
-                                radius: 0
-                                Rectangle {
-                                    width: textSizeSlider.visualPosition * parent.width
-                                    height: parent.height
-                                    color: root.colorProgressFill
-                                    radius: 0
-                                }
-                            }
-                            handle: Rectangle {
-                                x: textSizeSlider.leftPadding + textSizeSlider.visualPosition * (textSizeSlider.availableWidth - width)
-                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
-                                implicitWidth: root.scaled(18)
-                                implicitHeight: root.scaled(22)
-                                color: root.colorControlBg
-                                border.color: root.colorInk
-                                border.width: 2
-                                radius: 0
-                            }
-                        }
-                    }
-                }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: runtimeBody.implicitHeight + root.scaled(28)
-                    color: root.colorRuntimeBg
-                    border.color: root.colorInk
-                    border.width: 1
-                    ColumnLayout {
-                        id: runtimeBody
-                        anchors.fill: parent
-                        anchors.margins: root.scaled(14)
-                        spacing: root.scaled(10)
-                        LabelText { text: root.tr("runtime.label") }
-                        WTextField {
-                            id: modelField
-                            Layout.fillWidth: true
-                            text: String(root.safeSettings.model || "")
-                            onEditingFinished: root.saveSettings(root.workflowValues())
-                        }
-                        WTextField {
-                            id: baseUrlField
-                            Layout.fillWidth: true
-                            placeholderText: root.tr("placeholder.ollama_base_url")
-                            text: String(root.safeSettings.base_url || "")
-                            onEditingFinished: root.saveSettings(root.workflowValues())
-                        }
-                        LabelText { text: "Target grade" }
-                        ComboBox {
-                            id: targetGradeCombo
-                            enabled: !root.busy
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: root.controlHeight
-                            model: root.gradeOptions
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: root.gradeOptionIndex(String(root.safeSettings.target_grade || "grade1"))
-                            font.family: root.uiFontFamily
-                            font.pixelSize: root.fontSizeBody
-                            font.weight: root.fontWeightRegular
-                            onActivated: root.saveSettings(root.workflowValues())
-                            background: Rectangle {
-                                color: root.colorControlBg
-                                border.color: root.colorInk
-                                border.width: 1
-                                radius: 0
-                            }
-                            contentItem: Text {
-                                text: targetGradeCombo.displayText
-                                color: root.colorInk
-                                font: targetGradeCombo.font
-                                verticalAlignment: Text.AlignVCenter
-                                leftPadding: root.scaled(10)
-                                rightPadding: root.scaled(34)
-                                elide: Text.ElideRight
-                            }
-                            indicator: WIcon {
-                                iconName: "chevron-down"
-                                anchors.right: parent.right
-                                anchors.rightMargin: root.scaled(10)
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                    }
-                }
                 }
             }
         }
@@ -1171,21 +1048,27 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
-            ScrollView {
-                id: mainScroll
+            StackLayout {
+                id: mainPageStack
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                clip: true
-                leftPadding: root.scaled(24)
-                rightPadding: root.scaled(24)
-                topPadding: root.scaled(24)
-                bottomPadding: root.scaled(24)
-                contentWidth: availableWidth
+                currentIndex: root.activePage === "settings" ? 1 : 0
 
-                ColumnLayout {
-                    width: Math.min(mainScroll.availableWidth, root.scaled(1080))
-                    x: Math.max(0, (mainScroll.availableWidth - width) / 2)
-                    spacing: root.scaled(28)
+                ScrollView {
+                    id: mainScroll
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    leftPadding: root.scaled(24)
+                    rightPadding: root.scaled(24)
+                    topPadding: root.scaled(24)
+                    bottomPadding: root.scaled(24)
+                    contentWidth: availableWidth
+
+                    ColumnLayout {
+                        width: Math.min(mainScroll.availableWidth, root.scaled(1080))
+                        x: Math.max(0, (mainScroll.availableWidth - width) / 2)
+                        spacing: root.scaled(28)
 
                     SectionTitle {
                         title: String(root.currentDefinition.number || "") + " / " + String(root.currentDefinition.title || "")
@@ -1354,24 +1237,40 @@ ApplicationWindow {
                                 }
                             }
 
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(12)
+                                LabelText {
+                                    text: root.tr("settings.path_summary")
+                                    Layout.fillWidth: true
+                                }
+                                WButton {
+                                    text: root.tr("settings.edit_files_paths")
+                                    iconName: "settings"
+                                    enabled: true
+                                    Layout.preferredWidth: root.scaled(190)
+                                    onClicked: root.showSettings("files_paths")
+                                }
+                            }
+
                             StackLayout {
                                 id: inputStack
                                 currentIndex: root.currentSection
                                 Layout.fillWidth: true
 
                                 ColumnLayout {
-                                    spacing: root.scaled(12)
-                                    PathField { id: setupDictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
-                                    PathField { id: setupClassSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
+                                    spacing: root.scaled(9)
+                                    PathSummaryRow { label: root.tr("dictionary.source_folder"); pathText: root.pathForStageKey("dictionary_input_dir") }
+                                    PathSummaryRow { label: root.tr("class.source_folder"); pathText: root.pathForStageKey("class_source_dir") }
                                 }
 
                                 ColumnLayout {
                                     spacing: root.scaled(12)
-                                    PathField { id: dictionaryInput; label: root.tr("dictionary.source_folder"); text: String(root.safeSettings.dictionary_input_dir || "") }
-                                    PathField { id: referenceDictionary; label: root.tr("dictionary.reference_dictionary"); directory: false; text: String(root.safeSettings.reference_dictionary_path || "") }
+                                    PathSummaryRow { label: root.tr("dictionary.source_folder"); pathText: root.pathForStageKey("dictionary_input_dir") }
+                                    PathSummaryRow { label: root.tr("dictionary.output_folder"); pathText: root.pathForStageKey("dictionary_output_dir") }
+                                    PathSummaryRow { label: root.tr("dictionary.reference_dictionary"); pathText: root.pathForStageKey("reference_dictionary_path") }
                                     AdvancedBlock {
                                         title: root.tr("dictionary.advanced_title")
-                                        PathField { id: dictionaryOutput; label: root.tr("dictionary.output_folder"); text: String(root.safeSettings.dictionary_output_dir || "") }
                                         RowLayout {
                                             spacing: root.scaled(18)
                                             WCheckBox { id: dictionaryForce; text: root.tr("dictionary.force_rebuild"); checked: Boolean(root.safeSettings.dictionary_force) }
@@ -1383,13 +1282,14 @@ ApplicationWindow {
 
                                 ColumnLayout {
                                     spacing: root.scaled(12)
-                                    PathField { id: classSource; label: root.tr("class.source_folder"); text: String(root.safeSettings.class_source_dir || "") }
+                                    PathSummaryRow { label: root.tr("class.source_folder"); pathText: root.pathForStageKey("class_source_dir") }
+                                    PathSummaryRow { label: root.tr("class.parsed_output_folder"); pathText: root.pathForStageKey("source_output_root") }
+                                    PathSummaryRow { label: root.tr("class.rewrite_output_folder"); pathText: root.pathForStageKey("rewrite_output_root") }
+                                    PathSummaryRow { label: root.tr("class.print_output_folder"); pathText: root.pathForStageKey("print_output_root") }
+                                    PathSummaryRow { label: root.tr("class.override_rewrite_dictionary"); pathText: root.pathForStageKey("rewrite_dictionary_path") }
+                                    PathSummaryRow { label: root.tr("class.print_font"); pathText: root.pathForStageKey("print_font_path") }
                                     AdvancedBlock {
                                         title: root.tr("class.advanced_title")
-                                        PathField { id: parsedRoot; label: root.tr("class.parsed_output_folder"); text: String(root.safeSettings.source_output_root || "") }
-                                        PathField { id: rewriteRoot; label: root.tr("class.rewrite_output_folder"); text: String(root.safeSettings.rewrite_output_root || "") }
-                                        PathField { id: printRoot; label: root.tr("class.print_output_folder"); text: String(root.safeSettings.print_output_root || "") }
-                                        PathField { id: rewriteDictionary; label: root.tr("class.override_rewrite_dictionary"); directory: false; text: String(root.safeSettings.rewrite_dictionary_path || "") }
                                         GridLayout {
                                             columns: 2
                                             columnSpacing: root.scaled(18)
@@ -1401,13 +1301,19 @@ ApplicationWindow {
                                             LabelText { text: root.tr("class.body_font_size") }
                                             WTextField { id: bodyFontSize; text: String(root.safeSettings.print_body_font_size || ""); Layout.preferredWidth: root.scaled(140) }
                                         }
-                                        PathField { id: printFont; label: root.tr("class.print_font"); directory: false; text: String(root.safeSettings.print_font_path || "") }
                                     }
                                 }
 
                                 ColumnLayout {
                                     spacing: root.scaled(12)
-                                    PathField { id: archiveRoot; label: root.tr("archive.archive_folder"); text: String(root.safeSettings.archive_root || "") }
+                                    PathSummaryRow { label: root.tr("archive.archive_folder"); pathText: root.pathForStageKey("archive_root") }
+                                    PathSummaryRow { label: root.tr("archive.usage_output_folder"); pathText: root.pathForStageKey("usage_signal_output_root") }
+                                    PathSummaryRow { label: root.tr("archive.canonical_dictionary"); pathText: root.pathForStageKey("canonical_dictionary_path") }
+                                    PathSummaryRow { label: root.tr("archive.usage_candidates"); pathText: root.pathForStageKey("usage_candidates_path") }
+                                    PathSummaryRow { label: root.tr("archive.usage_summary"); pathText: root.pathForStageKey("usage_summary_path") }
+                                    PathSummaryRow { label: root.tr("archive.live_lexicon"); pathText: root.pathForStageKey("live_lexicon_path") }
+                                    PathSummaryRow { label: root.tr("archive.supplemental_lexicon"); pathText: root.pathForStageKey("supplemental_lexicon_path") }
+                                    PathSummaryRow { label: root.tr("archive.unmatched_usage"); pathText: root.pathForStageKey("unmatched_usage_output_path") }
                                     AdvancedBlock {
                                         title: root.tr("archive.advanced_title")
                                         RowLayout {
@@ -1421,29 +1327,19 @@ ApplicationWindow {
                                             WButton { text: root.tr("archive.preview_duplicates"); Layout.preferredWidth: root.scaled(170); onClicked: root.runJob("archive_duplicates_preview", root.archiveValues()) }
                                             WButton { text: root.tr("archive.apply_duplicates"); Layout.preferredWidth: root.scaled(160); onClicked: root.runJob("archive_duplicates_apply", root.archiveValues()) }
                                         }
-                                        PathField { id: usageOutputRoot; label: root.tr("archive.usage_output_folder"); text: String(root.safeSettings.usage_signal_output_root || "") }
                                         RowLayout {
                                             spacing: root.scaled(18)
                                             WCheckBox { id: usageNumbers; text: root.tr("dictionary.include_numbers"); checked: Boolean(root.safeSettings.include_numbers) }
                                             WCheckBox { id: usagePunctuation; text: root.tr("dictionary.include_punctuation"); checked: Boolean(root.safeSettings.include_punctuation) }
                                         }
-                                        PathField { id: canonicalDictionary; label: root.tr("archive.canonical_dictionary"); directory: false; text: String(root.safeSettings.canonical_dictionary_path || "") }
-                                        PathField { id: usageCandidates; label: root.tr("archive.usage_candidates"); directory: false; text: String(root.safeSettings.usage_candidates_path || "") }
-                                        PathField { id: usageSummary; label: root.tr("archive.usage_summary"); directory: false; text: String(root.safeSettings.usage_summary_path || "") }
-                                        PathField { id: liveLexicon; label: root.tr("archive.live_lexicon"); directory: false; text: String(root.safeSettings.live_lexicon_path || "") }
-                                        PathField { id: supplementalLexicon; label: root.tr("archive.supplemental_lexicon"); directory: false; text: String(root.safeSettings.supplemental_lexicon_path || "") }
-                                        PathField { id: unmatchedUsage; label: root.tr("archive.unmatched_usage"); directory: false; text: String(root.safeSettings.unmatched_usage_output_path || "") }
                                     }
                                 }
 
                                 ColumnLayout {
                                     spacing: root.scaled(12)
-                                    PathField { id: reportPrintout; label: root.tr("reports.archived_printout"); directory: false; text: String(root.safeSettings.after_class_printout_path || "") }
-                                    PathField { id: reportOutputRoot; label: root.tr("reports.output_folder"); text: String(root.safeSettings.after_class_report_output_root || "") }
-                                    AdvancedBlock {
-                                        title: root.tr("reports.advanced_title")
-                                        PathField { id: reportFont; label: root.tr("reports.report_font"); directory: false; text: String(root.safeSettings.after_class_report_font_path || "") }
-                                    }
+                                    PathSummaryRow { label: root.tr("reports.archived_printout"); pathText: root.pathForStageKey("after_class_printout_path") }
+                                    PathSummaryRow { label: root.tr("reports.output_folder"); pathText: root.pathForStageKey("after_class_report_output_root") }
+                                    PathSummaryRow { label: root.tr("reports.report_font"); pathText: root.pathForStageKey("after_class_report_font_path") }
                                 }
                             }
 
@@ -1470,6 +1366,332 @@ ApplicationWindow {
                                     Layout.preferredWidth: root.scaled(140)
                                     onClicked: root.saveSettings(root.workflowValues())
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+                ScrollView {
+                    id: settingsScroll
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    leftPadding: root.scaled(24)
+                    rightPadding: root.scaled(24)
+                    topPadding: root.scaled(24)
+                    bottomPadding: root.scaled(24)
+                    contentWidth: availableWidth
+
+                    ColumnLayout {
+                        width: Math.min(settingsScroll.availableWidth, root.scaled(1080))
+                        x: Math.max(0, (settingsScroll.availableWidth - width) / 2)
+                        spacing: root.scaled(28)
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.scaled(12)
+                            WIcon {
+                                iconName: "settings"
+                                iconSize: root.scaled(20)
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                            Text {
+                                text: root.tr("settings.title")
+                                color: root.colorInk
+                                font.family: root.uiFontFamily
+                                font.pixelSize: root.fontSizeSection
+                                font.weight: root.fontWeightBold
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.scaled(8)
+                            SettingsTabButton { tabKey: "appearance"; label: root.tr("settings.appearance") }
+                            SettingsTabButton { tabKey: "files_paths"; label: root.tr("settings.files_paths") }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        Panel {
+                            visible: root.settingsTab === "appearance"
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(20)
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: root.scaled(10)
+                                    WIcon {
+                                        iconName: "settings"
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    LabelText {
+                                        text: root.tr("settings.appearance")
+                                        font.pixelSize: root.fontSizeBody
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: 2
+                                    columnSpacing: root.scaled(24)
+                                    rowSpacing: root.scaled(18)
+
+                                    LabelText { text: root.tr("language.label") }
+                                    ComboBox {
+                                        id: languageCombo
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: root.controlHeight
+                                        model: root.safeLanguageState.options || []
+                                        textRole: "label"
+                                        valueRole: "value"
+                                        currentIndex: root.languageOptionIndex(String(root.safeLanguageState.selected || "system"))
+                                        font.family: root.uiFontFamily
+                                        font.pixelSize: root.fontSizeBody
+                                        font.weight: root.fontWeightRegular
+                                        onActivated: function(index) {
+                                            var options = root.safeLanguageState.options || []
+                                            if (index >= 0 && index < options.length)
+                                                root.setLanguage(String(options[index].value || "system"))
+                                        }
+                                        background: Rectangle {
+                                            color: root.colorControlBg
+                                            border.color: root.colorInk
+                                            border.width: 1
+                                            radius: 0
+                                        }
+                                        contentItem: Text {
+                                            text: languageCombo.displayText
+                                            color: root.colorInk
+                                            font: languageCombo.font
+                                            verticalAlignment: Text.AlignVCenter
+                                            leftPadding: root.scaled(10)
+                                            rightPadding: root.scaled(34)
+                                            elide: Text.ElideRight
+                                        }
+                                        indicator: WIcon {
+                                            iconName: "chevron-down"
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: root.scaled(10)
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                        popup: Popup {
+                                            y: languageCombo.height - 1
+                                            width: languageCombo.width
+                                            implicitHeight: contentItem.implicitHeight
+                                            padding: 0
+                                            contentItem: ListView {
+                                                clip: true
+                                                implicitHeight: contentHeight
+                                                model: languageCombo.popup.visible ? languageCombo.delegateModel : null
+                                                currentIndex: languageCombo.highlightedIndex
+                                            }
+                                            background: Rectangle {
+                                                color: root.colorControlBg
+                                                border.color: root.colorInk
+                                                border.width: 1
+                                                radius: 0
+                                            }
+                                        }
+                                        delegate: ItemDelegate {
+                                            width: languageCombo.width
+                                            height: root.compactControlHeight
+                                            highlighted: languageCombo.highlightedIndex === index
+                                            background: Rectangle {
+                                                color: highlighted ? root.colorActiveBg : root.colorControlBg
+                                            }
+                                            contentItem: Text {
+                                                text: modelData.label
+                                                color: highlighted ? root.activeTextColor() : root.colorInk
+                                                font.family: root.uiFontFamily
+                                                font.pixelSize: root.fontSizeBody
+                                                font.weight: root.fontWeightRegular
+                                                verticalAlignment: Text.AlignVCenter
+                                                leftPadding: root.scaled(10)
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                    }
+
+                                    LabelText { text: root.tr("theme.label") }
+                                    ComboBox {
+                                        id: themeCombo
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: root.controlHeight
+                                        model: root.safeAppearanceState.theme_options || []
+                                        textRole: "label"
+                                        valueRole: "value"
+                                        currentIndex: root.themeOptionIndex(root.guiTheme)
+                                        font.family: root.uiFontFamily
+                                        font.pixelSize: root.fontSizeBody
+                                        font.weight: root.fontWeightRegular
+                                        onActivated: function(index) {
+                                            var options = root.safeAppearanceState.theme_options || []
+                                            if (index >= 0 && index < options.length)
+                                                root.setTheme(String(options[index].value || "standard"))
+                                        }
+                                        background: Rectangle {
+                                            color: root.colorControlBg
+                                            border.color: root.colorInk
+                                            border.width: 1
+                                            radius: 0
+                                        }
+                                        contentItem: Text {
+                                            text: themeCombo.displayText
+                                            color: root.colorInk
+                                            font: themeCombo.font
+                                            verticalAlignment: Text.AlignVCenter
+                                            leftPadding: root.scaled(10)
+                                            rightPadding: root.scaled(34)
+                                            elide: Text.ElideRight
+                                        }
+                                        indicator: WIcon {
+                                            iconName: "chevron-down"
+                                            anchors.right: parent.right
+                                            anchors.rightMargin: root.scaled(10)
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                        popup: Popup {
+                                            y: themeCombo.height - 1
+                                            width: themeCombo.width
+                                            implicitHeight: contentItem.implicitHeight
+                                            padding: 0
+                                            contentItem: ListView {
+                                                clip: true
+                                                implicitHeight: contentHeight
+                                                model: themeCombo.popup.visible ? themeCombo.delegateModel : null
+                                                currentIndex: themeCombo.highlightedIndex
+                                            }
+                                            background: Rectangle {
+                                                color: root.colorControlBg
+                                                border.color: root.colorInk
+                                                border.width: 1
+                                                radius: 0
+                                            }
+                                        }
+                                        delegate: ItemDelegate {
+                                            width: themeCombo.width
+                                            height: root.compactControlHeight
+                                            highlighted: themeCombo.highlightedIndex === index
+                                            background: Rectangle {
+                                                color: highlighted ? root.colorActiveBg : root.colorControlBg
+                                            }
+                                            contentItem: Text {
+                                                text: modelData.label
+                                                color: highlighted ? root.activeTextColor() : root.colorInk
+                                                font.family: root.uiFontFamily
+                                                font.pixelSize: root.fontSizeBody
+                                                font.weight: root.fontWeightRegular
+                                                verticalAlignment: Text.AlignVCenter
+                                                leftPadding: root.scaled(10)
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                    }
+
+                                    LabelText { text: root.tr("appearance.text_size_label") }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: root.scaled(8)
+                                        BodyText {
+                                            text: String(root.safeAppearanceState.text_scale_percent || Math.round(root.textScale * 100)) + root.tr("appearance.text_size_value_suffix")
+                                            color: root.colorTextMuted
+                                            font.pixelSize: root.fontSizeLabel
+                                            horizontalAlignment: Text.AlignRight
+                                            Layout.fillWidth: true
+                                        }
+                                        Slider {
+                                            id: textSizeSlider
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: root.scaled(30)
+                                            from: Number(root.safeAppearanceState.min_text_scale || 0.9)
+                                            to: Number(root.safeAppearanceState.max_text_scale || 1.3)
+                                            stepSize: Number(root.safeAppearanceState.text_scale_step || 0.05)
+                                            snapMode: Slider.SnapAlways
+                                            value: root.textScale
+                                            onMoved: root.setTextScale(value)
+                                            background: Rectangle {
+                                                x: textSizeSlider.leftPadding
+                                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
+                                                width: textSizeSlider.availableWidth
+                                                height: root.scaled(6)
+                                                color: root.colorControlBg
+                                                border.color: root.colorInk
+                                                border.width: 1
+                                                radius: 0
+                                                Rectangle {
+                                                    width: textSizeSlider.visualPosition * parent.width
+                                                    height: parent.height
+                                                    color: root.colorProgressFill
+                                                    radius: 0
+                                                }
+                                            }
+                                            handle: Rectangle {
+                                                x: textSizeSlider.leftPadding + textSizeSlider.visualPosition * (textSizeSlider.availableWidth - width)
+                                                y: textSizeSlider.topPadding + textSizeSlider.availableHeight / 2 - height / 2
+                                                implicitWidth: root.scaled(18)
+                                                implicitHeight: root.scaled(22)
+                                                color: root.colorControlBg
+                                                border.color: root.colorInk
+                                                border.width: 2
+                                                radius: 0
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Panel {
+                            visible: root.settingsTab === "files_paths"
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(24)
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: root.scaled(10)
+                                    WIcon {
+                                        iconName: "folder-open"
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                    LabelText {
+                                        text: root.tr("settings.files_paths")
+                                        font.pixelSize: root.fontSizeBody
+                                        Layout.fillWidth: true
+                                    }
+                                }
+
+                                LabelText { text: root.tr("settings.paths_dictionary") }
+                                PathField { label: root.tr("dictionary.source_folder"); settingKey: "dictionary_input_dir"; text: root.settingValue("dictionary_input_dir") }
+                                PathField { label: root.tr("dictionary.output_folder"); settingKey: "dictionary_output_dir"; text: root.settingValue("dictionary_output_dir") }
+                                PathField { label: root.tr("dictionary.reference_dictionary"); settingKey: "reference_dictionary_path"; directory: false; text: root.settingValue("reference_dictionary_path") }
+
+                                LabelText { text: root.tr("settings.paths_class_printouts") }
+                                PathField { label: root.tr("class.source_folder"); settingKey: "class_source_dir"; text: root.settingValue("class_source_dir") }
+                                PathField { label: root.tr("class.parsed_output_folder"); settingKey: "source_output_root"; text: root.settingValue("source_output_root") }
+                                PathField { label: root.tr("class.rewrite_output_folder"); settingKey: "rewrite_output_root"; text: root.settingValue("rewrite_output_root") }
+                                PathField { label: root.tr("class.print_output_folder"); settingKey: "print_output_root"; text: root.settingValue("print_output_root") }
+                                PathField { label: root.tr("class.override_rewrite_dictionary"); settingKey: "rewrite_dictionary_path"; directory: false; text: root.settingValue("rewrite_dictionary_path") }
+                                PathField { label: root.tr("class.print_font"); settingKey: "print_font_path"; directory: false; text: root.settingValue("print_font_path") }
+
+                                LabelText { text: root.tr("settings.paths_archive") }
+                                PathField { label: root.tr("archive.archive_folder"); settingKey: "archive_root"; text: root.settingValue("archive_root") }
+                                PathField { label: root.tr("archive.usage_output_folder"); settingKey: "usage_signal_output_root"; text: root.settingValue("usage_signal_output_root") }
+                                PathField { label: root.tr("archive.canonical_dictionary"); settingKey: "canonical_dictionary_path"; directory: false; text: root.settingValue("canonical_dictionary_path") }
+                                PathField { label: root.tr("archive.usage_candidates"); settingKey: "usage_candidates_path"; directory: false; text: root.settingValue("usage_candidates_path") }
+                                PathField { label: root.tr("archive.usage_summary"); settingKey: "usage_summary_path"; directory: false; text: root.settingValue("usage_summary_path") }
+                                PathField { label: root.tr("archive.live_lexicon"); settingKey: "live_lexicon_path"; directory: false; text: root.settingValue("live_lexicon_path") }
+                                PathField { label: root.tr("archive.supplemental_lexicon"); settingKey: "supplemental_lexicon_path"; directory: false; text: root.settingValue("supplemental_lexicon_path") }
+                                PathField { label: root.tr("archive.unmatched_usage"); settingKey: "unmatched_usage_output_path"; directory: false; text: root.settingValue("unmatched_usage_output_path") }
+
+                                LabelText { text: root.tr("settings.paths_reports") }
+                                PathField { label: root.tr("reports.archived_printout"); settingKey: "after_class_printout_path"; directory: false; text: root.settingValue("after_class_printout_path") }
+                                PathField { label: root.tr("reports.output_folder"); settingKey: "after_class_report_output_root"; text: root.settingValue("after_class_report_output_root") }
+                                PathField { label: root.tr("reports.report_font"); settingKey: "after_class_report_font_path"; directory: false; text: root.settingValue("after_class_report_font_path") }
                             }
                         }
                     }

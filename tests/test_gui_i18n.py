@@ -37,6 +37,17 @@ REQUIRED_GUI_KEYS = {
     "run.job_blocked",
     "run.no_artifacts",
     "run.settings_blocked",
+    "settings.appearance",
+    "settings.edit_files_paths",
+    "settings.files_paths",
+    "settings.label",
+    "settings.not_set",
+    "settings.path_summary",
+    "settings.paths_archive",
+    "settings.paths_class_printouts",
+    "settings.paths_dictionary",
+    "settings.paths_reports",
+    "settings.title",
 }
 
 

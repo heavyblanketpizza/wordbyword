@@ -23,6 +23,7 @@ COMMON_GUI_ICONS = {
     "chevron-down",
     "panel-bottom-open",
     "panel-bottom-close",
+    "settings",
 }
 
 
