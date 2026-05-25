@@ -119,6 +119,12 @@ ApplicationWindow {
         {"value": "grade11", "label": "고2 / grade11"},
         {"value": "grade12", "label": "고3 / grade12"}
     ]
+    property var providerOptions: [
+        {"value": "ollama", "label": "Ollama"},
+        {"value": "openai", "label": "OpenAI"},
+        {"value": "claude", "label": "Anthropic Claude"},
+        {"value": "google", "label": "Google Gemini"}
+    ]
 
     function scaled(value) {
         return Math.max(1, Math.round(Number(value) * root.textScale))
@@ -204,6 +210,7 @@ ApplicationWindow {
     function commonValues() {
         return {
             "target_grade": root.selectedTargetGrade(),
+            "provider": root.selectedProvider(),
             "model": modelField.text,
             "base_url": baseUrlField.text
         }
@@ -364,11 +371,31 @@ ApplicationWindow {
         return 0
     }
 
+    function providerOptionIndex(value) {
+        var normalized = String(value || "ollama")
+        if (normalized === "anthropic")
+            normalized = "claude"
+        if (normalized === "gemini")
+            normalized = "google"
+        for (var i = 0; i < providerOptions.length; i++) {
+            if (String(providerOptions[i].value || "") === normalized)
+                return i
+        }
+        return 0
+    }
+
     function selectedTargetGrade() {
         var index = targetGradeCombo.currentIndex
         if (index >= 0 && index < gradeOptions.length)
             return String(gradeOptions[index].value || "grade1")
         return String(root.safeSettings.target_grade || "grade1")
+    }
+
+    function selectedProvider() {
+        var index = providerCombo.currentIndex
+        if (index >= 0 && index < providerOptions.length)
+            return String(providerOptions[index].value || "ollama")
+        return String(root.safeSettings.provider || "ollama")
     }
 
     function choosePath(current, directory) {
@@ -972,6 +999,35 @@ ApplicationWindow {
                                 anchors.margins: root.scaled(14)
                                 spacing: root.scaled(10)
                                 LabelText { text: root.tr("runtime.label") }
+                                ComboBox {
+                                    id: providerCombo
+                                    enabled: !root.busy
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: root.controlHeight
+                                    model: root.providerOptions
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    currentIndex: root.providerOptionIndex(String(root.safeSettings.provider || "ollama"))
+                                    font.family: root.uiFontFamily
+                                    font.pixelSize: root.fontSizeBody
+                                    font.weight: root.fontWeightRegular
+                                    onActivated: root.saveSettings(root.workflowValues())
+                                    background: Rectangle {
+                                        color: root.colorControlBg
+                                        border.color: root.colorInk
+                                        border.width: 1
+                                        radius: 0
+                                    }
+                                    contentItem: Text {
+                                        text: providerCombo.displayText
+                                        color: root.colorInk
+                                        font: providerCombo.font
+                                        verticalAlignment: Text.AlignVCenter
+                                        leftPadding: root.scaled(12)
+                                        rightPadding: root.scaled(12)
+                                        elide: Text.ElideRight
+                                    }
+                                }
                                 WTextField {
                                     id: modelField
                                     Layout.fillWidth: true
@@ -981,7 +1037,7 @@ ApplicationWindow {
                                 WTextField {
                                     id: baseUrlField
                                     Layout.fillWidth: true
-                                    placeholderText: root.tr("placeholder.ollama_base_url")
+                                    placeholderText: root.tr("placeholder.llm_base_url")
                                     text: String(root.safeSettings.base_url || "")
                                     onEditingFinished: root.saveSettings(root.workflowValues())
                                 }

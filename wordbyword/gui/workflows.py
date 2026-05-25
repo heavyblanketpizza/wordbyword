@@ -26,14 +26,14 @@ from wordbyword.application.commands import (
     UsageSignalsRequest,
     build_gui_request,
 )
-from wordbyword.application.workspace import LazyOllamaCompletionClient, discover_paddleocr_vl_sidecar_env
+from wordbyword.application.workspace import LazyCompletionClient, discover_paddleocr_vl_sidecar_env
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.llm import (
     LLMConfigurationError,
     LLMRequestError,
     LLMResponseError,
     SupportsCompletion,
-    ollama_client,
+    build_provider_client,
     unload_model_if_supported,
 )
 from wordbyword.dictionary_build.resumable import (
@@ -95,6 +95,7 @@ def run_dictionary(request: DictionaryBuildRequest, emit: EmitEvent) -> GuiJobEv
             include_numbers=request.include_numbers,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             force=request.force,
             progress=lambda phase, detail: emit(stage_event(workflow, phase, detail)),
             cleanup_progress=lambda progress: emit(cleanup_event(workflow, progress, label="example cleanup")),
@@ -136,6 +137,7 @@ def run_class_printouts(request: ClassPrintoutsRequest, emit: EmitEvent) -> GuiJ
         print_output_root=request.print_output_root,
         target_grade=request.target_grade,
         target_profile=target_profile_for_grade(request.target_grade),
+        provider=request.provider,
         model=request.model,
         base_url=request.base_url,
         font_path=request.font_path,
@@ -163,7 +165,8 @@ def run_class_printouts(request: ClassPrintoutsRequest, emit: EmitEvent) -> GuiJ
 
 def run_archive_rename(request: ArchiveRenameRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
-    client = ollama_client(
+    client = build_provider_client(
+        request.provider,
         model=request.model,
         base_url=request.base_url,
         timeout_seconds=300.0,
@@ -186,9 +189,10 @@ def run_archive_rename(request: ArchiveRenameRequest, emit: EmitEvent) -> GuiJob
 
 def run_archive_duplicates(request: ArchiveDuplicatesRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
-    lazy_client: LazyOllamaCompletionClient | None = None
+    lazy_client: LazyCompletionClient | None = None
     if request.include_near_duplicates:
-        lazy_client = LazyOllamaCompletionClient(
+        lazy_client = LazyCompletionClient(
+            provider=request.provider,
             model=request.model,
             base_url=request.base_url,
             timeout_seconds=300.0,
@@ -216,7 +220,8 @@ def run_archive_duplicates(request: ArchiveDuplicatesRequest, emit: EmitEvent) -
 
 def run_usage_signals(request: UsageSignalsRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "archive"
-    lazy_client = LazyOllamaCompletionClient(
+    lazy_client = LazyCompletionClient(
+        provider=request.provider,
         model=request.model,
         base_url=request.base_url,
         timeout_seconds=300.0,
@@ -265,7 +270,8 @@ def run_live_lexicon(request: LiveLexiconRequest, emit: EmitEvent) -> GuiJobEven
 
 def run_after_class_report(request: AfterClassReportRequest, emit: EmitEvent) -> GuiJobEvent:
     workflow = "reports"
-    client = ollama_client(
+    client = build_provider_client(
+        request.provider,
         model=request.model,
         base_url=request.base_url,
         timeout_seconds=1200.0,
@@ -335,4 +341,4 @@ def _safe_unload(client: SupportsCompletion, emit: EmitEvent, workflow: str) -> 
     try:
         unload_model_if_supported(client)
     except Exception as error:  # pragma: no cover - defensive cleanup path
-        emit(phase_detail_event(workflow, "warning", f"could not unload Ollama model: {error}"))
+        emit(phase_detail_event(workflow, "warning", f"could not unload model: {error}"))

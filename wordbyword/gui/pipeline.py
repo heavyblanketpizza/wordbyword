@@ -127,10 +127,10 @@ def workflow_definitions(language: str = "en") -> tuple[WorkflowDefinition, ...]
                     output_path_key="class_source_dir",
                 ),
                 WorkflowStage(
-                    t("stage.before.ollama_runtime.label"),
-                    t("stage.before.ollama_runtime.detail"),
+                    t("stage.before.llm_runtime.label"),
+                    t("stage.before.llm_runtime.detail"),
                     icon_name="cpu",
-                    output_label=t("stage.before.ollama_runtime.output"),
+                    output_label=t("stage.before.llm_runtime.output"),
                     output_path_key="model",
                 ),
             ),
@@ -369,7 +369,7 @@ def _before_start_readiness(settings: Mapping[str, object], language: str) -> Wo
     if not class_dir.exists():
         missing.append(t("readiness.missing.class_source_folder"))
     if not str(settings.get("model") or "").strip():
-        missing.append(t("readiness.missing.ollama_model"))
+        missing.append(t("readiness.missing.llm_model"))
     if missing:
         return WorkflowReadiness(
             key="before_start",

@@ -9,7 +9,14 @@ from pathlib import Path
 
 from wordbyword.classroom_printout_studio.source_parsing.materials import sha256_file
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client
+from wordbyword.dictionary_build.llm import (
+    DEFAULT_PROVIDER_MODELS,
+    ProviderName,
+    SupportsCompletion,
+    build_provider_client,
+    normalize_provider_name,
+    provider_model_from_env,
+)
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.grade_profiles import (
@@ -52,32 +59,95 @@ class SourceParseOptions:
     paddleocr_vl_settings: PaddleOCRVLSettings | None
 
 
-class LazyOllamaCompletionClient:
+@dataclass(frozen=True)
+class LLMRuntimeConfig:
+    provider: ProviderName
+    model: str
+    base_url: str | None
+
+
+def llm_runtime_config(
+    *,
+    provider: object = "ollama",
+    model: object = "",
+    base_url: object = None,
+) -> LLMRuntimeConfig:
+    normalized = normalize_provider_name(str(provider or "ollama"))
+    model_text = str(model or "").strip()
+    if not model_text:
+        model_text = provider_model_from_env(normalized) or DEFAULT_PROVIDER_MODELS[normalized]
+    base_url_text = str(base_url or "").strip() or None
+    return LLMRuntimeConfig(provider=normalized, model=model_text, base_url=base_url_text)
+
+
+def llm_runtime_config_from_args(args: object) -> LLMRuntimeConfig:
+    provider = getattr(args, "llm_provider", "ollama")
+    normalized = normalize_provider_name(str(provider or "ollama"))
+    explicit_model = getattr(args, "llm_model", None)
+    explicit_base_url = getattr(args, "llm_base_url", None)
+    if normalized == "ollama":
+        model = explicit_model or getattr(args, "ollama_model", "")
+        base_url = explicit_base_url or getattr(args, "ollama_base_url", None)
+    else:
+        model = explicit_model or ""
+        base_url = explicit_base_url
+    return llm_runtime_config(provider=normalized, model=model, base_url=base_url)
+
+
+def llm_runtime_config_from_values(values: Mapping[str, object]) -> LLMRuntimeConfig:
+    return llm_runtime_config(
+        provider=values.get("provider", "ollama"),
+        model=values.get("model", ""),
+        base_url=values.get("base_url", None),
+    )
+
+
+class LazyCompletionClient:
     def __init__(
         self,
         *,
+        provider: str = "ollama",
         model: str,
         base_url: str | None,
         timeout_seconds: float,
         max_output_tokens: int,
         client_factory: Callable[..., SupportsCompletion] | None = None,
+        client_factory_accepts_provider: bool = False,
     ) -> None:
+        self.provider = normalize_provider_name(provider)
         self.model = model
         self.base_url = base_url
         self.timeout_seconds = timeout_seconds
         self.max_output_tokens = max_output_tokens
-        self.client_factory = ollama_client if client_factory is None else client_factory
+        self.client_factory = client_factory
+        self.client_factory_accepts_provider = client_factory_accepts_provider
         self.client: SupportsCompletion | None = None
 
     def complete(self, *args: object, **kwargs: object) -> object:
         if self.client is None:
-            self.client = self.client_factory(
-                model=self.model,
-                base_url=self.base_url,
-                timeout_seconds=self.timeout_seconds,
-                max_output_tokens=self.max_output_tokens,
-            )
+            if self.client_factory is None:
+                self.client = build_provider_client(
+                    self.provider,
+                    model=self.model,
+                    base_url=self.base_url,
+                    timeout_seconds=self.timeout_seconds,
+                    max_output_tokens=self.max_output_tokens,
+                )
+            else:
+                client_kwargs = {
+                    "model": self.model,
+                    "base_url": self.base_url,
+                    "timeout_seconds": self.timeout_seconds,
+                    "max_output_tokens": self.max_output_tokens,
+                }
+                if self.client_factory_accepts_provider:
+                    self.client = self.client_factory(self.provider, **client_kwargs)
+                else:
+                    self.client = self.client_factory(**client_kwargs)
         return self.client.complete(*args, **kwargs)  # type: ignore[arg-type]
+
+
+LazyOllamaCompletionClient = LazyCompletionClient
 
 
 def target_grade_from_value(value: object = DEFAULT_TARGET_GRADE) -> str:

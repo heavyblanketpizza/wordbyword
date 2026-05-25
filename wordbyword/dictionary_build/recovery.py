@@ -5,7 +5,7 @@ from pathlib import Path
 
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL, CleanupProgressCallback
 from wordbyword.dictionary_build.example_generation import RetryGeneratedExampleCallback
-from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
+from wordbyword.dictionary_build.llm import SupportsCompletion, build_provider_client, unload_model_if_supported
 from wordbyword.dictionary_build.saved_outputs import write_cleanup_outputs_from_saved
 
 ProgressCallback = Callable[[str, str], None]
@@ -27,6 +27,7 @@ def run_saved_dictionary_cleanup(
     generated_example_client: SupportsCompletion | None = None,
     sentence_cleanup_model: str = DEFAULT_EXAMPLE_CLEANUP_MODEL,
     sentence_cleanup_base_url: str | None = None,
+    sentence_cleanup_provider: str = "ollama",
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
     dictionary_cleanup_progress: CleanupProgressCallback | None = None,
@@ -50,7 +51,8 @@ def run_saved_dictionary_cleanup(
         and dictionary_cleanup_client is None
         and generated_example_client is None
     ):
-        shared_cleanup_client = ollama_client(
+        shared_cleanup_client = build_provider_client(
+            sentence_cleanup_provider,
             model=sentence_cleanup_model,
             base_url=sentence_cleanup_base_url,
             timeout_seconds=DEFAULT_SHARED_CLEANUP_TIMEOUT_SECONDS,
@@ -88,7 +90,7 @@ def run_saved_dictionary_cleanup(
             try:
                 unload_model_if_supported(shared_cleanup_client)
             except Exception as exc:  # pragma: no cover - defensive cleanup path
-                _report(progress, "cleanup", f"warning: could not unload Ollama model: {exc}")
+                _report(progress, "cleanup", f"warning: could not unload model: {exc}")
     _report(progress, "write", f"writing LLM cleanup bundle to {output_dir}")
 
 

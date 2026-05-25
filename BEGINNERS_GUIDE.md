@@ -50,14 +50,14 @@ Put class source PDFs here:
 classroom-printout-studio/class-source-materials/
 ```
 
-If a step uses Ollama, make sure Ollama is running:
+Model-backed steps use Ollama by default. If you use Ollama, make sure it is running:
 
 ```bash
 ollama serve
 ollama pull gemma4:31b
 ```
 
-Use a different pulled model if you also pass that model with `--ollama-model`.
+Use a different pulled model if you also pass that model with `--llm-model` or the older `--ollama-model` alias. For text-only model steps, you can also use `--llm-provider openai`, `--llm-provider claude`, or `--llm-provider google` with the matching API key in your environment. API keys are not saved by the app.
 
 Check the project:
 

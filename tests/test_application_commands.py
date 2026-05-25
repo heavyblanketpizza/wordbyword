@@ -149,6 +149,40 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
 
         self.assertEqual(build_cli_request(cli_args), build_gui_request("dictionary_build", gui_values))
 
+    def test_hosted_provider_runtime_flows_into_requests(self) -> None:
+        parser = build_parser()
+        cli_args = parser.parse_args(
+            [
+                "--build-dictionary",
+                "--llm-provider",
+                "gemini",
+                "--llm-model",
+                "gemini-test",
+                "--llm-base-url",
+                "https://example.test/gemini",
+            ]
+        )
+        gui_values = {
+            "target_grade": "grade1",
+            "dictionary_input_dir": "build-dictionary/original/grade1",
+            "dictionary_output_dir": "build-dictionary/build/grade1",
+            "reference_dictionary_path": "build-dictionary/references/reference-dictionary.jsonl",
+            "provider": "google",
+            "model": "gemini-test",
+            "base_url": "https://example.test/gemini",
+            "dictionary_force": False,
+            "include_numbers": False,
+            "include_punctuation": False,
+        }
+
+        cli_request = build_cli_request(cli_args)
+        gui_request = build_gui_request("dictionary_build", gui_values)
+
+        self.assertEqual(cli_request.provider, "google")  # type: ignore[union-attr]
+        self.assertEqual(gui_request.provider, "google")  # type: ignore[union-attr]
+        self.assertEqual(cli_request.model, "gemini-test")  # type: ignore[union-attr]
+        self.assertEqual(gui_request.base_url, "https://example.test/gemini")  # type: ignore[union-attr]
+
     def test_class_printouts_cli_and_gui_requests_match(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             rewrite_dictionary = Path(workspace) / "live.jsonl"

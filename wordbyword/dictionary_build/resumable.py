@@ -34,7 +34,7 @@ from wordbyword.dictionary_build.example_cleanup import CleanupProgressCallback
 from wordbyword.dictionary_build.example_sentences import example_sentence_rows
 from wordbyword.dictionary_build.llm import (
     SupportsCompletion,
-    ollama_client,
+    build_provider_client,
     unload_model_if_supported,
 )
 from wordbyword.dictionary_build.models import CountEntry, PageText
@@ -337,6 +337,7 @@ def build_resumable_dictionary(
     include_numbers: bool,
     model: str,
     base_url: str | None = None,
+    provider: str = "ollama",
     force: bool = False,
     progress: ProgressCallback | None = None,
     cleanup_progress: CleanupProgressCallback | None = None,
@@ -390,7 +391,8 @@ def build_resumable_dictionary(
     def get_shared_cleanup_client() -> SupportsCompletion:
         nonlocal shared_cleanup_client
         if shared_cleanup_client is None:
-            shared_cleanup_client = ollama_client(
+            shared_cleanup_client = build_provider_client(
+                provider,
                 model=model,
                 base_url=base_url,
                 timeout_seconds=300.0,
@@ -401,7 +403,8 @@ def build_resumable_dictionary(
     def get_generated_meaning_client() -> SupportsCompletion:
         nonlocal generated_meaning_client
         if generated_meaning_client is None:
-            generated_meaning_client = ollama_client(
+            generated_meaning_client = build_provider_client(
+                provider,
                 model=model,
                 base_url=base_url,
                 timeout_seconds=300.0,

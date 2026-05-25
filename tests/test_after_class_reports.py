@@ -434,7 +434,7 @@ class AfterClassReportCliTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
                 patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=outputs) as generate,
             ):
@@ -493,7 +493,7 @@ class AfterClassReportCliTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
                 patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
                 patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
             ):
@@ -532,7 +532,7 @@ class AfterClassReportCliTest(unittest.TestCase):
                 patch("wordbyword.cli.options.grade_workspace", return_value=SimpleNamespace(archive_root=archive)),
                 patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
                 patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
                 patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
             ):
@@ -571,7 +571,7 @@ class AfterClassReportCliTest(unittest.TestCase):
                     AfterClassReportProgress(
                         phase="plan",
                         source_id=source.stem,
-                        detail="generating adult-facing Korean report plan with Ollama",
+                        detail="generating adult-facing Korean report plan with configured LLM",
                         output_dir=fake_outputs.output_dir,
                         heuristic_analysis_dir=fake_outputs.heuristic_analysis_dir,
                     )
@@ -583,7 +583,7 @@ class AfterClassReportCliTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
                 patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
                 patch(
                     "wordbyword.cli.app.generate_after_class_reading_report",

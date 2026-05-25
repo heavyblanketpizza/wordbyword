@@ -47,7 +47,7 @@ class TerminalUiTest(unittest.TestCase):
 
         self.assertIn("WORD BY WORD // READY", rendered)
         self.assertIn("gemma4:31b", rendered)
-        self.assertIn("ollama cleanup online // gemma4:31b", rendered)
+        self.assertIn("llm cleanup online // gemma4:31b", rendered)
         self.assertIn("scan -> extract -> analyze -> write -> complete", rendered)
         self.assertNotIn("profile ::", rendered)
         self.assertNotIn("style   ::", rendered)
@@ -224,7 +224,7 @@ class TerminalUiTest(unittest.TestCase):
         progress = AfterClassReportProgress(
             phase="plan",
             source_id="2026-05-22_grade6-quantum-physics",
-            detail="generating adult-facing Korean report plan with Ollama",
+            detail="generating adult-facing Korean report plan with configured LLM",
         )
 
         rendered = render_after_class_report_progress(progress, color=True, width=120)

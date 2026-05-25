@@ -55,6 +55,18 @@ class ExplicitPathAction(argparse.Action):
         setattr(namespace, f"{self.dest}_explicit", True)
 
 
+class ExplicitValueAction(argparse.Action):
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f"{self.dest}_explicit", True)
+
+
 class TargetGradeAction(argparse.Action):
     def __call__(
         self,
@@ -92,6 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
         supplemental_lexicon_explicit=False,
         unmatched_usage_output_explicit=False,
         after_class_report_output_root_explicit=False,
+        llm_provider_explicit=False,
+        llm_model_explicit=False,
+        llm_base_url_explicit=False,
+        ollama_model_explicit=False,
+        ollama_base_url_explicit=False,
     )
     parser.add_argument(
         "--input",
@@ -125,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prep-dictionary",
         action="store_true",
-        help="Build deterministic dictionary preparation stages 00 through 09 without Ollama.",
+        help="Build deterministic dictionary preparation stages 00 through 09 without LLM calls.",
     )
     parser.add_argument(
         "--force",
@@ -184,7 +201,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Use saved build-dictionary/14_vocabulary_with_meanings.jsonl to write "
-            "15_final_dictionary.jsonl, asking Ollama to write "
+            "15_final_dictionary.jsonl, asking the configured LLM to write "
             "Korean meanings for rows whose meaning field is empty."
         ),
     )
@@ -198,17 +215,41 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--llm-provider",
+        default="ollama",
+        choices=("ollama", "openai", "anthropic", "claude", "google", "gemini"),
+        action=ExplicitValueAction,
+        help="LLM provider for model-backed workflows. Defaults to ollama.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        action=ExplicitValueAction,
+        help="LLM model for model-backed workflows. Defaults to the provider-specific model.",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        default=None,
+        action=ExplicitValueAction,
+        help="Optional provider base URL override.",
+    )
+    parser.add_argument(
         "--ollama-model",
         default=DEFAULT_EXAMPLE_CLEANUP_MODEL,
+        action=ExplicitValueAction,
         help=(
-            "Ollama model used for the cleanup stages. "
+            "Backward-compatible alias for --llm-model when --llm-provider is ollama. "
             f"Defaults to {DEFAULT_EXAMPLE_CLEANUP_MODEL}."
         ),
     )
     parser.add_argument(
         "--ollama-base-url",
         default=None,
-        help="Optional Ollama base URL override. Defaults to WORDBYWORD_OLLAMA_BASE_URL or http://localhost:11434.",
+        action=ExplicitValueAction,
+        help=(
+            "Backward-compatible alias for --llm-base-url when --llm-provider is ollama. "
+            "Defaults to WORDBYWORD_OLLAMA_BASE_URL or http://localhost:11434."
+        ),
     )
     parser.add_argument(
         "--target-grade",
@@ -408,7 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PARSED_BUNDLE_DIR",
         help=(
-            "Rewrite one parsed source-material bundle in one whole-document Ollama request. "
+            "Rewrite one parsed source-material bundle in one whole-document LLM request. "
             "The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
         ),
     )
@@ -421,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_ROOT",
         help=(
             "Rewrite every parsed source-material bundle under a parsed root in one "
-            "whole-document Ollama request per source. Defaults to classroom-printout-studio/class-source-materials/parsed "
+            "whole-document LLM request per source. Defaults to classroom-printout-studio/class-source-materials/parsed "
             "when no root is supplied."
         ),
     )
@@ -432,7 +473,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PARSED_BUNDLE_DIR",
         help=(
             "Rewrite one parsed source-material bundle in one vocabulary-guided whole-document "
-            "Ollama workflow. The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
+            "LLM workflow. The path should be a classroom-printout-studio/class-source-materials/parsed/<source-id> folder."
         ),
     )
     parser.add_argument(
@@ -604,7 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-near-duplicates",
         action="store_true",
         help=(
-            "With --resolve-archive-duplicates, also ask Ollama to review conservative near-duplicate "
+            "With --resolve-archive-duplicates, also ask the configured LLM to review conservative near-duplicate "
             "text candidates before recommending quarantines."
         ),
     )
@@ -741,6 +782,25 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         args.add_reference_meanings,
         args.generate_missing_meanings,
     ]
+    if args.llm_provider != "ollama" and (
+        bool(getattr(args, "ollama_model_explicit", False))
+        or bool(getattr(args, "ollama_base_url_explicit", False))
+    ):
+        parser.exit(
+            2,
+            "wordbyword: error: --ollama-model and --ollama-base-url can only be used with "
+            "--llm-provider ollama. Use --llm-model and --llm-base-url for other providers.\n",
+        )
+    if bool(getattr(args, "llm_model_explicit", False)) and bool(getattr(args, "ollama_model_explicit", False)):
+        parser.exit(
+            2,
+            "wordbyword: error: choose only one of --llm-model or --ollama-model.\n",
+        )
+    if bool(getattr(args, "llm_base_url_explicit", False)) and bool(getattr(args, "ollama_base_url_explicit", False)):
+        parser.exit(
+            2,
+            "wordbyword: error: choose only one of --llm-base-url or --ollama-base-url.\n",
+        )
     if args.apply_grade_workspace_migration and not args.migrate_grade_workspaces:
         parser.exit(
             2,

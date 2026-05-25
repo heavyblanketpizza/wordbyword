@@ -281,7 +281,7 @@ def render_boot_screen(
     color: bool,
     width: int = 100,
 ) -> str:
-    mode = "ollama cleanup online" if clean_example_sentences else "deterministic pipeline only"
+    mode = "llm cleanup online" if clean_example_sentences else "deterministic pipeline only"
     if clean_example_sentences:
         mode = f"{mode} // {sentence_cleanup_model}"
 

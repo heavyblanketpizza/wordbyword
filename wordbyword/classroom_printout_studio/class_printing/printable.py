@@ -641,14 +641,17 @@ def assert_client_supports_printable_images(client: SupportsCompletion) -> None:
     preflight = getattr(client, "assert_supports_images", None)
     if not callable(preflight):
         raise PrintableMaterialError(
-            "Printable image selection requires a completion client that can verify image support."
+            "Printable image selection cannot verify image support for this client; "
+            "image selection is Ollama-only in this v1 provider release."
         )
     try:
         preflight()
     except LLMConfigurationError:
         raise
     except (LLMRequestError, LLMResponseError) as exc:
-        raise PrintableMaterialError(f"Could not verify Ollama image support for printable image selection: {exc}") from exc
+        raise PrintableMaterialError(
+            f"Could not verify image support for printable image selection: {exc}"
+        ) from exc
 
 
 def normalize_printable_document(

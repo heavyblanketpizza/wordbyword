@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
+from wordbyword.dictionary_build.llm import LLMConfigurationError, normalize_provider_name
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.grade_profiles import (
     DEFAULT_TARGET_GRADE,
@@ -16,7 +17,7 @@ from wordbyword.grade_profiles import (
 from wordbyword.gui.i18n import LANGUAGE_SYSTEM, normalize_language
 from wordbyword.gui.themes import THEME_DEFAULT, normalize_theme
 
-SETTINGS_SCHEMA_VERSION = 5
+SETTINGS_SCHEMA_VERSION = 6
 SETTINGS_DIRNAME = ".wordbyword"
 SETTINGS_FILENAME = "gui-settings.json"
 TEXT_SCALE_DEFAULT = 1.0
@@ -33,6 +34,7 @@ def default_settings() -> dict[str, object]:
         "gui_theme": THEME_DEFAULT,
         "gui_text_scale": TEXT_SCALE_DEFAULT,
         "target_grade": DEFAULT_TARGET_GRADE,
+        "provider": "ollama",
         "model": DEFAULT_EXAMPLE_CLEANUP_MODEL,
         "base_url": "",
         "dictionary_input_dir": grade_defaults["dictionary_input_dir"],
@@ -149,6 +151,8 @@ def _known_settings(payload: Mapping[str, object]) -> dict[str, object]:
             result[key] = normalize_theme(value)
         elif key == "gui_text_scale":
             result[key] = normalize_text_scale(value)
+        elif key == "provider":
+            result[key] = normalize_provider_setting(value)
         elif isinstance(default_value, bool):
             result[key] = bool(value)
         elif isinstance(default_value, int):
@@ -176,3 +180,10 @@ def normalize_text_scale(value: object) -> float:
     steps = round((clamped - TEXT_SCALE_MIN) / TEXT_SCALE_STEP)
     snapped = TEXT_SCALE_MIN + steps * TEXT_SCALE_STEP
     return round(min(TEXT_SCALE_MAX, max(TEXT_SCALE_MIN, snapped)), 2)
+
+
+def normalize_provider_setting(value: object) -> str:
+    try:
+        return normalize_provider_name(str(value or "ollama"))
+    except LLMConfigurationError:
+        return "ollama"

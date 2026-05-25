@@ -824,7 +824,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", InteractiveInput("y\n")),
-                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.build_provider_client", return_value=client),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main([
@@ -1022,7 +1022,7 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", io.StringIO("")),
-                patch("wordbyword.cli.app.ollama_client", return_value=client),
+                patch("wordbyword.cli.app.build_provider_client", return_value=client),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main([
@@ -1670,7 +1670,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         with (
             patch("sys.stdout", stdout),
             patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.ollama_client", return_value=RecordingArchiveClient({})),
+            patch("wordbyword.cli.app.build_provider_client", return_value=RecordingArchiveClient({})),
             patch("wordbyword.cli.app.rename_class_session_archive") as mock_rename,
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):

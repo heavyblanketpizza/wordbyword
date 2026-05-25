@@ -11,6 +11,8 @@ from wordbyword.application.workspace import (
     RewriteVocabularySource,
     bool_value,
     int_value,
+    llm_runtime_config_from_args,
+    llm_runtime_config_from_values,
     optional_int_value,
     optional_path_value,
     optional_text_value,
@@ -111,6 +113,7 @@ class DictionaryBuildRequest:
     model: str
     base_url: str | None
     force: bool
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -128,6 +131,7 @@ class DictionaryRecoveryRequest:
     retry_generated_examples: bool
     model: str
     base_url: str | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -165,6 +169,7 @@ class SourceMaterialRewriteRequest:
     model: str
     base_url: str | None
     vocabulary_source: RewriteVocabularySource | None = None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -178,6 +183,7 @@ class ClassMaterialPrintRequest:
     base_url: str | None
     font_path: Path | None
     body_font_size: int | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -201,6 +207,7 @@ class ClassPrintoutsRequest:
     font_path: Path | None
     body_font_size: int | None
     force_class_printouts: bool
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -212,6 +219,7 @@ class ArchiveRenameRequest:
     apply: bool
     model: str
     base_url: str | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -224,6 +232,7 @@ class ArchiveDuplicatesRequest:
     include_near_duplicates: bool
     model: str
     base_url: str | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -244,6 +253,7 @@ class DictionarySourceRenameRequest:
     apply: bool
     model: str
     base_url: str | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -257,6 +267,7 @@ class UsageSignalsRequest:
     include_numbers: bool
     model: str
     base_url: str | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -282,6 +293,7 @@ class AfterClassReportRequest:
     model: str
     base_url: str | None
     font_path: Path | None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -300,6 +312,7 @@ class DictionaryStageRequest:
     reference_dictionary_path: Path | None = None
     model: str = ""
     base_url: str | None = None
+    provider: str = "ollama"
     raw_args: Any = field(default=None, compare=False, repr=False)
 
 
@@ -530,6 +543,7 @@ def build_cli_request(args: object) -> CommandRequest | None:
     command_id = command_id_from_cli_args(args)
     if command_id is None:
         return None
+    llm = llm_runtime_config_from_args(args)
     if command_id == CommandId.MIGRATE_GRADE_WORKSPACES:
         return MigrateGradeWorkspacesRequest(
             command_id=command_id,
@@ -546,9 +560,10 @@ def build_cli_request(args: object) -> CommandRequest | None:
             reference_dictionary_path=resolved_reference_dictionary_path(args),
             include_punctuation=bool(getattr(args, "include_punctuation", False)),
             include_numbers=bool(getattr(args, "include_numbers", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
             force=bool(getattr(args, "force", False)),
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.DICTIONARY_RECOVERY:
@@ -563,8 +578,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             clean_dictionary_candidates=bool(getattr(args, "clean_dictionary_candidates", False)),
             generate_missing_examples=bool(getattr(args, "generate_missing_examples", False)),
             retry_generated_examples=bool(getattr(args, "retry_generated_examples", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.PARSE_SOURCE_MATERIAL:
@@ -606,8 +622,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade_from_args(args),
             parsed_path=parsed_path,
             output_root=resolved_whole_rewrite_output_root(args),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id in {
@@ -630,8 +647,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade,
             parsed_path=parsed_path,
             output_root=resolved_vocabulary_rewrite_output_root(args),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             vocabulary_source=rewrite_vocabulary_source(
                 explicit_path=explicit_rewrite_dictionary,
                 target_grade=target_grade,
@@ -651,10 +669,11 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade_from_args(args),
             rewritten_path=rewritten_path,
             output_root=resolved_print_output_root(args),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
             font_path=getattr(args, "print_font_path", None),
             body_font_size=getattr(args, "print_body_font_size", None),
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.CLASS_PRINTOUTS:
@@ -680,11 +699,12 @@ def build_cli_request(args: object) -> CommandRequest | None:
             parse_pdf=parse_options.parse_pdf,
             render_dpi=parse_options.render_dpi,
             paddleocr_vl_settings=parse_options.paddleocr_vl_settings,
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
             font_path=getattr(args, "print_font_path", None),
             body_font_size=getattr(args, "print_body_font_size", None),
             force_class_printouts=bool(getattr(args, "force_class_printouts", False)),
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.RENAME_CLASS_SESSION_ARCHIVE:
@@ -693,8 +713,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade_from_args(args),
             archive_root=resolved_archive_root(args, getattr(args, "rename_class_session_archive")),
             apply=bool(getattr(args, "apply_archive_renames", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.RESOLVE_ARCHIVE_DUPLICATES:
@@ -704,8 +725,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             archive_root=resolved_archive_root(args, getattr(args, "resolve_archive_duplicates")),
             apply=bool(getattr(args, "yes", False)),
             include_near_duplicates=bool(getattr(args, "include_near_duplicates", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.RESOLVE_DICTIONARY_SOURCE_DUPLICATES:
@@ -722,8 +744,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade_from_args(args),
             archive_root=resolved_dictionary_source_root(args, getattr(args, "rename_dictionary_source_archive")),
             apply=bool(getattr(args, "apply_dictionary_source_renames", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.USAGE_SIGNALS:
@@ -734,8 +757,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             output_root=resolved_usage_signal_output_root(args),
             include_punctuation=bool(getattr(args, "include_punctuation", False)),
             include_numbers=bool(getattr(args, "include_numbers", False)),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     if command_id == CommandId.LIVE_LEXICON:
@@ -756,8 +780,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             target_grade=target_grade_from_args(args),
             printout_path=getattr(args, "generate_after_class_reading_report"),
             output_root=resolved_after_class_report_output_root(args),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             font_path=getattr(args, "after_class_report_font_path", None),
             raw_args=args,
         )
@@ -768,7 +793,7 @@ def build_cli_request(args: object) -> CommandRequest | None:
                 getattr(args, "show_distribution"),
                 resolved_dictionary_output_dir(args),
             ),
-            model=str(getattr(args, "ollama_model", "")),
+            model=llm.model,
             raw_args=args,
         )
     if command_id in {
@@ -780,8 +805,9 @@ def build_cli_request(args: object) -> CommandRequest | None:
             command_id=command_id,
             output_dir=resolved_dictionary_output_dir(args),
             reference_dictionary_path=getattr(args, "reference_dictionary", None),
-            model=str(getattr(args, "ollama_model", "")),
-            base_url=getattr(args, "ollama_base_url", None),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             raw_args=args,
         )
     raise ValueError(f"Unsupported CLI command: {command_id}")
@@ -792,6 +818,7 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
         command_id = _GUI_WORKFLOW_IDS[workflow]
     except KeyError as error:
         raise ValueError(f"Unknown GUI workflow: {workflow}") from error
+    llm = llm_runtime_config_from_values(values)
     if command_id in {CommandId.DICTIONARY_BUILD, CommandId.DICTIONARY_PREP}:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
         reject_other_grade_paths(values, target_grade, "dictionary_input_dir", "dictionary_output_dir")
@@ -804,9 +831,10 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             reference_dictionary_path=path_value(values, "reference_dictionary_path"),
             include_punctuation=bool_value(values, "include_punctuation"),
             include_numbers=bool_value(values, "include_numbers"),
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
             force=bool_value(values, "dictionary_force"),
+            provider=llm.provider,
         )
     if command_id == CommandId.CLASS_PRINTOUTS:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
@@ -840,11 +868,12 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             parse_pdf=not bool_value(values, "skip_pdf_parse"),
             render_dpi=int_value(values, "pdf_render_dpi", 144),
             paddleocr_vl_settings=None,
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
             font_path=optional_path_value(values, "print_font_path"),
             body_font_size=optional_int_value(values, "print_body_font_size"),
             force_class_printouts=bool_value(values, "force_class_printouts"),
+            provider=llm.provider,
         )
     if command_id in {CommandId.ARCHIVE_RENAME_PREVIEW, CommandId.ARCHIVE_RENAME_APPLY}:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
@@ -854,8 +883,9 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             target_grade=target_grade,
             archive_root=path_value(values, "archive_root"),
             apply=command_id == CommandId.ARCHIVE_RENAME_APPLY,
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
         )
     if command_id in {CommandId.ARCHIVE_DUPLICATES_PREVIEW, CommandId.ARCHIVE_DUPLICATES_APPLY}:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
@@ -866,8 +896,9 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             archive_root=path_value(values, "archive_root"),
             apply=command_id == CommandId.ARCHIVE_DUPLICATES_APPLY,
             include_near_duplicates=bool_value(values, "include_near_duplicates"),
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
         )
     if command_id == CommandId.USAGE_SIGNALS:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
@@ -879,8 +910,9 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             output_root=path_value(values, "usage_signal_output_root"),
             include_punctuation=bool_value(values, "include_punctuation"),
             include_numbers=bool_value(values, "include_numbers"),
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
         )
     if command_id == CommandId.LIVE_LEXICON:
         target_grade = target_grade_from_value(optional_text_value(values, "target_grade"))
@@ -911,8 +943,9 @@ def build_gui_request(workflow: str, values: Mapping[str, object]) -> CommandReq
             target_grade=target_grade,
             printout_path=path_value(values, "after_class_printout_path"),
             output_root=path_value(values, "after_class_report_output_root"),
-            model=text_value(values, "model"),
-            base_url=optional_text_value(values, "base_url"),
+            model=llm.model,
+            base_url=llm.base_url,
+            provider=llm.provider,
             font_path=optional_path_value(values, "after_class_report_font_path"),
         )
     raise ValueError(f"Unsupported GUI command: {command_id}")

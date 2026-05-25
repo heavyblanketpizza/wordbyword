@@ -19,7 +19,7 @@ from wordbyword.dictionary_build.llm import (
     LLMRequestError,
     LLMResponseError,
     SupportsCompletion,
-    ollama_client,
+    build_provider_client,
     unload_model_if_supported,
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
@@ -142,7 +142,7 @@ from wordbyword.application.commands import (
     command_spec,
 )
 from wordbyword.application.workspace import (
-    LazyOllamaCompletionClient,
+    LazyCompletionClient,
     RewriteVocabularySource,
     current_python_has_paddleocr as application_current_python_has_paddleocr,
     discover_paddleocr_vl_sidecar_env as application_discover_paddleocr_vl_sidecar_env,
@@ -319,6 +319,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 output_dir=request.output_dir,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
             )
 
     if isinstance(request, MigrateGradeWorkspacesRequest):
@@ -362,6 +363,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
             )
         if request.command_id == CommandId.REWRITE_WHOLE_SOURCE_MATERIALS:
             return rewrite_whole_source_materials_cli(
@@ -370,6 +372,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
             )
         if vocabulary_source is None:
             raise ValueError(f"{request.command_id} requires a vocabulary source")
@@ -381,6 +384,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
             )
         if request.command_id == CommandId.REWRITE_VOCABULARY_GUIDED_SOURCE_MATERIALS:
             return rewrite_vocabulary_guided_source_materials_cli(
@@ -390,6 +394,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
             )
 
     if isinstance(request, ClassMaterialPrintRequest):
@@ -400,6 +405,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
                 font_path=request.font_path,
                 body_font_size=request.body_font_size,
             )
@@ -410,6 +416,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
                 target_grade=request.target_grade,
                 model=request.model,
                 base_url=request.base_url,
+                provider=request.provider,
                 font_path=request.font_path,
                 body_font_size=request.body_font_size,
             )
@@ -430,6 +437,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             target_grade=request.target_grade,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             font_path=request.font_path,
             body_font_size=request.body_font_size,
             force_class_printouts=request.force_class_printouts,
@@ -441,6 +449,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             output_root=request.output_root,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             font_path=request.font_path,
             target_grade=request.target_grade,
         )
@@ -452,6 +461,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             include_near_duplicates=request.include_near_duplicates,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             target_grade=request.target_grade,
         )
 
@@ -467,6 +477,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             archive_root=request.archive_root,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             apply=request.apply,
             target_grade=request.target_grade,
         )
@@ -476,6 +487,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             archive_root=request.archive_root,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             apply=request.apply,
             target_grade=request.target_grade,
         )
@@ -489,6 +501,7 @@ def run_cli_request(request: CommandRequest) -> int | None:
             include_numbers=request.include_numbers,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
         )
 
     if isinstance(request, LiveLexiconRequest):
@@ -553,6 +566,7 @@ def build_dictionary_cli(args: argparse.Namespace | DictionaryBuildRequest) -> i
             include_numbers=request.include_numbers,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             force=request.force,
             progress=emit_stage_update,
             cleanup_progress=cleanup_progress_callback(
@@ -631,6 +645,7 @@ def prep_dictionary_cli(args: argparse.Namespace | DictionaryBuildRequest) -> in
             include_numbers=request.include_numbers,
             model=request.model,
             base_url=request.base_url,
+            provider=request.provider,
             force=request.force,
             progress=emit_stage_update,
             artifact_callback=pipeline_artifact_callback(model=request.model),
@@ -679,6 +694,7 @@ def dictionary_recovery_cli(args: argparse.Namespace | DictionaryRecoveryRequest
             retry_generated_examples=request.retry_generated_examples,
             sentence_cleanup_model=request.model,
             sentence_cleanup_base_url=request.base_url,
+            sentence_cleanup_provider=request.provider,
             progress=emit_stage_update,
             cleanup_progress=cleanup_progress_callback(
                 model=request.model,
@@ -779,7 +795,7 @@ def generated_example_retry_decider(
     retry_generated_examples = (
         args.retry_generated_examples if isinstance(args, DictionaryRecoveryRequest) else bool(args.retry_generated_examples)
     )
-    model = args.model if isinstance(args, DictionaryRecoveryRequest) else args.ollama_model
+    model = args.model if isinstance(args, DictionaryRecoveryRequest) else build_cli_request(args).model  # type: ignore[union-attr]
 
     def decide(summary: GeneratedExampleAttemptSummary) -> bool:
         if retry_generated_examples:
@@ -1145,8 +1161,10 @@ def rewrite_whole_source_material_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1201,8 +1219,10 @@ def rewrite_whole_source_materials_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1270,8 +1290,10 @@ def rewrite_vocabulary_guided_source_material_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1334,8 +1356,10 @@ def rewrite_vocabulary_guided_source_materials_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1411,10 +1435,12 @@ def print_class_material_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     font_path: Path | None,
     body_font_size: int | None,
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1482,10 +1508,12 @@ def print_class_materials_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     font_path: Path | None,
     body_font_size: int | None,
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1560,6 +1588,7 @@ def build_class_printouts_cli(
     target_grade: str,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     font_path: Path | None,
     body_font_size: int | None,
     force_class_printouts: bool,
@@ -1576,6 +1605,7 @@ def build_class_printouts_cli(
             print_output_root=print_output_root,
             target_grade=target_grade,
             target_profile=target_profile_for_grade(target_grade),
+            provider=provider,
             model=model,
             base_url=base_url,
             font_path=font_path,
@@ -1584,7 +1614,7 @@ def build_class_printouts_cli(
             parse_source_material_func=parse_source_material,
             rewrite_source_material_func=rewrite_vocabulary_guided_parsed_source_material,
             print_class_material_func=print_class_material,
-            completion_client_factory=ollama_client,
+            completion_client_factory=build_provider_client,
             model_unload_callback=warn_if_model_unload_fails,
             source_material_progress=emit_source_material_progress,
             source_rewrite_progress=emit_source_rewrite_progress,
@@ -1740,10 +1770,12 @@ def generate_after_class_reading_report_cli(
     output_root: Path,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     font_path: Path | None,
     target_grade: str,
 ) -> int:
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -1810,13 +1842,16 @@ def build_usage_signals_cli(
     include_numbers: bool,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
 ) -> int:
-    near_duplicate_client = LazyOllamaCompletionClient(
+    near_duplicate_client = LazyCompletionClient(
+        provider=provider,
         model=model,
         base_url=base_url,
         timeout_seconds=300.0,
         max_output_tokens=1024,
-        client_factory=ollama_client,
+        client_factory=build_provider_client,
+        client_factory_accepts_provider=True,
     )
     try:
         try:
@@ -2004,6 +2039,7 @@ def resolve_archive_duplicates_cli(
     include_near_duplicates: bool,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     target_grade: str,
 ) -> int:
     try:
@@ -2011,14 +2047,16 @@ def resolve_archive_duplicates_cli(
     except ClassSessionArchiveError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
-    near_duplicate_client: LazyOllamaCompletionClient | None = None
+    near_duplicate_client: LazyCompletionClient | None = None
     if include_near_duplicates:
-        near_duplicate_client = LazyOllamaCompletionClient(
+        near_duplicate_client = LazyCompletionClient(
+            provider=provider,
             model=model,
             base_url=base_url,
             timeout_seconds=300.0,
             max_output_tokens=1024,
-            client_factory=ollama_client,
+            client_factory=build_provider_client,
+            client_factory_accepts_provider=True,
         )
     try:
         try:
@@ -2116,6 +2154,7 @@ def rename_class_session_archive_cli(
     archive_root: Path,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     apply: bool,
     target_grade: str,
 ) -> int:
@@ -2124,7 +2163,8 @@ def rename_class_session_archive_cli(
     except ClassSessionArchiveError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=300.0,
@@ -2176,6 +2216,7 @@ def rename_dictionary_source_archive_cli(
     archive_root: Path,
     model: str,
     base_url: str | None,
+    provider: str = "ollama",
     apply: bool,
     target_grade: str,
 ) -> int:
@@ -2184,7 +2225,8 @@ def rename_dictionary_source_archive_cli(
     except DictionarySourceArchiveError as error:
         sys.stderr.write(f"wordbyword: {error}\n")
         return 1
-    client = ollama_client(
+    client = build_provider_client(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=300.0,
@@ -2237,7 +2279,7 @@ def warn_if_model_unload_fails(client: SupportsCompletion) -> None:
     try:
         unload_model_if_supported(client)
     except Exception as error:  # pragma: no cover - defensive cleanup path
-        sys.stderr.write(f"wordbyword: warning: could not unload Ollama model: {error}\n")
+        sys.stderr.write(f"wordbyword: warning: could not unload model: {error}\n")
         sys.stderr.flush()
 
 
@@ -2300,7 +2342,7 @@ def prompt_generated_example_retry(
 
     while True:
         try:
-            response = input("Retry the failed subset with Ollama? [Y/n] ").strip().lower()
+            response = input("Retry the failed subset with the configured LLM? [Y/n] ").strip().lower()
         except EOFError:
             return False
         if response in {"", "y", "yes"}:
@@ -2362,6 +2404,7 @@ def generate_missing_meanings(
     output_dir: Path,
     model: str,
     base_url: str | None = None,
+    provider: str = "ollama",
     generated_meaning_client: SupportsCompletion | None = None,
 ) -> int:
     owns_client = generated_meaning_client is None
@@ -2375,7 +2418,8 @@ def generate_missing_meanings(
         )
 
     try:
-        client = generated_meaning_client or ollama_client(
+        client = generated_meaning_client or build_provider_client(
+            provider,
             model=model,
             base_url=base_url,
             timeout_seconds=300.0,

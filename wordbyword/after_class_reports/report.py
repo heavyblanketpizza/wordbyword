@@ -489,7 +489,7 @@ def generate_after_class_reading_report(
             progress,
             phase="plan",
             source_id=source_id,
-            detail="generating adult-facing Korean report plan with Ollama",
+            detail="generating adult-facing Korean report plan with configured LLM",
             output_dir=output_dir,
             heuristic_analysis_dir=heuristic_analysis_dir,
         )

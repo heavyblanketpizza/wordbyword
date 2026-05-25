@@ -1214,14 +1214,14 @@ def assert_client_supports_images(client: SupportsCompletion) -> None:
     if not callable(preflight):
         raise SourceRewriteError(
             "The selected completion client cannot verify image support. "
-            "Use an Ollama vision-capable model/client for source-material rewrites."
+            "Image-backed source-material rewrites are Ollama-only in this v1 provider release."
         )
     try:
         preflight()
     except LLMConfigurationError:
         raise
     except (LLMRequestError, LLMResponseError) as exc:
-        raise SourceRewriteError(f"Could not verify Ollama image support: {exc}") from exc
+        raise SourceRewriteError(f"Could not verify image support for the selected model: {exc}") from exc
 
 
 def build_interleaved_rewrite_prompt(

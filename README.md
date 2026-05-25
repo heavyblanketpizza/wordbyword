@@ -8,7 +8,7 @@ The root `README.md` is the canonical technical guide. `BEGINNERS_GUIDE.md` is t
 
 - `uv` for dependency and command execution.
 - Python `>=3.14`, as declared in `pyproject.toml`. Let `uv` provision the interpreter when possible.
-- Ollama for any command that takes `--ollama-model`. The CLI default is `gemma4:31b`; choose another local model with `--ollama-model`.
+- An LLM provider for model-backed workflows. The default is local Ollama with `gemma4:31b`; OpenAI, Anthropic/Claude, and Google/Gemini are also supported for text-only LLM tasks.
 - PaddleOCR-VL for class-source PDF parsing. The project dependency set does not install PaddleOCR-VL into the main environment; use a sidecar environment or a current Python environment that can import `paddleocr`.
 - A Korean-capable font for DOCX output. The renderer auto-detects common macOS, Linux, and Noto/Nanum fonts; pass an explicit font path only when needed.
 
@@ -354,17 +354,33 @@ uv run wordbyword --generate-after-class-reading-report 2026-05-10_grade1-readin
 
 ## LLM Configuration
 
-The command-line and GUI workflows currently use Ollama for cleanup, generated examples, generated meanings, source rewrites, print planning, archive classification, and after-class report generation. Configure those workflows with:
+Model-backed workflows default to local Ollama:
 
 ```bash
-uv run wordbyword --build-dictionary --ollama-model gemma4:31b
-uv run wordbyword --build-dictionary --ollama-model gemma4:31b --ollama-base-url http://localhost:11434
-export WORDBYWORD_OLLAMA_BASE_URL=http://localhost:11434
+uv run wordbyword --build-dictionary --llm-provider ollama --llm-model gemma4:31b
+uv run wordbyword --build-dictionary --llm-provider ollama --llm-model gemma4:31b --llm-base-url http://localhost:11434
 ```
 
-Use `--ollama-model` or the GUI model field to change the local model. `WORDBYWORD_OLLAMA_MODEL` is only honored by the lower-level helper client when code creates an Ollama client without passing a model.
+The old Ollama flags still work as aliases:
 
-The library helper layer also includes `openai`, `claude`, and `google` clients for tests and direct Python use. Those providers require their normal API-key environment variables, but they are not exposed as CLI provider switches.
+```bash
+uv run wordbyword --build-dictionary --ollama-model gemma4:31b --ollama-base-url http://localhost:11434
+```
+
+For hosted text-only LLM tasks, choose a provider and set its API key in the environment. API keys are not stored in GUI settings or project files.
+
+```bash
+export OPENAI_API_KEY=...
+uv run wordbyword --build-dictionary --llm-provider openai --llm-model gpt-4o
+
+export ANTHROPIC_API_KEY=...
+uv run wordbyword --rename-class-session-archive --llm-provider claude --llm-model claude-3-5-sonnet-20240620
+
+export GEMINI_API_KEY=...
+uv run wordbyword --generate-missing-meanings --llm-provider google --llm-model gemini-1.5-pro
+```
+
+Provider aliases are accepted: `anthropic` maps to `claude`, and `gemini` maps to `google`. Non-Ollama providers are text-first in this release. Image-backed source-material rewrites and printable image selection still require an Ollama vision-capable model.
 
 ## Verification
 

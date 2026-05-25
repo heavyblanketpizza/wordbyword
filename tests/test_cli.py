@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from wordbyword.after_class_reports import AfterClassReportProgress
+from wordbyword.application.commands import build_cli_request
 from wordbyword.cli import (
     DEFAULT_INPUT_DIR,
     DEFAULT_REFERENCE_DICTIONARY_PATH,
@@ -118,6 +119,35 @@ class ParserDefaultsTest(unittest.TestCase):
         self.assertEqual(args.ollama_base_url, "http://localhost:11434")
         self.assertTrue(args.include_punctuation)
         self.assertTrue(args.include_numbers)
+
+    def test_llm_provider_flags_select_non_ollama_runtime(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--build-dictionary",
+                "--llm-provider",
+                "anthropic",
+                "--llm-model",
+                "claude-test",
+                "--llm-base-url",
+                "https://example.test/v1",
+            ]
+        )
+
+        request = build_cli_request(args)
+
+        self.assertIsNotNone(request)
+        self.assertEqual(request.provider, "claude")  # type: ignore[union-attr]
+        self.assertEqual(request.model, "claude-test")  # type: ignore[union-attr]
+        self.assertEqual(request.base_url, "https://example.test/v1")  # type: ignore[union-attr]
+
+    def test_ollama_aliases_cannot_be_mixed_with_non_ollama_provider(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["--build-dictionary", "--llm-provider", "openai", "--ollama-model", "gemma4:31b"])
+
+        with self.assertRaises(SystemExit) as caught:
+            validate_args(parser, args)
+
+        self.assertEqual(caught.exception.code, 2)
 
     def test_dictionary_source_archive_commands_default_to_dictionary_original(self) -> None:
         rename_args = build_parser().parse_args(["--rename-dictionary-source-archive"])
@@ -664,7 +694,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     side_effect=rewrite_side_effect,
                 ) as rewrite_material,
                 patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect) as print_material,
-                patch("wordbyword.cli.app.ollama_client", side_effect=clients),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=clients),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main(args)
@@ -703,7 +733,7 @@ class ParserDefaultsTest(unittest.TestCase):
                 patch("wordbyword.cli.app.parse_source_material") as second_parse,
                 patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material") as second_rewrite,
                 patch("wordbyword.cli.app.print_class_material") as second_print,
-                patch("wordbyword.cli.app.ollama_client") as second_client,
+                patch("wordbyword.cli.app.build_provider_client") as second_client,
             ):
                 second_exit_code = main(args)
 
@@ -739,7 +769,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     return_value=rewrite_output,
                 ),
                 patch("wordbyword.cli.app.print_class_material") as print_material,
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main(
@@ -839,7 +869,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     "wordbyword.cli.app.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ),
-                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 self.assertEqual(main(args), 0)
@@ -857,7 +887,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     "wordbyword.cli.app.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ) as print_material,
-                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 self.assertEqual(main(args), 0)
@@ -906,7 +936,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     "wordbyword.cli.app.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ),
-                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 self.assertEqual(main(args), 0)
@@ -922,7 +952,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     "wordbyword.cli.app.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ) as print_material,
-                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 self.assertEqual(main([*args, "--force-class-printouts"]), 0)
@@ -957,7 +987,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
             patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material", side_effect=rewrite_side_effect),
-            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):
             exit_code = main(
@@ -1003,7 +1033,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
             patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
-            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):
             exit_code = main(["--target-grade", "grade1", "--print-class-material", "/tmp/rewritten/lesson"])
@@ -1037,7 +1067,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
             patch("wordbyword.cli.app.print_class_materials", return_value=outputs),
-            patch("wordbyword.cli.app.ollama_client", return_value=object()),
+            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
             patch("wordbyword.cli.app.warn_if_model_unload_fails"),
         ):
             exit_code = main(["--target-grade", "grade1", "--print-class-materials", "/tmp/rewritten"])
@@ -1088,7 +1118,7 @@ class ParserDefaultsTest(unittest.TestCase):
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ),
                 patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
-                patch("wordbyword.cli.app.ollama_client", side_effect=[object(), object()]),
+                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main(
@@ -1137,7 +1167,7 @@ class ParserDefaultsTest(unittest.TestCase):
                 AfterClassReportProgress(
                     phase="plan",
                     source_id=source.stem,
-                    detail="generating adult-facing Korean report plan with Ollama",
+                    detail="generating adult-facing Korean report plan with configured LLM",
                     output_dir=outputs.output_dir,
                     heuristic_analysis_dir=outputs.heuristic_analysis_dir,
                 )
@@ -1155,7 +1185,7 @@ class ParserDefaultsTest(unittest.TestCase):
                 patch.dict("os.environ", {"TERM": "xterm-256color"}),
                 patch("sys.stdout", stdout),
                 patch("wordbyword.cli.app.generate_after_class_reading_report", side_effect=generate_side_effect),
-                patch("wordbyword.cli.app.ollama_client", return_value=object()),
+                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
                 patch("wordbyword.cli.app.warn_if_model_unload_fails"),
             ):
                 exit_code = main(["--target-grade", "grade1", "--generate-after-class-reading-report", str(source)])
@@ -1340,6 +1370,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             self.assertTrue(kwargs["include_numbers"])
             self.assertEqual(kwargs["model"], "gemma4:31b")
             self.assertEqual(kwargs["base_url"], "http://localhost:11434")
+            self.assertEqual(kwargs["provider"], "ollama")
             self.assertTrue(kwargs["force"])
             self.assertEqual(kwargs["target_checkpoint"], "15")
             self.assertEqual(kwargs["target_grade"], "grade1")
@@ -1434,6 +1465,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             self.assertTrue(kwargs["include_numbers"])
             self.assertEqual(kwargs["model"], "gemma4:31b")
             self.assertEqual(kwargs["base_url"], "http://localhost:11434")
+            self.assertEqual(kwargs["provider"], "ollama")
             self.assertTrue(kwargs["force"])
             self.assertEqual(kwargs["target_checkpoint"], "09")
             self.assertEqual(kwargs["target_grade"], "grade1")
@@ -1487,6 +1519,7 @@ class DictionarySourceArchiveCliTest(unittest.TestCase):
             archive_root=Path("sources"),
             model="gemma4:31b",
             base_url="http://localhost:11434",
+            provider="ollama",
             apply=True,
             target_grade="grade1",
         )
@@ -2010,7 +2043,7 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             stdout = io.StringIO()
             with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline, patch(
-                "wordbyword.cli.app.ollama_client",
+                "wordbyword.cli.app.build_provider_client",
                 return_value=GeneratedMeaningClient(),
             ):
                 exit_code = main(["--target-grade", "grade1", "--generate-missing-meanings", "--output", str(output_dir)])
@@ -2022,7 +2055,7 @@ class ShowDistributionCliTest(unittest.TestCase):
     def test_generate_missing_meanings_reports_client_configuration_errors(self) -> None:
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), patch(
-            "wordbyword.cli.app.ollama_client",
+            "wordbyword.cli.app.build_provider_client",
             side_effect=LLMConfigurationError("bad ollama config"),
         ):
             exit_code = generate_missing_meanings(

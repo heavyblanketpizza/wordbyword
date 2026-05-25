@@ -25,7 +25,7 @@ from wordbyword.classroom_printout_studio.source_parsing.materials import (
     source_id_for,
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
-from wordbyword.dictionary_build.llm import SupportsCompletion, ollama_client, unload_model_if_supported
+from wordbyword.dictionary_build.llm import SupportsCompletion, build_provider_client, unload_model_if_supported
 from wordbyword.grade_profiles import DEFAULT_TARGET_GRADE, normalize_target_grade, target_profile_for_grade
 from wordbyword.application.workspace import RewriteVocabularySource
 
@@ -88,6 +88,7 @@ def build_class_printouts_workflow(
     rewrite_output_root: Path,
     vocabulary_source: RewriteVocabularySource,
     print_output_root: Path,
+    provider: str = "ollama",
     model: str,
     base_url: str | None,
     font_path: Path | None,
@@ -98,7 +99,7 @@ def build_class_printouts_workflow(
     parse_source_material_func: ParseSourceMaterial = parse_source_material,
     rewrite_source_material_func: RewriteSourceMaterial = rewrite_vocabulary_guided_source_material,
     print_class_material_func: PrintClassMaterial = print_class_material,
-    completion_client_factory: CompletionClientFactory = ollama_client,
+    completion_client_factory: CompletionClientFactory = build_provider_client,
     model_unload_callback: ModelUnloadCallback = unload_model_if_supported,
     source_material_progress: SourceMaterialProgressCallback | None = None,
     source_rewrite_progress: SourceRewriteProgressCallback | None = None,
@@ -183,6 +184,7 @@ def build_class_printouts_workflow(
         )
 
     rewrite_client = completion_client_factory(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,
@@ -253,6 +255,7 @@ def build_class_printouts_workflow(
         )
 
     print_client = completion_client_factory(
+        provider,
         model=model,
         base_url=base_url,
         timeout_seconds=1200.0,

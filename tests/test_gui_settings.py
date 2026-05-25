@@ -28,6 +28,7 @@ class GuiSettingsTests(unittest.TestCase):
         self.assertEqual(settings["gui_language"], "system")
         self.assertEqual(settings["gui_theme"], THEME_DEFAULT)
         self.assertEqual(settings["gui_text_scale"], TEXT_SCALE_DEFAULT)
+        self.assertEqual(settings["provider"], "ollama")
 
     def test_load_invalid_json_returns_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -45,6 +46,7 @@ class GuiSettingsTests(unittest.TestCase):
             save_settings(
                 {
                     "model": "gemma-test",
+                    "provider": "openai",
                     "base_url": "http://localhost:11434",
                     "pdf_render_dpi": "180",
                     "unknown": "ignored",
@@ -57,6 +59,7 @@ class GuiSettingsTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], SETTINGS_SCHEMA_VERSION)
         self.assertNotIn("unknown", payload)
         self.assertEqual(loaded["model"], "gemma-test")
+        self.assertEqual(loaded["provider"], "openai")
         self.assertEqual(loaded["base_url"], "http://localhost:11434")
         self.assertEqual(loaded["pdf_render_dpi"], 180)
 

@@ -493,7 +493,7 @@ def scan_archive_duplicates(
         if candidates:
             if near_duplicate_client is None:
                 raise ClassSessionArchiveError(
-                    "Near-duplicate class-session archive candidates require Ollama review; "
+                    "Near-duplicate class-session archive candidates require LLM review; "
                     "rerun through the CLI or provide a near-duplicate review client."
                 )
             near_duplicate_reviews = review_archive_near_duplicate_candidates(
