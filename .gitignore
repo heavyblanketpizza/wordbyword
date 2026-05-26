@@ -32,6 +32,9 @@ build-dictionary/references/*
 # Local classroom printout studio materials and generated outputs; keep all content local.
 classroom-printout-studio/
 
+# Local business proposal materials.
+business-proposal/
+
 # Legacy local class-material folders; ignore them if recreated by older commands.
 class-source-materials/
 rewritten-for-class/
