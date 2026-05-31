@@ -176,11 +176,12 @@ def plan_dictionary_output_moves(root: Path) -> list[GradeWorkspaceMigrationMove
 
 def plan_class_source_original_moves(root: Path) -> list[GradeWorkspaceMigrationMove]:
     base = root / CLASS_SOURCE_MATERIAL_ROOT
+    legacy_original_base = root / CLASS_SOURCE_ORIGINAL_ROOT
     moves: list[GradeWorkspaceMigrationMove] = []
     if not base.is_dir():
         return moves
     for path in sorted(base.iterdir()):
-        if path.name in {"original", "parsed"} or path.name.startswith("."):
+        if path.name in {"original", "parsed", *VALID_TARGET_GRADES, NEEDS_GRADE_REVIEW} or path.name.startswith("."):
             continue
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES:
             continue
@@ -188,11 +189,31 @@ def plan_class_source_original_moves(root: Path) -> list[GradeWorkspaceMigration
             migration_move(
                 "class_source_original",
                 path,
-                unique_destination(root / CLASS_SOURCE_ORIGINAL_ROOT / "grade1" / path.name),
+                unique_destination(base / "grade1" / path.name),
                 "grade1",
                 "legacy grade1 class source",
             )
         )
+    if legacy_original_base.is_dir():
+        for grade in VALID_TARGET_GRADES:
+            legacy_grade_dir = legacy_original_base / grade
+            if not legacy_grade_dir.is_dir():
+                continue
+            for path in sorted(legacy_grade_dir.rglob("*")):
+                if not path.is_file() or path.name.startswith("."):
+                    continue
+                if path.suffix.lower() not in SUPPORTED_SOURCE_SUFFIXES:
+                    continue
+                relative = path.relative_to(legacy_grade_dir)
+                moves.append(
+                    migration_move(
+                        "class_source_original",
+                        path,
+                        unique_destination(base / grade / flattened_relative_name(relative)),
+                        grade,
+                        "legacy original class source",
+                    )
+                )
     return moves
 
 

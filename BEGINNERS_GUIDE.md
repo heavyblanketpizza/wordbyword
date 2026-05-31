@@ -47,7 +47,7 @@ Supported dictionary files:
 Put class source PDFs here:
 
 ```text
-classroom-printout-studio/class-source-materials/
+classroom-printout-studio/class-source-materials/grade1/
 ```
 
 Model-backed steps use Ollama by default. If you use Ollama, make sure it is running:

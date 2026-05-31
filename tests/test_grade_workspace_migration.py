@@ -56,6 +56,7 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
                 root / "build-dictionary" / "original" / "needs-label.pdf",
                 root / "build-dictionary" / "15_final_dictionary.jsonl",
                 root / "classroom-printout-studio" / "class-source-materials" / "lesson.txt",
+                root / "classroom-printout-studio" / "class-source-materials" / "original" / "grade1" / "legacy.pdf",
                 root
                 / "classroom-printout-studio"
                 / "class-source-materials"
@@ -85,9 +86,17 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
                     root
                     / "classroom-printout-studio"
                     / "class-source-materials"
-                    / "original"
                     / "grade1"
                     / "lesson.txt"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    root
+                    / "classroom-printout-studio"
+                    / "class-source-materials"
+                    / "grade1"
+                    / "legacy.pdf"
                 ).is_file()
             )
             self.assertTrue(
@@ -138,4 +147,3 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
             second = migrate_grade_workspaces(root=root, apply=True)
             self.assertEqual(second.applied_count, 0)
             self.assertEqual(second.planned_count, 0)
-

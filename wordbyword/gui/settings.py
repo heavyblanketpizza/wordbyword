@@ -10,6 +10,7 @@ from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
 from wordbyword.dictionary_build.llm import LLMConfigurationError, normalize_provider_name
 from wordbyword.dictionary_build.example_cleanup import DEFAULT_EXAMPLE_CLEANUP_MODEL
 from wordbyword.grade_profiles import (
+    CLASS_SOURCE_ORIGINAL_ROOT,
     DEFAULT_TARGET_GRADE,
     grade_workspace,
     normalize_target_grade,
@@ -17,7 +18,7 @@ from wordbyword.grade_profiles import (
 from wordbyword.gui.i18n import LANGUAGE_SYSTEM, normalize_language
 from wordbyword.gui.themes import THEME_DEFAULT, normalize_theme
 
-SETTINGS_SCHEMA_VERSION = 6
+SETTINGS_SCHEMA_VERSION = 7
 SETTINGS_DIRNAME = ".wordbyword"
 SETTINGS_FILENAME = "gui-settings.json"
 TEXT_SCALE_DEFAULT = 1.0
@@ -103,11 +104,22 @@ def settings_with_target_grade_defaults(
     new_defaults = grade_dependent_default_settings(new_grade)
     for key, new_value in new_defaults.items():
         value = str(current.get(key) or "")
-        if not value or value == old_defaults[key]:
+        if (
+            not value
+            or value == old_defaults[key]
+            or value == _legacy_grade_default_setting(key, old_grade)
+            or value == _legacy_grade_default_setting(key, new_grade)
+        ):
             current[key] = new_value
     current["target_grade"] = new_grade
     current["schema_version"] = SETTINGS_SCHEMA_VERSION
     return current
+
+
+def _legacy_grade_default_setting(key: str, grade: str) -> str:
+    if key == "class_source_dir":
+        return str(CLASS_SOURCE_ORIGINAL_ROOT / grade)
+    return ""
 
 
 def default_settings_path(*, home: Path | None = None) -> Path:

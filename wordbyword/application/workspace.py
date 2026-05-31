@@ -189,7 +189,12 @@ def resolved_canonical_dictionary_path(args: object) -> Path:
 
 
 def resolved_class_source_dir(args: object, source_dir: Path) -> Path:
-    return workspace_from_args(args).class_source_dir if source_dir == CLASS_SOURCE_MATERIAL_ROOT else source_dir
+    source_dir_was_explicit = option_was_explicit(args, "parse_source_materials") or option_was_explicit(
+        args, "build_class_printouts"
+    )
+    if source_dir == CLASS_SOURCE_MATERIAL_ROOT and not source_dir_was_explicit:
+        return workspace_from_args(args).class_source_dir
+    return source_dir
 
 
 def resolved_parsed_source_root(args: object, parsed_root: Path) -> Path:

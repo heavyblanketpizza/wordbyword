@@ -88,7 +88,27 @@ class GuiSettingsTests(unittest.TestCase):
             "wbw-vocabulary-intelligence/live-grade-lexicon/grade7/canonical.jsonl",
         )
         self.assertEqual(loaded["dictionary_input_dir"], "build-dictionary/original/grade7")
+        self.assertEqual(loaded["class_source_dir"], "classroom-printout-studio/class-source-materials/grade7")
         self.assertEqual(loaded["source_output_root"], "classroom-printout-studio/class-source-materials/parsed/grade7")
+
+    def test_legacy_class_source_default_migrates_to_active_grade_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            path = Path(workspace) / ".wordbyword" / "gui-settings.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": SETTINGS_SCHEMA_VERSION - 1,
+                        "target_grade": "grade7",
+                        "class_source_dir": "classroom-printout-studio/class-source-materials/original/grade7",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            loaded = load_settings(path)
+
+        self.assertEqual(loaded["class_source_dir"], "classroom-printout-studio/class-source-materials/grade7")
 
     def test_language_setting_is_validated_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:

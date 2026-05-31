@@ -114,7 +114,7 @@ def test_grade_workspace_owns_every_grade_scoped_path(
 
     assert workspace.dictionary_input_dir == dictionary_input
     assert workspace.dictionary_output_dir == dictionary_output
-    assert workspace.class_source_dir == Path("classroom-printout-studio/class-source-materials/original") / target_grade
+    assert workspace.class_source_dir == Path("classroom-printout-studio/class-source-materials") / target_grade
     assert workspace.source_output_root == Path("classroom-printout-studio/class-source-materials/parsed") / target_grade
     assert workspace.archive_root == archive_root
     assert workspace.usage_signal_output_root == Path("wbw-vocabulary-intelligence/usage-signal-build") / target_grade
