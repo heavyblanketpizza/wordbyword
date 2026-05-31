@@ -331,8 +331,8 @@ class PrintableCliTest(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
-                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
             ):
                 exit_code = main(
                     [
@@ -369,8 +369,8 @@ class PrintableCliTest(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
-                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
             ):
                 exit_code = main(
                     [

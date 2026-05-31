@@ -434,9 +434,9 @@ class AfterClassReportCliTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-                patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=outputs) as generate,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
+                patch("wordbyword.application.use_cases.generate_after_class_reading_report", return_value=outputs) as generate,
             ):
                 self.assertEqual(
                     main(["--generate-after-class-reading-report", str(source), "--target-grade", "grade7"]),
@@ -491,11 +491,11 @@ class AfterClassReportCliTest(unittest.TestCase):
             stdout = io.StringIO()
             with (
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-                patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-                patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+                patch("wordbyword.application.use_cases.update_live_lexicon") as mock_update_live_lexicon,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
+                patch("wordbyword.application.use_cases.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
             ):
                 exit_code = main(
                     [
@@ -530,11 +530,11 @@ class AfterClassReportCliTest(unittest.TestCase):
             with (
                 patch("sys.stdout", stdout),
                 patch("wordbyword.cli.options.grade_workspace", return_value=SimpleNamespace(archive_root=archive)),
-                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-                patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
-                patch("wordbyword.cli.app.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+                patch("wordbyword.application.use_cases.update_live_lexicon") as mock_update_live_lexicon,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
+                patch("wordbyword.application.use_cases.generate_after_class_reading_report", return_value=fake_outputs) as mock_generate,
             ):
                 exit_code = main(
                     [
@@ -581,12 +581,12 @@ class AfterClassReportCliTest(unittest.TestCase):
             with (
                 patch.dict("os.environ", {"TERM": "xterm-256color"}),
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-                patch("wordbyword.cli.app.update_live_lexicon") as mock_update_live_lexicon,
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+                patch("wordbyword.application.use_cases.update_live_lexicon") as mock_update_live_lexicon,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
                 patch(
-                    "wordbyword.cli.app.generate_after_class_reading_report",
+                    "wordbyword.application.use_cases.generate_after_class_reading_report",
                     side_effect=generate_side_effect,
                 ) as mock_generate,
             ):

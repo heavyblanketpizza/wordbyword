@@ -512,7 +512,7 @@ class SourceRewriteCliTest(unittest.TestCase):
             write_skipped_fixture(parsed_root / "sample")
             client = RecordingWholeRewriteClient()
 
-            with patch("wordbyword.cli.app.build_provider_client", return_value=client):
+            with patch("wordbyword.application.use_cases.build_provider_client", return_value=client):
                 with patch("sys.stdout", io.StringIO()):
                     exit_code = main(
                         [
@@ -551,8 +551,8 @@ class SourceRewriteCliTest(unittest.TestCase):
             client = RecordingVocabularyGuidedRewriteClient()
 
             with (
-                patch("wordbyword.cli.app.default_live_lexicon_path", return_value=root / "missing-live.jsonl"),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
+                patch("wordbyword.application.workspace.default_live_lexicon_path", return_value=root / "missing-live.jsonl"),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
                 patch("sys.stdout", io.StringIO()),
             ):
                 exit_code = main(
@@ -600,8 +600,8 @@ class SourceRewriteCliTest(unittest.TestCase):
             client = RecordingVocabularyGuidedRewriteClient()
 
             with (
-                patch("wordbyword.cli.app.default_live_lexicon_path", return_value=live_path),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
+                patch("wordbyword.application.workspace.default_live_lexicon_path", return_value=live_path),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
                 patch("sys.stdout", io.StringIO()),
             ):
                 exit_code = main(
@@ -642,7 +642,7 @@ class SourceRewriteCliTest(unittest.TestCase):
             write_dictionary_fixture(dictionary_path, count=20)
             client = RecordingVocabularyGuidedRewriteClient()
 
-            with patch("wordbyword.cli.app.build_provider_client", return_value=client):
+            with patch("wordbyword.application.use_cases.build_provider_client", return_value=client):
                 with patch("sys.stdout", io.StringIO()):
                     exit_code = main(
                         [
