@@ -41,6 +41,7 @@ PIPELINE_CLEANUP_FLAGS = (
     "generate_missing_examples",
     "retry_generated_examples",
 )
+_OPTION_VALUE_OMITTED = object()
 
 
 class ExplicitPathAction(argparse.Action):
@@ -51,6 +52,33 @@ class ExplicitPathAction(argparse.Action):
         values: object,
         option_string: str | None = None,
     ) -> None:
+        setattr(namespace, self.dest, values)
+        setattr(namespace, f"{self.dest}_explicit", True)
+
+
+class OptionalExplicitPathAction(argparse.Action):
+    def __init__(
+        self,
+        option_strings: list[str],
+        dest: str,
+        *,
+        implicit_value: Path,
+        **kwargs: object,
+    ) -> None:
+        self.implicit_value = implicit_value
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        if values is _OPTION_VALUE_OMITTED:
+            setattr(namespace, self.dest, self.implicit_value)
+            setattr(namespace, f"{self.dest}_explicit", False)
+            return
         setattr(namespace, self.dest, values)
         setattr(namespace, f"{self.dest}_explicit", True)
 
@@ -322,12 +350,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--parse-source-materials",
         type=Path,
         nargs="?",
-        const=DEFAULT_SOURCE_MATERIAL_ROOT,
+        const=_OPTION_VALUE_OMITTED,
         default=None,
+        action=OptionalExplicitPathAction,
+        implicit_value=DEFAULT_SOURCE_MATERIAL_ROOT,
         metavar="DIR",
         help=(
             "Parse every supported file in a class source-material directory into separate "
-            "source-specific workspaces. Defaults to classroom-printout-studio/class-source-materials when no DIR is supplied."
+            "source-specific workspaces. Defaults to classroom-printout-studio/class-source-materials/<target-grade> "
+            "when no DIR is supplied."
         ),
     )
     parser.add_argument(
@@ -534,12 +565,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--build-class-printouts",
         type=Path,
         nargs="?",
-        const=DEFAULT_SOURCE_MATERIAL_ROOT,
+        const=_OPTION_VALUE_OMITTED,
         default=None,
+        action=OptionalExplicitPathAction,
+        implicit_value=DEFAULT_SOURCE_MATERIAL_ROOT,
         metavar="DIR",
         help=(
             "Parse class source materials, rewrite them with vocabulary guidance, and write DOCX printouts. "
-            f"Defaults to {DEFAULT_SOURCE_MATERIAL_ROOT} when no DIR is supplied."
+            f"Defaults to {DEFAULT_SOURCE_MATERIAL_ROOT}/<target-grade> when no DIR is supplied."
         ),
     )
     parser.add_argument(

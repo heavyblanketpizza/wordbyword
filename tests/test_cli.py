@@ -374,6 +374,7 @@ class ParserDefaultsTest(unittest.TestCase):
         kwargs = workflow.call_args.kwargs
         self.assertEqual(kwargs["target_grade"], "grade7")
         self.assertEqual(kwargs["target_profile"], "grade7-ko")
+        self.assertEqual(kwargs["source_dir"], Path("sources"))
         self.assertEqual(
             kwargs["rewrite_output_root"],
             Path("classroom-printout-studio/rewritten-for-class/grade7-ko-ollama-vocabulary-guided"),
@@ -403,8 +404,91 @@ class ParserDefaultsTest(unittest.TestCase):
             )
 
         custom_kwargs = custom_workflow.call_args.kwargs
+        self.assertEqual(custom_kwargs["source_dir"], Path("sources"))
         self.assertEqual(custom_kwargs["rewrite_output_root"], Path("custom-rewrite"))
         self.assertEqual(custom_kwargs["print_output_root"], Path("custom-print"))
+
+    def test_target_grade_resolves_zero_config_class_source_defaults(self) -> None:
+        parse_result = SimpleNamespace(
+            source_dir=Path("unused"),
+            output_root=Path("unused"),
+            source_paths=[],
+            bundles=[],
+        )
+        workflow_result = SimpleNamespace(
+            status="no_sources",
+            exit_code=1,
+            source_dir=Path("unused"),
+            parse_output_root=Path("parsed"),
+            rewrite_output_root=Path("rewritten"),
+            print_output_root=Path("print"),
+            vocabulary_source=SimpleNamespace(kind="dictionary_seed", path=Path("build-dictionary/15_final_dictionary.jsonl")),
+            ledger_path=Path("parsed/.wordbyword-class-printout-ledger.json"),
+            discovered_sources=0,
+            skipped_sources=[],
+            parser_skipped_sources=[],
+            parsed_sources=0,
+            rewritten=0,
+            failed_rewrites=0,
+            docx_written=0,
+            failed_prints=0,
+            print_outputs=[],
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+            patch("wordbyword.cli.app.parse_source_materials", return_value=parse_result) as parse_many,
+        ):
+            self.assertEqual(main(["--parse-source-materials", "--target-grade", "grade1", "--skip-pdf-parse"]), 0)
+
+        self.assertEqual(
+            parse_many.call_args.args[0],
+            Path("classroom-printout-studio/class-source-materials/grade1"),
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+            patch(
+                "wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow",
+                return_value=workflow_result,
+            ) as workflow,
+        ):
+            self.assertEqual(main(["--build-class-printouts", "--target-grade", "grade7", "--skip-pdf-parse"]), 1)
+
+        self.assertEqual(
+            workflow.call_args.kwargs["source_dir"],
+            Path("classroom-printout-studio/class-source-materials/grade7"),
+        )
+
+    def test_explicit_class_source_root_is_not_rewritten_to_grade_default(self) -> None:
+        parse_result = SimpleNamespace(
+            source_dir=Path("unused"),
+            output_root=Path("unused"),
+            source_paths=[],
+            bundles=[],
+        )
+
+        with (
+            patch("sys.stdout", io.StringIO()),
+            patch("sys.stderr", io.StringIO()),
+            patch("wordbyword.cli.app.parse_source_materials", return_value=parse_result) as parse_many,
+        ):
+            self.assertEqual(
+                main(
+                    [
+                        "--parse-source-materials",
+                        "classroom-printout-studio/class-source-materials",
+                        "--target-grade",
+                        "grade1",
+                        "--skip-pdf-parse",
+                    ]
+                ),
+                0,
+            )
+
+        self.assertEqual(parse_many.call_args.args[0], Path("classroom-printout-studio/class-source-materials"))
 
     def test_target_grade_resolves_usage_and_live_lexicon_defaults(self) -> None:
         usage_result = SimpleNamespace(

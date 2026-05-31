@@ -56,7 +56,7 @@ Build class printouts from source materials:
 uv run wordbyword --build-class-printouts --ollama-model gemma4:31b
 ```
 
-That full class-printout command starts from `classroom-printout-studio/class-source-materials`, hashes source files before parsing, skips sources already tied to a successful printable DOCX in the class-printout ledger, parses new PDFs with PaddleOCR-VL, rewrites with the canonical live lexicon when it exists, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
+That full class-printout command starts from `classroom-printout-studio/class-source-materials/grade1`, hashes source files before parsing, skips sources already tied to a successful printable DOCX in the class-printout ledger, parses new PDFs with PaddleOCR-VL, rewrites with the canonical live lexicon when it exists, and writes editable DOCX handouts under `classroom-printout-studio/printable-for-class/grade1-ko-a4-ollama/`.
 
 ## Local Folders
 
@@ -88,7 +88,7 @@ build-dictionary/references/reference-dictionary.jsonl
 Put class source PDFs in:
 
 ```text
-classroom-printout-studio/class-source-materials/
+classroom-printout-studio/class-source-materials/grade1/
 ```
 
 Generated stage outputs are replaceable. The full dictionary build records verified checkpoint cache metadata in `00_summary.json` and reuses saved stages only when schemas, inputs, options, dependencies, and artifact hashes still match. Per-source parse, rewrite, print, and after-class report outputs are regenerated in their output folders.
@@ -201,10 +201,10 @@ Parse source materials only:
 
 ```bash
 uv run wordbyword --parse-source-materials
-uv run wordbyword --parse-source-material classroom-printout-studio/class-source-materials/example.pdf
+uv run wordbyword --parse-source-material classroom-printout-studio/class-source-materials/grade1/example.pdf
 ```
 
-The default parse directory is `classroom-printout-studio/class-source-materials`. PDFs are parsed with PaddleOCR-VL. Non-PDF source-material extensions may be discovered, but only PDFs currently produce the full parsed bundle.
+The default parse directory is `classroom-printout-studio/class-source-materials/grade1`. PDFs are parsed with PaddleOCR-VL. Non-PDF source-material extensions may be discovered, but only PDFs currently produce the full parsed bundle.
 
 PaddleOCR-VL sidecar behavior:
 
@@ -238,13 +238,13 @@ Rewrite parsed materials manually:
 
 ```bash
 uv run wordbyword --rewrite-vocabulary-guided-source-materials --ollama-model gemma4:31b
-uv run wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/example --ollama-model gemma4:31b
+uv run wordbyword --rewrite-vocabulary-guided-source-material classroom-printout-studio/class-source-materials/parsed/grade1/example --ollama-model gemma4:31b
 uv run wordbyword --rewrite-whole-source-materials --ollama-model gemma4:31b
 ```
 
-Vocabulary-guided rewrites default to `classroom-printout-studio/class-source-materials/parsed`. If no `--rewrite-dictionary` is supplied, vocabulary guidance comes from `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` when it exists, otherwise `build-dictionary/15_final_dictionary.jsonl`. They write bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/`.
+Vocabulary-guided rewrites default to `classroom-printout-studio/class-source-materials/parsed/grade1`. If no `--rewrite-dictionary` is supplied, vocabulary guidance comes from `wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl` when it exists, otherwise `build-dictionary/15_final_dictionary.jsonl`. They write bundles under `classroom-printout-studio/rewritten-for-class/grade1-ko-ollama-vocabulary-guided/`.
 
-`--build-class-printouts` stores workflow state in `classroom-printout-studio/class-source-materials/parsed/.wordbyword-class-printout-ledger.json`. The ledger is keyed by source file SHA-256, so a renamed source with identical bytes is skipped after a successful printout, while changed bytes under the same filename are treated as a new source. Use `--force-class-printouts` to regenerate parse, rewrite, and print outputs for sources that the ledger would otherwise skip.
+`--build-class-printouts` stores workflow state in `classroom-printout-studio/class-source-materials/parsed/grade1/.wordbyword-class-printout-ledger.json`. The ledger is keyed by source file SHA-256, so a renamed source with identical bytes is skipped after a successful printout, while changed bytes under the same filename are treated as a new source. Use `--force-class-printouts` to regenerate parse, rewrite, and print outputs for sources that the ledger would otherwise skip.
 
 Print rewritten materials manually:
 
