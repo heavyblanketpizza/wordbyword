@@ -97,6 +97,9 @@ ApplicationWindow {
     })
     property var safeSettings: backend ? backend.settings : ({})
     property var safeJobState: backend ? backend.jobState : defaultJobState
+    property var safeReviewSnapshot: backend ? backend.reviewSnapshot : ({"summary": {}, "items": []})
+    property var reviewItems: safeReviewSnapshot.items || []
+    property var reviewSummary: safeReviewSnapshot.summary || ({})
     property string safeLogText: backend ? backend.logText : ""
     property string safeArtifactText: backend ? backend.artifactText : root.tr("run.no_artifacts")
     property bool busy: Boolean(safeJobState.busy)
@@ -180,6 +183,10 @@ ApplicationWindow {
         if (tab && tab.length > 0)
             root.settingsTab = tab
         root.activePage = "settings"
+    }
+
+    function showReview() {
+        root.activePage = "review"
     }
 
     function activeIconInverted() {
@@ -327,6 +334,18 @@ ApplicationWindow {
         return backend.runJob(workflowId, values)
     }
 
+    function openPath(pathText) {
+        if (!backend || !pathText)
+            return false
+        return backend.openPath(String(pathText))
+    }
+
+    function selectReportPrintout(pathText) {
+        if (!backend || !pathText)
+            return false
+        return backend.selectReportPrintout(String(pathText))
+    }
+
     function setLanguage(value) {
         if (!backend)
             return false
@@ -425,6 +444,10 @@ ApplicationWindow {
     function statusLabel(status) {
         if (status === "missing_input")
             return root.tr("status.missing_input")
+        if (status === "needs_review")
+            return root.tr("status.needs_review")
+        if (status === "missing")
+            return root.tr("status.missing")
         if (status === "done")
             return root.tr("status.done")
         if (status === "running")
@@ -440,14 +463,22 @@ ApplicationWindow {
         if (root.neoTheme) {
             if (status === "done")
                 return root.themeColor("status_done_bg", "#b8ff9f")
+            if (status === "ready")
+                return root.themeColor("status_done_bg", "#b8ff9f")
+            if (status === "needs_review")
+                return root.themeColor("status_running_bg", "#ffe15a")
             if (status === "running")
                 return root.themeColor("status_running_bg", "#ffe15a")
             if (status === "failed" || status === "missing_input")
                 return root.themeColor("status_problem_bg", "#ffb4e6")
+            if (status === "missing")
+                return root.colorMutedBg
             return root.themeColor("status_ready_bg", "#fffaf0")
         }
         if (status === "done")
             return root.colorInk
+        if (status === "needs_review")
+            return "#fff4cc"
         if (status === "running")
             return root.colorInkSoft
         if (status === "failed" || status === "missing_input")
@@ -459,6 +490,109 @@ ApplicationWindow {
         if (!root.neoTheme && (status === "done" || status === "running"))
             return root.colorActiveInk
         return root.colorInk
+    }
+
+    function reviewSummaryValue(key) {
+        return Number(root.reviewSummary[key] || 0)
+    }
+
+    function reviewKindLabel(kind) {
+        if (kind === "dictionary")
+            return root.tr("review.kind.dictionary")
+        if (kind === "class_printout")
+            return root.tr("review.kind.class_printout")
+        if (kind === "archived_handout")
+            return root.tr("review.kind.archived_handout")
+        if (kind === "live_lexicon")
+            return root.tr("review.kind.live_lexicon")
+        if (kind === "after_class_report")
+            return root.tr("review.kind.after_class_report")
+        return String(kind || "")
+    }
+
+    function reviewKindIcon(kind) {
+        if (kind === "dictionary")
+            return "book-open"
+        if (kind === "class_printout")
+            return "printer"
+        if (kind === "archived_handout")
+            return "archive"
+        if (kind === "live_lexicon")
+            return "book-marked"
+        if (kind === "after_class_report")
+            return "clipboard-list"
+        return "file-text"
+    }
+
+    function reviewActionAvailable(item, action) {
+        var actions = item.available_actions || []
+        for (var i = 0; i < actions.length; i++) {
+            if (String(actions[i]) === action)
+                return true
+        }
+        return false
+    }
+
+    function reviewMainItemsFor(status) {
+        var result = []
+        for (var i = 0; i < root.reviewItems.length; i++) {
+            var item = root.reviewItems[i]
+            var kind = String(item.kind || "")
+            if (kind === "archived_handout" || kind === "after_class_report")
+                continue
+            if (String(item.status || "") === status)
+                result.push(item)
+        }
+        return result
+    }
+
+    function reviewRecentItems() {
+        var result = []
+        for (var i = 0; i < root.reviewItems.length; i++) {
+            var item = root.reviewItems[i]
+            var kind = String(item.kind || "")
+            var status = String(item.status || "")
+            if (kind === "archived_handout" || kind === "after_class_report")
+                continue
+            if (status === "ready")
+                result.push(item)
+        }
+        return result
+    }
+
+    function reviewSecondaryItems() {
+        var result = []
+        for (var i = 0; i < root.reviewItems.length; i++) {
+            var item = root.reviewItems[i]
+            var kind = String(item.kind || "")
+            if (kind === "archived_handout" || kind === "after_class_report")
+                result.push(item)
+        }
+        return result
+    }
+
+    function runReviewAction(item, action) {
+        if (action === "open")
+            return root.openPath(String(item.primary_path || ""))
+        if (action === "open_folder")
+            return root.openPath(String(item.folder_path || ""))
+        if (action === "select_report") {
+            var selected = root.selectReportPrintout(String(item.primary_path || ""))
+            if (selected)
+                root.showWorkflow(4)
+            return selected
+        }
+        if (action === "rebuild") {
+            var kind = String(item.kind || "")
+            if (kind === "dictionary")
+                return root.runJob("dictionary_build", root.dictionaryValues())
+            if (kind === "class_printout") {
+                var values = root.classPrintoutValues()
+                values.force_class_printouts = true
+                return root.runJob("class_printouts", values)
+            }
+        }
+        return false
     }
 
     function pathForStageKey(key) {
@@ -852,6 +986,209 @@ ApplicationWindow {
         }
     }
 
+    component SidebarReviewButton: Button {
+        id: control
+        Layout.fillWidth: true
+        Layout.preferredHeight: root.controlHeight
+        font.family: root.uiFontFamily
+        font.pixelSize: root.fontSizeBody
+        font.weight: root.fontWeightBold
+        onClicked: root.showReview()
+        background: Rectangle {
+            color: root.activePage === "review" ? root.colorActiveBg : root.colorControlBg
+            border.color: root.colorInk
+            border.width: root.activePage === "review" ? 2 : 1
+            radius: 0
+        }
+        contentItem: RowLayout {
+            anchors.fill: parent
+            anchors.margins: root.scaled(10)
+            spacing: root.scaled(10)
+            WIcon {
+                iconName: "clipboard-check"
+                inverted: root.activePage === "review" && root.activeIconInverted()
+            }
+            Text {
+                text: root.tr("review.title")
+                color: root.activePage === "review" ? root.activeTextColor() : root.colorInk
+                font: control.font
+                verticalAlignment: Text.AlignVCenter
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    component ReviewCounter: Rectangle {
+        id: counter
+        property string label: ""
+        property int value: 0
+        property string status: "ready"
+        Layout.fillWidth: true
+        implicitHeight: root.scaled(64)
+        color: root.statusTone(status)
+        border.color: root.colorInk
+        border.width: 1
+        radius: 0
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: root.scaled(10)
+            spacing: root.scaled(4)
+            Text {
+                text: String(counter.value)
+                color: root.statusInk(counter.status)
+                font.family: root.uiFontFamily
+                font.pixelSize: root.fontSizeBrand
+                font.weight: root.fontWeightBold
+                horizontalAlignment: Text.AlignHCenter
+                Layout.fillWidth: true
+            }
+            Text {
+                text: counter.label
+                color: root.statusInk(counter.status)
+                font.family: root.uiFontFamily
+                font.pixelSize: root.fontSizeTiny
+                font.weight: root.fontWeightBold
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+        }
+    }
+
+    component ReviewMetricPill: Rectangle {
+        id: metricPill
+        property string label: ""
+        property string value: ""
+        implicitWidth: metricText.implicitWidth + root.scaled(16)
+        implicitHeight: root.scaled(26)
+        color: root.colorMutedBg
+        border.color: root.colorInk
+        border.width: 1
+        radius: 0
+        Text {
+            id: metricText
+            anchors.centerIn: parent
+            text: metricPill.label + ": " + metricPill.value
+            color: root.colorInkSoft
+            font.family: root.uiFontFamily
+            font.pixelSize: root.fontSizeTiny
+            font.weight: root.fontWeightBold
+        }
+    }
+
+    component ReviewRow: Rectangle {
+        id: reviewRow
+        property var item: ({})
+        Layout.fillWidth: true
+        implicitHeight: Math.max(root.scaled(74), rowBody.implicitHeight + root.scaled(22))
+        color: root.colorControlBg
+        border.color: root.colorInk
+        border.width: 1
+        radius: 0
+        RowLayout {
+            id: rowBody
+            anchors.fill: parent
+            anchors.margins: root.scaled(11)
+            spacing: root.scaled(12)
+            WIcon {
+                iconName: root.reviewKindIcon(String(reviewRow.item.kind || ""))
+                iconSize: root.scaled(20)
+                Layout.alignment: Qt.AlignTop
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: root.scaled(5)
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: root.scaled(8)
+                    Text {
+                        text: {
+                            var kind = String(reviewRow.item.kind || "")
+                            if (kind === "dictionary" || kind === "live_lexicon")
+                                return root.reviewKindLabel(kind)
+                            return String(reviewRow.item.title || "")
+                        }
+                        color: root.colorInk
+                        font.family: root.uiFontFamily
+                        font.pixelSize: root.fontSizeBody
+                        font.weight: root.fontWeightBold
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                    StatusPill {
+                        status: String(reviewRow.item.status || "ready")
+                        label: root.statusLabel(String(reviewRow.item.status || "ready"))
+                    }
+                }
+                Text {
+                    text: root.reviewKindLabel(String(reviewRow.item.kind || "")) + " · " + String(reviewRow.item.subtitle || "")
+                    color: root.colorTextMuted
+                    font.family: root.uiFontFamily
+                    font.pixelSize: root.fontSizeTiny
+                    font.weight: root.fontWeightRegular
+                    elide: Text.ElideMiddle
+                    Layout.fillWidth: true
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: root.scaled(6)
+                    Repeater {
+                        model: reviewRow.item.metrics || []
+                        delegate: ReviewMetricPill {
+                            label: root.tr("review.metric." + String(modelData.label || ""))
+                            value: String(modelData.value || "")
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                spacing: root.scaled(6)
+                Layout.alignment: Qt.AlignVCenter
+                WButton {
+                    visible: root.reviewActionAvailable(reviewRow.item, "open")
+                    iconName: "file-text"
+                    iconOnly: true
+                    toolTipText: root.tr("review.action.open")
+                    Layout.preferredWidth: root.iconButtonWidth
+                    Layout.minimumWidth: root.iconButtonWidth
+                    Layout.maximumWidth: root.iconButtonWidth
+                    onClicked: root.runReviewAction(reviewRow.item, "open")
+                }
+                WButton {
+                    visible: root.reviewActionAvailable(reviewRow.item, "open_folder")
+                    iconName: "folder-open"
+                    iconOnly: true
+                    toolTipText: root.tr("review.action.open_folder")
+                    Layout.preferredWidth: root.iconButtonWidth
+                    Layout.minimumWidth: root.iconButtonWidth
+                    Layout.maximumWidth: root.iconButtonWidth
+                    onClicked: root.runReviewAction(reviewRow.item, "open_folder")
+                }
+                WButton {
+                    visible: root.reviewActionAvailable(reviewRow.item, "select_report")
+                    iconName: "clipboard-list"
+                    iconOnly: true
+                    toolTipText: root.tr("review.action.select_report")
+                    Layout.preferredWidth: root.iconButtonWidth
+                    Layout.minimumWidth: root.iconButtonWidth
+                    Layout.maximumWidth: root.iconButtonWidth
+                    onClicked: root.runReviewAction(reviewRow.item, "select_report")
+                }
+                WButton {
+                    visible: root.reviewActionAvailable(reviewRow.item, "rebuild")
+                    iconName: "refresh-cw"
+                    iconOnly: true
+                    toolTipText: root.tr("review.action.rebuild")
+                    Layout.preferredWidth: root.iconButtonWidth
+                    Layout.minimumWidth: root.iconButtonWidth
+                    Layout.maximumWidth: root.iconButtonWidth
+                    onClicked: root.runReviewAction(reviewRow.item, "rebuild")
+                }
+            }
+        }
+    }
+
     component Panel: Item {
         id: panel
         default property alias content: panelBody.data
@@ -987,6 +1324,10 @@ ApplicationWindow {
 
                         Item { Layout.preferredHeight: root.scaled(4) }
 
+                        SidebarReviewButton {}
+
+                        Item { Layout.preferredHeight: root.scaled(4) }
+
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: runtimeBody.implicitHeight + root.scaled(28)
@@ -1108,7 +1449,7 @@ ApplicationWindow {
                 id: mainPageStack
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                currentIndex: root.activePage === "settings" ? 1 : 0
+                currentIndex: root.activePage === "settings" ? 2 : (root.activePage === "review" ? 1 : 0)
 
                 ScrollView {
                     id: mainScroll
@@ -1427,6 +1768,156 @@ ApplicationWindow {
                     }
                 }
             }
+
+                ScrollView {
+                    id: reviewScroll
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    leftPadding: root.scaled(24)
+                    rightPadding: root.scaled(24)
+                    topPadding: root.scaled(24)
+                    bottomPadding: root.scaled(24)
+                    contentWidth: availableWidth
+
+                    ColumnLayout {
+                        width: Math.min(reviewScroll.availableWidth, root.scaled(1080))
+                        x: Math.max(0, (reviewScroll.availableWidth - width) / 2)
+                        spacing: root.scaled(24)
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: root.scaled(12)
+                            WIcon {
+                                iconName: "clipboard-check"
+                                iconSize: root.scaled(20)
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(6)
+                                Text {
+                                    text: root.tr("review.title")
+                                    color: root.colorInk
+                                    font.family: root.uiFontFamily
+                                    font.pixelSize: root.fontSizeSection
+                                    font.weight: root.fontWeightBold
+                                    Layout.fillWidth: true
+                                }
+                                BodyText {
+                                    text: root.tr("review.summary_detail")
+                                    color: root.colorInkSoft
+                                    Layout.fillWidth: true
+                                }
+                            }
+                            WButton {
+                                text: root.tr("button.refresh_status")
+                                iconName: "refresh-cw"
+                                Layout.preferredWidth: root.scaled(150)
+                                onClicked: root.saveSettings(root.workflowValues())
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 5
+                            columnSpacing: root.scaled(10)
+                            rowSpacing: root.scaled(10)
+                            ReviewCounter {
+                                label: root.tr("review.counter.needs_review")
+                                value: root.reviewSummaryValue("needs_review")
+                                status: "needs_review"
+                            }
+                            ReviewCounter {
+                                label: root.tr("review.counter.failed")
+                                value: root.reviewSummaryValue("failed")
+                                status: "failed"
+                            }
+                            ReviewCounter {
+                                label: root.tr("review.counter.ready")
+                                value: root.reviewSummaryValue("ready")
+                                status: "ready"
+                            }
+                            ReviewCounter {
+                                label: root.tr("review.counter.archived")
+                                value: root.reviewSummaryValue("archived_handouts")
+                                status: "ready"
+                            }
+                            ReviewCounter {
+                                label: root.tr("review.counter.reports")
+                                value: root.reviewSummaryValue("reports")
+                                status: "ready"
+                            }
+                        }
+
+                        Panel {
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(14)
+                                LabelText { text: root.tr("review.queue.title") }
+                                BodyText {
+                                    visible: root.reviewItems.length === 0
+                                    text: root.tr("review.empty")
+                                    color: root.colorTextMuted
+                                    Layout.fillWidth: true
+                                }
+                                LabelText {
+                                    visible: root.reviewMainItemsFor("failed").length > 0
+                                    text: root.tr("review.group.failed")
+                                    font.pixelSize: root.fontSizeBody
+                                }
+                                Repeater {
+                                    model: root.reviewMainItemsFor("failed")
+                                    delegate: ReviewRow { item: modelData }
+                                }
+                                LabelText {
+                                    visible: root.reviewMainItemsFor("needs_review").length > 0
+                                    text: root.tr("review.group.needs_review")
+                                    font.pixelSize: root.fontSizeBody
+                                }
+                                Repeater {
+                                    model: root.reviewMainItemsFor("needs_review")
+                                    delegate: ReviewRow { item: modelData }
+                                }
+                                LabelText {
+                                    visible: root.reviewMainItemsFor("missing").length > 0
+                                    text: root.tr("review.group.missing")
+                                    font.pixelSize: root.fontSizeBody
+                                }
+                                Repeater {
+                                    model: root.reviewMainItemsFor("missing")
+                                    delegate: ReviewRow { item: modelData }
+                                }
+                                LabelText {
+                                    visible: root.reviewRecentItems().length > 0
+                                    text: root.tr("review.group.ready")
+                                    font.pixelSize: root.fontSizeBody
+                                }
+                                Repeater {
+                                    model: root.reviewRecentItems()
+                                    delegate: ReviewRow { item: modelData }
+                                }
+                            }
+                        }
+
+                        Panel {
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: root.scaled(14)
+                                LabelText { text: root.tr("review.secondary.title") }
+                                BodyText {
+                                    text: root.tr("review.secondary.detail")
+                                    color: root.colorTextMuted
+                                    Layout.fillWidth: true
+                                }
+                                Repeater {
+                                    model: root.reviewSecondaryItems()
+                                    delegate: ReviewRow { item: modelData }
+                                }
+                            }
+                        }
+                    }
+                }
 
                 ScrollView {
                     id: settingsScroll
