@@ -221,7 +221,7 @@ uv run wordbyword --parse-source-materials --paddleocr-vl-device cpu
 uv run wordbyword --parse-source-materials --paddleocr-vl-sidecar-env .venv-paddleocr-vl --paddleocr-vl-device cpu
 uv run wordbyword --parse-source-materials --skip-pdf-parse
 uv run wordbyword --parse-source-materials --pdf-render-dpi 180
-uv run wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.5
+uv run wordbyword --parse-source-materials --paddleocr-vl-rec-backend vllm-server --paddleocr-vl-rec-server-url http://localhost:8000/v1 --paddleocr-vl-rec-api-model-name PaddlePaddle/PaddleOCR-VL-1.6
 ```
 
 Parse output per source:

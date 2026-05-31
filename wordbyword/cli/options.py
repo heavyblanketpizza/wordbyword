@@ -364,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--paddleocr-vl-rec-api-model-name",
         default=None,
-        help='Optional VLM recognition service model name, for example "PaddlePaddle/PaddleOCR-VL-1.5".',
+        help='Optional VLM recognition service model name, for example "PaddlePaddle/PaddleOCR-VL-1.6".',
     )
     parser.add_argument(
         "--paddleocr-vl-rec-api-key",
