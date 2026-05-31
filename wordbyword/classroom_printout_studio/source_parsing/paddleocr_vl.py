@@ -20,6 +20,9 @@ from wordbyword._json_io import read_json_object_or_empty as read_json_object_or
 from wordbyword._json_io import write_json_atomic as write_json_atomic_file
 
 _PIPELINE_CACHE: dict[tuple[tuple[str, Any], ...], Any] = {}
+PADDLEOCR_VL_MODEL_VERSION = "1.6"
+PADDLEOCR_VL_PIPELINE_VERSION = f"v{PADDLEOCR_VL_MODEL_VERSION}"
+PADDLEOCR_VL_PARSER_NAME = f"paddleocr-vl-{PADDLEOCR_VL_MODEL_VERSION}"
 
 
 @dataclass(frozen=True)
@@ -696,7 +699,7 @@ def _load_paddleocr_vl_class() -> Any:
 def _paddle_init_kwargs(settings: PaddleOCRVLSettings) -> dict[str, Any]:
     return _without_none(
         {
-            "pipeline_version": "v1.5",
+            "pipeline_version": PADDLEOCR_VL_PIPELINE_VERSION,
             "device": settings.device,
             "engine": settings.engine,
             "vl_rec_backend": settings.vl_rec_backend,

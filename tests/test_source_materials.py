@@ -73,7 +73,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(manifest["schema_version"], "wordbyword.source_material_workspace.v1")
             self.assertEqual(manifest["source"]["filename"], "sample.pdf")
             self.assertEqual(manifest["parser"]["status"], "parsed")
-            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.5")
+            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.6")
             self.assertRegex(manifest["parser"]["settings"]["settings_signature"], r"^[a-f0-9]{64}$")
             self.assertEqual(manifest["files"]["content_markdown"], "content.md")
             self.assertEqual(manifest["files"]["quality_report_json"], "quality_report.json")
@@ -93,7 +93,7 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
             self.assertEqual(quality["page_render_count"], 1)
             self.assertGreater(quality["markdown_chars"], 0)
             self.assertTrue((bundle.output_dir / "assets" / "page-0001.png").is_file())
-            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.5")
+            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.6")
             self.assertEqual(len(FakePaddleOCRVL.predict_input), 1)
 
     def test_paddleocr_vl_pdf_parser_writes_page_image_parse_outputs(self) -> None:
@@ -116,10 +116,10 @@ class SourceMaterialWorkspaceTest(unittest.TestCase):
                 )
 
             manifest = json.loads(bundle.manifest_path.read_text(encoding="utf-8"))
-            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.5")
+            self.assertEqual(manifest["parser"]["name"], "paddleocr-vl-1.6")
             self.assertEqual(manifest["parser"]["version"], "3.3.0")
             self.assertEqual(manifest["parser"]["settings"]["device"], "cpu")
-            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.5")
+            self.assertEqual(FakePaddleOCRVL.init_kwargs["pipeline_version"], "v1.6")
             self.assertEqual(FakePaddleOCRVL.init_kwargs["device"], "cpu")
             self.assertEqual(len(FakePaddleOCRVL.predict_input), 1)
             self.assertTrue(str(FakePaddleOCRVL.predict_input[0]).endswith("page-0001.png"))

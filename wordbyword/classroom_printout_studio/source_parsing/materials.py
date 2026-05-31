@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from wordbyword._json_io import write_json
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import (
+    PADDLEOCR_VL_PARSER_NAME,
+    PADDLEOCR_VL_PIPELINE_VERSION,
     PaddleOCRVLInterruptedError,
     PaddleOCRVLPageResult,
     PaddleOCRVLProgress,
@@ -930,7 +932,7 @@ def _parser_metadata(
     )
     return ParserMetadata(
         status=status,
-        name="paddleocr-vl-1.5" if status == "parsed" else "",
+        name=PADDLEOCR_VL_PARSER_NAME if status == "parsed" else "",
         version="",
         reason=reason,
         parsed_at=datetime.now(timezone.utc).isoformat() if status == "parsed" else None,
@@ -939,7 +941,7 @@ def _parser_metadata(
             "page_image_inputs": status == "parsed",
             "render_dpi": render_dpi,
             "image_workflow": "PDF pages are rendered to PNG before PaddleOCR-VL inference.",
-            "pipeline_version": "v1.5",
+            "pipeline_version": PADDLEOCR_VL_PIPELINE_VERSION,
             "asset_layout": "flat assets/ folder per source material",
             "settings_signature": parser_settings_signature(settings_payload),
             **({key: value for key, value in asdict(settings).items() if value is not None} if status == "parsed" else {}),
@@ -956,9 +958,9 @@ def parser_settings_payload(
     settings = paddleocr_vl_settings or PaddleOCRVLSettings()
     return {
         "status": status,
-        "parser_name": "paddleocr-vl-1.5" if status == "parsed" else "",
+        "parser_name": PADDLEOCR_VL_PARSER_NAME if status == "parsed" else "",
         "render_dpi": render_dpi,
-        "pipeline_version": "v1.5",
+        "pipeline_version": PADDLEOCR_VL_PIPELINE_VERSION,
         "asset_layout": "flat assets/ folder per source material",
         "paddleocr_vl_settings": {key: value for key, value in asdict(settings).items() if value is not None}
         if status == "parsed"
