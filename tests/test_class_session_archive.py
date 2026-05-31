@@ -824,8 +824,8 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", InteractiveInput("y\n")),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main([
                     "--resolve-archive-duplicates",
@@ -1022,8 +1022,8 @@ class ClassSessionArchiveDuplicateResolverTest(unittest.TestCase):
                 patch("sys.stdout", stdout),
                 patch("sys.stderr", stderr),
                 patch("sys.stdin", io.StringIO("")),
-                patch("wordbyword.cli.app.build_provider_client", return_value=client),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=client),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main([
                     "--resolve-archive-duplicates",
@@ -1669,10 +1669,10 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.build_provider_client", return_value=RecordingArchiveClient({})),
-            patch("wordbyword.cli.app.rename_class_session_archive") as mock_rename,
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+            patch("wordbyword.application.use_cases.build_provider_client", return_value=RecordingArchiveClient({})),
+            patch("wordbyword.application.use_cases.rename_class_session_archive") as mock_rename,
+            patch("wordbyword.application.use_cases.unload_model_if_supported"),
         ):
             mock_rename.return_value = FakeRenameResult()
 
@@ -1743,8 +1743,8 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.build_usage_signals") as mock_build,
+            patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+            patch("wordbyword.application.use_cases.build_usage_signals") as mock_build,
         ):
             mock_build.return_value = FakeUsageSignalBuildResult()
 
@@ -1758,9 +1758,8 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.build_usage_signals") as mock_build,
-            patch("wordbyword.cli.app.emit_usage_signal_summary", return_value=True) as mock_summary,
+            patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+            patch("wordbyword.application.use_cases.build_usage_signals") as mock_build,
         ):
             mock_build.return_value = FakeUsageSignalBuildResult()
 
@@ -1768,15 +1767,14 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
-        mock_summary.assert_called_once_with(mock_build.return_value)
-        self.assertNotIn("usage signals built", stdout.getvalue())
+        self.assertIn("usage signals built", stdout.getvalue())
 
     def test_main_with_live_lexicon_update_skips_pipeline(self) -> None:
         stdout = io.StringIO()
         with (
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.update_live_lexicon") as mock_update,
+            patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+            patch("wordbyword.application.use_cases.update_live_lexicon") as mock_update,
         ):
             mock_update.return_value = FakeLiveLexiconUpdateResult()
 
@@ -1790,9 +1788,8 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
         stdout = io.StringIO()
         with (
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.run_pipeline") as mock_pipeline,
-            patch("wordbyword.cli.app.update_live_lexicon") as mock_update,
-            patch("wordbyword.cli.app.emit_live_lexicon_summary", return_value=True) as mock_summary,
+            patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline,
+            patch("wordbyword.application.use_cases.update_live_lexicon") as mock_update,
         ):
             mock_update.return_value = FakeLiveLexiconUpdateResult()
 
@@ -1800,8 +1797,7 @@ class ClassSessionArchiveCliTest(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         mock_pipeline.assert_not_called()
-        mock_summary.assert_called_once_with(mock_update.return_value)
-        self.assertNotIn("live lexicon updated", stdout.getvalue())
+        self.assertIn("live lexicon updated", stdout.getvalue())
 
 
 class RecordingArchiveClient:

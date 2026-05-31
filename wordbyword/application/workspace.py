@@ -17,7 +17,12 @@ from wordbyword.dictionary_build.llm import (
     normalize_provider_name,
     provider_model_from_env,
 )
-from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
+from wordbyword.dictionary_build.artifacts import (
+    ArtifactId,
+    artifact_event_name as _artifact_event_name,
+    artifact_filename as _artifact_filename,
+    artifact_path,
+)
 from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.grade_profiles import (
     CLASS_PARSED_SOURCE_ROOT,
@@ -64,6 +69,14 @@ class LLMRuntimeConfig:
     provider: ProviderName
     model: str
     base_url: str | None
+
+
+def artifact_event_name(artifact_id: ArtifactId) -> str:
+    return _artifact_event_name(artifact_id)
+
+
+def artifact_filename(artifact_id: ArtifactId) -> str:
+    return _artifact_filename(artifact_id)
 
 
 def llm_runtime_config(

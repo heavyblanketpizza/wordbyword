@@ -11,7 +11,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from wordbyword.after_class_reports import AfterClassReportProgress
-from wordbyword.application.commands import build_cli_request
+from wordbyword.application.commands import (
+    CommandResult,
+    DictionarySourceDuplicatesRequest,
+    DictionarySourceRenameRequest,
+)
 from wordbyword.cli import (
     DEFAULT_INPUT_DIR,
     DEFAULT_REFERENCE_DICTIONARY_PATH,
@@ -29,6 +33,7 @@ from wordbyword.cli import (
     source_parse_options_from_args,
     validate_args,
 )
+from wordbyword.cli.request_builder import build_cli_request
 from wordbyword.dictionary_build.pipeline import PipelineUsageError
 from wordbyword.dictionary_build.example_generation import GeneratedExampleAttemptSummary
 from wordbyword.dictionary_build.llm import CompletionResult, LLMConfigurationError
@@ -39,6 +44,7 @@ from wordbyword.classroom_printout_studio.class_printout_workflow import class_p
 from wordbyword.classroom_printout_studio.class_printing.printable import PrintableProgress
 from wordbyword.classroom_printout_studio.source_parsing.materials import (
     DEFAULT_SOURCE_MATERIAL_ROOT,
+    SourceMaterialProgress,
     parser_settings_signature_for_source,
 )
 from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
@@ -366,7 +372,7 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stdout", io.StringIO()),
             patch("sys.stderr", io.StringIO()),
-            patch("wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow", return_value=result) as workflow,
+            patch("wordbyword.application.use_cases.class_printout_workflow.build_class_printouts_workflow", return_value=result) as workflow,
         ):
             exit_code = main(["--build-class-printouts", "sources", "--target-grade", "grade7", "--skip-pdf-parse"])
 
@@ -387,7 +393,7 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stdout", io.StringIO()),
             patch("sys.stderr", io.StringIO()),
-            patch("wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow", return_value=result) as custom_workflow,
+            patch("wordbyword.application.use_cases.class_printout_workflow.build_class_printouts_workflow", return_value=result) as custom_workflow,
         ):
             main(
                 [
@@ -438,7 +444,7 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stdout", io.StringIO()),
             patch("sys.stderr", io.StringIO()),
-            patch("wordbyword.cli.app.parse_source_materials", return_value=parse_result) as parse_many,
+            patch("wordbyword.application.use_cases.parse_source_materials", return_value=parse_result) as parse_many,
         ):
             self.assertEqual(main(["--parse-source-materials", "--target-grade", "grade1", "--skip-pdf-parse"]), 0)
 
@@ -451,7 +457,7 @@ class ParserDefaultsTest(unittest.TestCase):
             patch("sys.stdout", io.StringIO()),
             patch("sys.stderr", io.StringIO()),
             patch(
-                "wordbyword.cli.app.class_printout_workflow.build_class_printouts_workflow",
+                "wordbyword.application.use_cases.class_printout_workflow.build_class_printouts_workflow",
                 return_value=workflow_result,
             ) as workflow,
         ):
@@ -473,7 +479,7 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stdout", io.StringIO()),
             patch("sys.stderr", io.StringIO()),
-            patch("wordbyword.cli.app.parse_source_materials", return_value=parse_result) as parse_many,
+            patch("wordbyword.application.use_cases.parse_source_materials", return_value=parse_result) as parse_many,
         ):
             self.assertEqual(
                 main(
@@ -503,7 +509,7 @@ class ParserDefaultsTest(unittest.TestCase):
         )
         with (
             patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.app.build_usage_signals", return_value=usage_result) as usage,
+            patch("wordbyword.application.use_cases.build_usage_signals", return_value=usage_result) as usage,
         ):
             self.assertEqual(main(["--build-usage-signals", "--target-grade", "grade7"]), 0)
 
@@ -534,7 +540,7 @@ class ParserDefaultsTest(unittest.TestCase):
         )
         with (
             patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.app.update_live_lexicon", return_value=live_result) as live,
+            patch("wordbyword.application.use_cases.update_live_lexicon", return_value=live_result) as live,
         ):
             self.assertEqual(main(["--update-live-lexicon", "--target-grade", "grade7"]), 0)
 
@@ -700,10 +706,16 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch("sys.stderr", stderr),
             patch("sys.stdout", io.StringIO()),
-            patch("wordbyword.cli.app.parse_source_materials", side_effect=KeyboardInterrupt),
+            patch("wordbyword.application.use_cases.parse_source_materials", side_effect=KeyboardInterrupt),
         ):
             exit_code = main(
-                ["--parse-source-materials", "classroom-printout-studio/class-source-materials", "--target-grade", "grade1"]
+                [
+                    "--parse-source-materials",
+                    "classroom-printout-studio/class-source-materials",
+                    "--target-grade",
+                    "grade1",
+                    "--skip-pdf-parse",
+                ]
             )
 
         self.assertEqual(exit_code, 130)
@@ -772,14 +784,14 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=parse_side_effect) as parse_material,
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=parse_side_effect) as parse_material,
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=rewrite_side_effect,
                 ) as rewrite_material,
-                patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect) as print_material,
-                patch("wordbyword.cli.app.build_provider_client", side_effect=clients),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.print_class_material", side_effect=print_side_effect) as print_material,
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=clients),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main(args)
 
@@ -814,10 +826,10 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material") as second_parse,
-                patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material") as second_rewrite,
-                patch("wordbyword.cli.app.print_class_material") as second_print,
-                patch("wordbyword.cli.app.build_provider_client") as second_client,
+                patch("wordbyword.application.use_cases.parse_source_material") as second_parse,
+                patch("wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material") as second_rewrite,
+                patch("wordbyword.application.use_cases.print_class_material") as second_print,
+                patch("wordbyword.application.use_cases.build_provider_client") as second_client,
             ):
                 second_exit_code = main(args)
 
@@ -847,14 +859,14 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=write_parsed_class_printout_bundle),
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     return_value=rewrite_output,
                 ),
-                patch("wordbyword.cli.app.print_class_material") as print_material,
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.print_class_material") as print_material,
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main(
                     [
@@ -890,9 +902,9 @@ class ParserDefaultsTest(unittest.TestCase):
             with (
                 patch("sys.stdout", io.StringIO()),
                 patch("sys.stderr", stderr),
-                patch("wordbyword.cli.app.parse_source_material") as parse_material,
-                patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material") as rewrite_material,
-                patch("wordbyword.cli.app.print_class_material") as print_material,
+                patch("wordbyword.application.use_cases.parse_source_material") as parse_material,
+                patch("wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material") as rewrite_material,
+                patch("wordbyword.application.use_cases.print_class_material") as print_material,
             ):
                 exit_code = main(
                     [
@@ -944,17 +956,17 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=write_parsed_class_printout_bundle),
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ),
                 patch(
-                    "wordbyword.cli.app.print_class_material",
+                    "wordbyword.application.use_cases.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ),
-                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=[object(), object()]),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 self.assertEqual(main(args), 0)
 
@@ -962,17 +974,17 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material") as parse_material,
+                patch("wordbyword.application.use_cases.parse_source_material") as parse_material,
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ) as rewrite_material,
                 patch(
-                    "wordbyword.cli.app.print_class_material",
+                    "wordbyword.application.use_cases.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ) as print_material,
-                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=[object(), object()]),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 self.assertEqual(main(args), 0)
 
@@ -1011,39 +1023,84 @@ class ParserDefaultsTest(unittest.TestCase):
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=write_parsed_class_printout_bundle),
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ),
                 patch(
-                    "wordbyword.cli.app.print_class_material",
+                    "wordbyword.application.use_cases.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ),
-                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=[object(), object()]),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 self.assertEqual(main(args), 0)
 
             with (
                 patch("sys.stdout", io.StringIO()),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle) as parse_material,
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=write_parsed_class_printout_bundle) as parse_material,
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ) as rewrite_material,
                 patch(
-                    "wordbyword.cli.app.print_class_material",
+                    "wordbyword.application.use_cases.print_class_material",
                     side_effect=successful_print_side_effect(print_root, {"lesson": source_sha}),
                 ) as print_material,
-                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=[object(), object()]),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 self.assertEqual(main([*args, "--force-class-printouts"]), 0)
 
             parse_material.assert_called_once()
             rewrite_material.assert_called_once()
             print_material.assert_called_once()
+
+    def test_interactive_source_parse_output_uses_styled_terminal_ui(self) -> None:
+        stdout = TtyStringIO()
+
+        def parse_side_effect(source_dir: Path, **kwargs: object) -> SimpleNamespace:
+            progress = kwargs["progress"]
+            assert callable(progress)
+            progress(
+                SourceMaterialProgress(
+                    phase="ocr",
+                    source_path=source_dir / "lesson.pdf",
+                    parser="paddleocr-vl",
+                    detail="recognizing page 1/2",
+                    completed_pages=1,
+                    total_pages=2,
+                )
+            )
+            return SimpleNamespace(
+                source_dir=source_dir,
+                output_root=kwargs["output_root"],
+                source_paths=[source_dir / "lesson.pdf"],
+                bundles=[],
+            )
+
+        with (
+            patch.dict("os.environ", {"TERM": "xterm-256color"}),
+            patch("sys.stdout", stdout),
+            patch("wordbyword.application.use_cases.parse_source_materials", side_effect=parse_side_effect),
+        ):
+            exit_code = main(
+                [
+                    "--target-grade",
+                    "grade1",
+                    "--parse-source-materials",
+                    "sources",
+                    "--skip-pdf-parse",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        rendered = stdout.getvalue()
+        self.assertIn("PADDLEOCR", rendered)
+        self.assertIn("pages 1/2", rendered)
+        self.assertIn("50.0%", rendered)
+        self.assertNotIn("wordbyword: source/OCR:", rendered)
 
     def test_interactive_source_rewrite_output_uses_styled_terminal_ui(self) -> None:
         stdout = TtyStringIO()
@@ -1070,9 +1127,9 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material", side_effect=rewrite_side_effect),
-            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            patch("wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material", side_effect=rewrite_side_effect),
+            patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+            patch("wordbyword.application.use_cases.unload_model_if_supported"),
         ):
             exit_code = main(
                 [
@@ -1116,9 +1173,9 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
-            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            patch("wordbyword.application.use_cases.print_class_material", side_effect=print_side_effect),
+            patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+            patch("wordbyword.application.use_cases.unload_model_if_supported"),
         ):
             exit_code = main(["--target-grade", "grade1", "--print-class-material", "/tmp/rewritten/lesson"])
 
@@ -1150,9 +1207,9 @@ class ParserDefaultsTest(unittest.TestCase):
         with (
             patch.dict("os.environ", {"TERM": "xterm-256color"}),
             patch("sys.stdout", stdout),
-            patch("wordbyword.cli.app.print_class_materials", return_value=outputs),
-            patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-            patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+            patch("wordbyword.application.use_cases.print_class_materials", return_value=outputs),
+            patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+            patch("wordbyword.application.use_cases.unload_model_if_supported"),
         ):
             exit_code = main(["--target-grade", "grade1", "--print-class-materials", "/tmp/rewritten"])
 
@@ -1196,14 +1253,14 @@ class ParserDefaultsTest(unittest.TestCase):
             with (
                 patch.dict("os.environ", {"TERM": "xterm-256color"}),
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.parse_source_material", side_effect=write_parsed_class_printout_bundle),
+                patch("wordbyword.application.use_cases.parse_source_material", side_effect=write_parsed_class_printout_bundle),
                 patch(
-                    "wordbyword.cli.app.rewrite_vocabulary_guided_parsed_source_material",
+                    "wordbyword.application.use_cases.rewrite_vocabulary_guided_source_material",
                     side_effect=successful_rewrite_side_effect(rewrite_root),
                 ),
-                patch("wordbyword.cli.app.print_class_material", side_effect=print_side_effect),
-                patch("wordbyword.cli.app.build_provider_client", side_effect=[object(), object()]),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.print_class_material", side_effect=print_side_effect),
+                patch("wordbyword.application.use_cases.build_provider_client", side_effect=[object(), object()]),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main(
                     [
@@ -1268,9 +1325,9 @@ class ParserDefaultsTest(unittest.TestCase):
             with (
                 patch.dict("os.environ", {"TERM": "xterm-256color"}),
                 patch("sys.stdout", stdout),
-                patch("wordbyword.cli.app.generate_after_class_reading_report", side_effect=generate_side_effect),
-                patch("wordbyword.cli.app.build_provider_client", return_value=object()),
-                patch("wordbyword.cli.app.warn_if_model_unload_fails"),
+                patch("wordbyword.application.use_cases.generate_after_class_reading_report", side_effect=generate_side_effect),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=object()),
+                patch("wordbyword.application.use_cases.unload_model_if_supported"),
             ):
                 exit_code = main(["--target-grade", "grade1", "--generate-after-class-reading-report", str(source)])
 
@@ -1419,7 +1476,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             with (
                 patch("sys.stdout", io.StringIO()),
                 patch(
-                    "wordbyword.cli.app.build_resumable_dictionary",
+                    "wordbyword.application.use_cases.build_resumable_dictionary",
                     return_value=SimpleNamespace(pipeline_result=pipeline_result(output_dir)),
                 ) as build_dictionary,
             ):
@@ -1469,7 +1526,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
                 acquire_workspace_command_guard("external rewrite", workspace_root=root),
                 patch("wordbyword.cli.app.Path.cwd", return_value=root),
                 patch("sys.stderr", stderr),
-                patch("wordbyword.cli.app.build_resumable_dictionary") as build_dictionary,
+                patch("wordbyword.application.use_cases.build_resumable_dictionary") as build_dictionary,
             ):
                 exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
 
@@ -1482,16 +1539,16 @@ class BuildDictionaryCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             root = Path(workspace)
             jsonl_path = root / "dictionary.jsonl"
+            jsonl_path.write_text(json.dumps({"canonical_key": "물", "count": 1}, ensure_ascii=False) + "\n", encoding="utf-8")
 
             with (
                 acquire_workspace_command_guard("external rewrite", workspace_root=root),
                 patch("wordbyword.cli.app.Path.cwd", return_value=root),
-                patch("wordbyword.cli.app.show_distribution", return_value=0) as show_distribution_command,
+                patch("sys.stdout", io.StringIO()),
             ):
                 exit_code = main(["--show-distribution", str(jsonl_path)])
 
             self.assertEqual(exit_code, 0)
-            show_distribution_command.assert_called_once()
 
     def test_workspace_guard_releases_when_cli_command_raises(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -1517,7 +1574,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
             with (
                 patch("sys.stdout", io.StringIO()),
                 patch(
-                    "wordbyword.cli.app.build_resumable_dictionary",
+                    "wordbyword.application.use_cases.build_resumable_dictionary",
                     return_value=SimpleNamespace(pipeline_result=pipeline_result(output_dir)),
                 ) as prep_dictionary,
             ):
@@ -1557,7 +1614,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
     def test_build_dictionary_reports_resumable_builder_failure(self) -> None:
         stderr = io.StringIO()
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr), patch(
-            "wordbyword.cli.app.build_resumable_dictionary",
+            "wordbyword.application.use_cases.build_resumable_dictionary",
             side_effect=ValueError("bad saved artifact"),
         ):
             exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
@@ -1568,7 +1625,7 @@ class BuildDictionaryCliTest(unittest.TestCase):
     def test_build_dictionary_stops_on_unresolved_generated_example_failures(self) -> None:
         stderr = io.StringIO()
         with patch("sys.stdout", io.StringIO()), patch("sys.stderr", stderr), patch(
-            "wordbyword.cli.app.build_resumable_dictionary",
+            "wordbyword.application.use_cases.build_resumable_dictionary",
             side_effect=wordbyword_cli_unresolved_generated_example_failures(),
         ):
             exit_code = main(["--target-grade", "grade1", "--build-dictionary"])
@@ -1581,9 +1638,9 @@ class BuildDictionaryCliTest(unittest.TestCase):
 class DictionarySourceArchiveCliTest(unittest.TestCase):
     def test_main_routes_dictionary_source_rename(self) -> None:
         with patch("sys.stdout", io.StringIO()), patch(
-            "wordbyword.cli.app.rename_dictionary_source_archive_cli",
-            return_value=0,
-        ) as rename_cli:
+            "wordbyword.application.use_cases.run_request",
+            return_value=CommandResult(0, "complete", "renamed"),
+        ) as app_run_request:
             exit_code = main(
                 [
                     "--target-grade",
@@ -1599,24 +1656,30 @@ class DictionarySourceArchiveCliTest(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 0)
-        rename_cli.assert_called_once_with(
-            archive_root=Path("sources"),
-            model="gemma4:31b",
-            base_url="http://localhost:11434",
-            provider="ollama",
-            apply=True,
-            target_grade="grade1",
-        )
+        app_run_request.assert_called_once()
+        request = app_run_request.call_args.args[0]
+        self.assertIsInstance(request, DictionarySourceRenameRequest)
+        self.assertEqual(request.archive_root, Path("sources"))
+        self.assertEqual(request.model, "gemma4:31b")
+        self.assertEqual(request.base_url, "http://localhost:11434")
+        self.assertEqual(request.provider, "ollama")
+        self.assertTrue(request.apply)
+        self.assertEqual(request.target_grade, "grade1")
 
     def test_main_routes_dictionary_source_duplicate_resolution(self) -> None:
         with patch("sys.stdout", io.StringIO()), patch(
-            "wordbyword.cli.app.resolve_dictionary_source_duplicates_cli",
-            return_value=0,
-        ) as resolve_cli:
+            "wordbyword.application.use_cases.run_request",
+            return_value=CommandResult(0, "complete", "resolved"),
+        ) as app_run_request:
             exit_code = main(["--target-grade", "grade1", "--resolve-dictionary-source-duplicates", "sources", "--yes"])
 
         self.assertEqual(exit_code, 0)
-        resolve_cli.assert_called_once_with(archive_root=Path("sources"), yes=True, target_grade="grade1")
+        app_run_request.assert_called_once()
+        request = app_run_request.call_args.args[0]
+        self.assertIsInstance(request, DictionarySourceDuplicatesRequest)
+        self.assertEqual(request.archive_root, Path("sources"))
+        self.assertTrue(request.apply)
+        self.assertEqual(request.target_grade, "grade1")
 
 
 def wordbyword_cli_unresolved_generated_example_failures():
@@ -1797,7 +1860,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline:
                 exit_code = main(["--output", str(output_dir), "--show-distribution"])
 
             self.assertEqual(exit_code, 0)
@@ -1819,7 +1882,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline:
                 exit_code = main(["--output", str(output_dir), "--show-distribution"])
 
             self.assertEqual(exit_code, 0)
@@ -1839,7 +1902,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline:
                 exit_code = main(["--show-distribution", str(jsonl_path)])
 
             self.assertEqual(exit_code, 0)
@@ -1913,7 +1976,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline:
                 exit_code = main(["--target-grade", "grade1", "--link-cleaned-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
@@ -2020,7 +2083,7 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline:
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline:
                 exit_code = main(
                     [
                         "--target-grade",
@@ -2074,11 +2137,14 @@ class ShowDistributionCliTest(unittest.TestCase):
 
             stdout = io.StringIO()
             stderr = io.StringIO()
-            with patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+            with (
+                patch("sys.stdout", stdout),
+                patch("sys.stderr", stderr),
+                patch("wordbyword.application.use_cases.build_provider_client", return_value=GeneratedMeaningClient()),
+            ):
                 exit_code = generate_missing_meanings(
                     output_dir=output_dir,
                     model="gemma4:31b",
-                    generated_meaning_client=GeneratedMeaningClient(),
                 )
 
             self.assertEqual(exit_code, 0)
@@ -2126,8 +2192,8 @@ class ShowDistributionCliTest(unittest.TestCase):
             )
 
             stdout = io.StringIO()
-            with patch("sys.stdout", stdout), patch("wordbyword.cli.app.run_pipeline") as mock_pipeline, patch(
-                "wordbyword.cli.app.build_provider_client",
+            with patch("sys.stdout", stdout), patch("wordbyword.application.use_cases.build_resumable_dictionary") as mock_pipeline, patch(
+                "wordbyword.application.use_cases.build_provider_client",
                 return_value=GeneratedMeaningClient(),
             ):
                 exit_code = main(["--target-grade", "grade1", "--generate-missing-meanings", "--output", str(output_dir)])
@@ -2139,7 +2205,7 @@ class ShowDistributionCliTest(unittest.TestCase):
     def test_generate_missing_meanings_reports_client_configuration_errors(self) -> None:
         stderr = io.StringIO()
         with patch("sys.stderr", stderr), patch(
-            "wordbyword.cli.app.build_provider_client",
+            "wordbyword.application.use_cases.build_provider_client",
             side_effect=LLMConfigurationError("bad ollama config"),
         ):
             exit_code = generate_missing_meanings(
@@ -2154,7 +2220,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
+            with patch("wordbyword.application.use_cases.run_saved_dictionary_cleanup") as recovery:
                 exit_code = main(["--target-grade", "grade1", "--generate-missing-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)
@@ -2165,7 +2231,7 @@ class ShowDistributionCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             output_dir = Path(workspace)
 
-            with patch("wordbyword.cli.app.run_saved_dictionary_cleanup") as recovery:
+            with patch("wordbyword.application.use_cases.run_saved_dictionary_cleanup") as recovery:
                 exit_code = main(["--target-grade", "grade1", "--retry-generated-examples", "--output", str(output_dir)])
 
             self.assertEqual(exit_code, 0)

@@ -13,16 +13,17 @@ from unittest.mock import patch
 from wordbyword.application.commands import (
     ArchiveRenameRequest,
     CommandId,
+    CommandResult,
+    DictionaryBuildRequest,
     ShowDistributionRequest,
-    build_cli_request,
-    build_gui_request,
-    command_id_from_cli_args,
     command_spec,
-    gui_workflow_command_ids,
     registered_command_ids,
 )
-from wordbyword.cli import build_parser, main
+from wordbyword.application.use_cases import run_request
+from wordbyword.cli import build_parser
+from wordbyword.cli.request_builder import build_cli_request, command_id_from_cli_args
 from wordbyword.dictionary_build.pipeline import PipelineResult
+from wordbyword.gui.request_builder import build_gui_request, gui_workflow_command_ids
 
 
 class ApplicationCommandRegistryTests(unittest.TestCase):
@@ -114,6 +115,49 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_application_use_cases_do_not_import_adapters(self) -> None:
+        code = (
+            "import sys\n"
+            "import wordbyword.application.use_cases\n"
+            "unexpected = [name for name in ('wordbyword.cli.app', 'wordbyword.gui.workflows') if name in sys.modules]\n"
+            "if unexpected:\n"
+            "    raise SystemExit(', '.join(unexpected))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_cli_and_gui_adapters_do_not_import_domain_workflows(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        adapter_paths = [
+            project_root / "wordbyword" / "cli" / "app.py",
+            project_root / "wordbyword" / "gui" / "workflows.py",
+        ]
+        forbidden_prefixes = (
+            "wordbyword.after_class_reports",
+            "wordbyword.class_archive",
+            "wordbyword.classroom_printout_studio",
+            "wordbyword.dictionary_build",
+        )
+        offenders: list[tuple[Path, str]] = []
+        for path in adapter_paths:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module.startswith(forbidden_prefixes):
+                        offenders.append((path, node.module))
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith(forbidden_prefixes):
+                            offenders.append((path, alias.name))
+
+        self.assertEqual(offenders, [])
 
 
 class ApplicationCommandAdapterTests(unittest.TestCase):
@@ -210,6 +254,7 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                     "gemma-test",
                     "--pdf-render-dpi",
                     "180",
+                    "--skip-pdf-parse",
                     "--force-class-printouts",
                 ]
             )
@@ -225,7 +270,7 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                 "model": "gemma-test",
                 "base_url": "",
                 "force_class_printouts": True,
-                "skip_pdf_parse": False,
+                "skip_pdf_parse": True,
                 "pdf_render_dpi": "180",
                 "print_font_path": "",
                 "print_body_font_size": "",
@@ -259,8 +304,23 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
         self.assertIsInstance(gui_request, ArchiveRenameRequest)
         self.assertEqual(_without_command_id(cli_request), _without_command_id(gui_request))
 
-    def test_cli_app_patch_paths_still_drive_cli_execution(self) -> None:
-        with patch("wordbyword.cli.app.build_resumable_dictionary") as build_dictionary:
+    def test_run_request_dispatches_dictionary_build_to_application_handler(self) -> None:
+        request = DictionaryBuildRequest(
+            command_id=CommandId.DICTIONARY_BUILD,
+            target_grade="grade1",
+            input_dir=Path("input"),
+            output_dir=Path("out"),
+            reference_dictionary_path=Path("reference.jsonl"),
+            include_punctuation=False,
+            include_numbers=False,
+            model="gemma-test",
+            base_url=None,
+            force=False,
+            provider="ollama",
+            target_checkpoint="15",
+        )
+
+        with patch("wordbyword.application.use_cases.build_resumable_dictionary") as build_dictionary:
             build_dictionary.return_value = SimpleNamespace(
                 pipeline_result=PipelineResult(
                     documents=0,
@@ -274,43 +334,54 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                 statuses=(),
             )
 
-            exit_code = main(["--build-dictionary", "--target-grade", "grade1"])
+            result = run_request(request)
 
-        self.assertEqual(exit_code, 0)
+        self.assertEqual(result.exit_code, 0)
         self.assertTrue(build_dictionary.called)
 
-    def test_cli_run_immediate_command_uses_local_adapter_dispatcher(self) -> None:
+    def test_cli_run_immediate_command_delegates_to_application_boundary(self) -> None:
         from wordbyword.cli import app as cli_app
 
         parser = build_parser()
         args = parser.parse_args(["--show-distribution", "dictionary.jsonl"])
 
-        with patch("wordbyword.cli.app.run_cli_request", return_value=17) as run_request:
+        with patch(
+            "wordbyword.application.use_cases.run_request",
+            return_value=CommandResult(17, "failed", "missing", error="missing"),
+        ) as app_run_request:
             exit_code = cli_app.run_immediate_command(args)
 
         self.assertEqual(exit_code, 17)
-        run_request.assert_called_once()
-        self.assertIsInstance(run_request.call_args.args[0], ShowDistributionRequest)
+        app_run_request.assert_called_once()
+        self.assertIsInstance(app_run_request.call_args.args[0], ShowDistributionRequest)
 
-    def test_gui_run_workflow_uses_local_adapter_dispatcher(self) -> None:
+    def test_gui_run_workflow_delegates_to_application_boundary(self) -> None:
         from wordbyword.gui import workflows
 
-        request = object()
-        result = object()
+        request = ShowDistributionRequest(
+            command_id=CommandId.SHOW_DISTRIBUTION,
+            jsonl_path=Path("dictionary.jsonl"),
+            model="gemma-test",
+        )
 
         def emit(event: object) -> None:
             return None
 
         with (
             patch("wordbyword.gui.workflows.build_gui_request", return_value=request) as build_request,
-            patch("wordbyword.gui.workflows.run_gui_request", return_value=result) as run_request,
+            patch(
+                "wordbyword.application.use_cases.run_request",
+                return_value=CommandResult(0, "complete", "done"),
+            ) as app_run_request,
         ):
-            self.assertIs(workflows.run_workflow("dictionary_build", {"model": "gemma-test"}, emit), result)
+            result = workflows.run_workflow("dictionary_build", {"model": "gemma-test"}, emit)
 
         build_request.assert_called_once_with("dictionary_build", {"model": "gemma-test"})
-        run_request.assert_called_once_with(request, emit)
+        app_run_request.assert_called_once()
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.detail, "done")
 
-    def test_application_execution_wrappers_warn_and_forward(self) -> None:
+    def test_application_package_exports_run_request(self) -> None:
         import wordbyword.application as application
 
         request = ShowDistributionRequest(
@@ -319,35 +390,19 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
             model="gemma-test",
         )
 
-        with (
-            patch("wordbyword.cli.app.show_distribution", return_value=23) as show_distribution,
-            self.assertWarnsRegex(DeprecationWarning, "wordbyword.cli.app.run_cli_request"),
-        ):
-            self.assertEqual(application.run_cli_request(request), 23)
+        with patch(
+            "wordbyword.application.use_cases.show_distribution",
+            return_value=CommandResult(0, "complete", "ok"),
+        ) as show_distribution:
+            result = application.run_request(request)
 
-        show_distribution.assert_called_once_with(jsonl_path=Path("dictionary.jsonl"), model="gemma-test")
-
-    def test_use_case_execution_wrappers_warn_and_forward(self) -> None:
-        from wordbyword.application.use_cases import run_cli_request
-
-        request = ShowDistributionRequest(
-            command_id=CommandId.SHOW_DISTRIBUTION,
-            jsonl_path=Path("dictionary.jsonl"),
-            model="gemma-test",
-        )
-
-        with (
-            patch("wordbyword.cli.app.show_distribution", return_value=31) as show_distribution,
-            self.assertWarnsRegex(DeprecationWarning, "wordbyword.cli.app.run_cli_request"),
-        ):
-            self.assertEqual(run_cli_request(request), 31)
-
-        show_distribution.assert_called_once_with(jsonl_path=Path("dictionary.jsonl"), model="gemma-test")
+        self.assertEqual(result.exit_code, 0)
+        show_distribution.assert_called_once_with(request)
 
 
 def _without_command_id(request: object) -> dict[str, object]:
     return {
         field.name: getattr(request, field.name)
         for field in fields(request)
-        if field.name not in {"command_id", "raw_args", "raw_values"}
+        if field.name not in {"command_id"}
     }

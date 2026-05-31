@@ -4,24 +4,18 @@ from wordbyword.application.commands import (
     CommandId,
     CommandResult,
     CommandSpec,
-    build_cli_request,
-    build_gui_request,
-    command_id_from_cli_args,
     command_spec,
     registered_command_ids,
-    run_cli_request,
-    run_gui_request,
 )
+from wordbyword.application.events import CommandEvent
+from wordbyword.application.use_cases import run_request
 
 __all__ = [
     "CommandId",
+    "CommandEvent",
     "CommandResult",
     "CommandSpec",
-    "build_cli_request",
-    "build_gui_request",
-    "command_id_from_cli_args",
     "command_spec",
     "registered_command_ids",
-    "run_cli_request",
-    "run_gui_request",
+    "run_request",
 ]
