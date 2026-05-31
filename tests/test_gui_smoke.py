@@ -25,6 +25,8 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertIn("dictionary_output_dir", bridge.settings)
         self.assertEqual(bridge.workflowDefinitions[0]["key"], "before_start")
         self.assertIn("dictionary", bridge.workflowReadiness)
+        self.assertIn("summary", bridge.reviewSnapshot)
+        self.assertIn("items", bridge.reviewSnapshot)
         self.assertEqual(bridge.languageState["selected"], "system")
         self.assertEqual(bridge.appearanceState["theme"], "standard")
         self.assertIn({"value": "neobrutalist", "label": "Neo Pop"}, bridge.appearanceState["theme_options"])
@@ -128,6 +130,75 @@ class GuiSmokeTests(unittest.TestCase):
             with acquire_workspace_command_guard("later job", workspace_root=root):
                 pass
 
+    def test_bridge_review_snapshot_refreshes_from_settings_and_finished_jobs(self) -> None:
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as error:
+            self.skipTest(f"PySide6 is not installed: {error}")
+
+        from wordbyword.gui.bridge import WordByWordBridge
+        from wordbyword.gui.settings import default_settings, save_settings
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication(["test", "-platform", "offscreen"])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            settings_path = root / "settings.json"
+            settings = default_settings()
+            settings["print_output_root"] = str(root / "printouts")
+            settings["dictionary_output_dir"] = str(root / "dictionary")
+            settings["live_lexicon_path"] = str(root / "lexicon" / "canonical.jsonl")
+            save_settings(settings, settings_path)
+            bridge = WordByWordBridge(settings_path=settings_path, workspace_root=root)
+
+            self.assertFalse(_review_items_of_kind(bridge.reviewSnapshot, "class_printout"))
+
+            printout_dir = root / "new-printouts" / "lesson-a"
+            printout_dir.mkdir(parents=True)
+            (printout_dir / "material.docx").write_bytes(b"docx")
+            (printout_dir / "quality_report.json").write_text(
+                '{"source_id": "lesson-a", "status": "written"}',
+                encoding="utf-8",
+            )
+            self.assertTrue(bridge.saveSettings({"print_output_root": str(root / "new-printouts")}))
+            self.assertTrue(_review_items_of_kind(bridge.reviewSnapshot, "class_printout"))
+
+            dictionary_dir = root / "dictionary"
+            dictionary_dir.mkdir()
+            (dictionary_dir / "15_final_dictionary.jsonl").write_text("{}\n", encoding="utf-8")
+            bridge._on_finished({"status": "complete"})
+            dictionary = _review_items_of_kind(bridge.reviewSnapshot, "dictionary")[0]
+            self.assertEqual(dictionary["status"], "ready")
+
+    def test_bridge_select_report_printout_updates_settings(self) -> None:
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError as error:
+            self.skipTest(f"PySide6 is not installed: {error}")
+
+        from wordbyword.gui.bridge import WordByWordBridge
+        from wordbyword.gui.settings import default_settings, save_settings
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        app = QApplication.instance() or QApplication(["test", "-platform", "offscreen"])
+        self.assertIsNotNone(app)
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            handout = root / "archive" / "lesson.docx"
+            handout.parent.mkdir()
+            handout.write_bytes(b"docx")
+            settings_path = root / "settings.json"
+            settings = default_settings()
+            settings["after_class_report_output_root"] = str(root / "reports")
+            save_settings(settings, settings_path)
+            bridge = WordByWordBridge(settings_path=settings_path, workspace_root=root)
+
+            self.assertTrue(bridge.selectReportPrintout(str(handout)))
+
+            self.assertEqual(bridge.settings["after_class_printout_path"], str(handout))
+            self.assertEqual(bridge.workflowReadiness["reports"]["status"], "ready")
+
     def test_redesigned_qml_loads_offscreen(self) -> None:
         try:
             from PySide6.QtCore import QUrl, QTimer, qInstallMessageHandler
@@ -183,6 +254,9 @@ class GuiSmokeTests(unittest.TestCase):
                                 root_object = engine.rootObjects()[0]
                                 self.assertEqual(root_object.property("activePage"), "workflow")
                                 self.assertEqual(root_object.property("settingsTab"), "appearance")
+                                root_object.setProperty("activePage", "review")
+                                self.assertEqual(root_object.property("activePage"), "review")
+                                root_object.setProperty("activePage", "workflow")
                                 saved_dictionary_input = str(Path(workspace) / "dictionary-source")
 
                                 def switch_appearance_and_quit(
@@ -220,3 +294,7 @@ class GuiSmokeTests(unittest.TestCase):
         self.assertNotIn("Sans Serif", output)
         self.assertNotIn("Cannot open", output)
         self.assertNotIn(".svg", output)
+
+
+def _review_items_of_kind(snapshot: dict[str, object], kind: str) -> list[dict[str, object]]:
+    return [item for item in snapshot["items"] if item["kind"] == kind]  # type: ignore[index]

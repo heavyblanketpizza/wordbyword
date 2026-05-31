@@ -16,6 +16,7 @@ from wordbyword.execution_guard import (
 from wordbyword.gui.i18n import catalog, language_state, normalize_language, resolve_language, text as localized_text
 from wordbyword.gui.job_events import error_event
 from wordbyword.gui.pipeline import path_for_key, readiness_payload, workflow_definition_payload
+from wordbyword.gui.review import build_review_snapshot
 from wordbyword.gui.settings import (
     TEXT_SCALE_DEFAULT,
     TEXT_SCALE_MAX,
@@ -61,6 +62,7 @@ class WordByWordBridge(QObject):
     artifactTextChanged = Signal()
     languageChanged = Signal()
     appearanceChanged = Signal()
+    reviewChanged = Signal()
 
     def __init__(self, *, settings_path: Path | None = None, workspace_root: Path | None = None) -> None:
         super().__init__()
@@ -118,6 +120,10 @@ class WordByWordBridge(QObject):
     def workflowReadiness(self) -> dict[str, dict[str, object]]:
         return readiness_payload(self._settings, job_state=self._job_state, language=self._resolved_language())
 
+    @Property("QVariantMap", notify=reviewChanged)
+    def reviewSnapshot(self) -> dict[str, object]:
+        return build_review_snapshot(self._settings)
+
     @Property("QVariantMap", notify=jobStateChanged)
     def jobState(self) -> dict[str, object]:
         return dict(self._job_state)
@@ -147,6 +153,7 @@ class WordByWordBridge(QObject):
         self.settingsChanged.emit()
         self.appearanceChanged.emit()
         self.readinessChanged.emit()
+        self.reviewChanged.emit()
         return True
 
     @Slot(str, "QVariantMap", result=bool)
@@ -185,6 +192,7 @@ class WordByWordBridge(QObject):
             self.settingsChanged.emit()
             self.appearanceChanged.emit()
             self.readinessChanged.emit()
+            self.reviewChanged.emit()
             self._log_lines = []
             self._artifacts = {}
             self._set_job_state(
@@ -246,6 +254,22 @@ class WordByWordBridge(QObject):
     @Slot(str, result=str)
     def pathForKey(self, key: str) -> str:
         return path_for_key(self._settings, key)
+
+    @Slot(str, result=bool)
+    def selectReportPrintout(self, path_text: str) -> bool:
+        if self._has_active_job():
+            self._append_log_line(f"[blocked] review/select-report: {self._text('run.settings_blocked')}")
+            return False
+        if not path_text:
+            return False
+        old_target_grade = self._settings.get("target_grade")
+        self._settings["after_class_printout_path"] = path_text
+        self._settings = settings_with_target_grade_defaults(self._settings, old_target_grade=old_target_grade)
+        save_settings(self._settings, self._settings_path)
+        self.settingsChanged.emit()
+        self.readinessChanged.emit()
+        self.reviewChanged.emit()
+        return True
 
     @Slot(str, result=bool)
     def setLanguage(self, value: str) -> bool:
@@ -321,6 +345,7 @@ class WordByWordBridge(QObject):
             self._set_job_state({**self._job_state, "busy": False, "status": status})
         finally:
             self._release_job_guard()
+            self.reviewChanged.emit()
 
     @Slot()
     def _clear_worker(self) -> None:
