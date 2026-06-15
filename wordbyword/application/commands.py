@@ -4,8 +4,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from wordbyword.application.workspace import ArtifactId, PaddleOCRVLSettings, RewriteVocabularySource, artifact_path
+from wordbyword.dictionary_build.artifacts import ArtifactId, artifact_path
+
+if TYPE_CHECKING:
+    from wordbyword.application.workspace import RewriteVocabularySource
+    from wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl import PaddleOCRVLSettings
 
 
 class CommandId(StrEnum):
