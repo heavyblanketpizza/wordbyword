@@ -12,6 +12,41 @@ The root `README.md` is the canonical technical guide. `BEGINNERS_GUIDE.md` is t
 - PaddleOCR-VL for class-source PDF parsing. The project dependency set does not install PaddleOCR-VL into the main environment; use a sidecar environment or a current Python environment that can import `paddleocr`.
 - A Korean-capable font for DOCX output. The renderer auto-detects common macOS, Linux, and Noto/Nanum fonts; pass an explicit font path only when needed.
 
+## Native macOS Studio
+
+Open the native black-and-white SwiftUI interface from the project folder:
+
+```bash
+uv run wordbyword-gui
+```
+
+The studio requires **macOS 14 or later**. Its first build also requires **Swift 6 or later** from Xcode Command Line Tools; install missing tools with `xcode-select --install`. The launcher builds and caches the app at `.wordbyword/desktop/WordByWord.app` inside the selected workspace, rebuilding when the native sources change. The CLI remains available without these macOS requirements.
+
+| Tab | Workflow |
+| --- | --- |
+| Dictionary | Import and name source documents, build or resume the dictionary, and inspect stage artifacts. |
+| Classroom | Parse source PDFs, rewrite readings, and produce editable DOCX handouts. |
+| Vocabulary | Manage archived class materials, build usage signals, and update the live lexicon. |
+| Reports | Generate an after-class reading report from one selected archived handout. |
+
+Choose the grade in the toolbar and configure the provider/model in **Studio settings**. Use **More actions** for filename previews, duplicate review, and individual workflow stages. Each run opens a review sheet before execution; **Run journal** shows progress and errors. Model and OCR prerequisites still apply.
+
+Existing files in a legacy folder layout are shown **read-only**. Opening the studio does not migrate source data. Choose **Review layout**, inspect the proposed moves, and explicitly confirm the migration before importing or running workflows. Conflicting or incomplete migration plans cannot be applied from the studio.
+
+Provider API keys stay in the launch environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` / `GEMINI_API_KEY`. Export them before launching; they are not saved in studio settings. Hosted model tasks send source content to the selected provider and may incur charges. Non-secret settings are saved only when requested, in `.wordbyword/studio-settings.json`.
+
+**Stop run** requests an interrupt and waits for the worker to exit and clean up; it does not roll back the run. Completed or partial artifacts may remain. **Stop and Quit** uses the same waiting behavior when closing an active session.
+
+To select another existing data workspace:
+
+```bash
+uv run wordbyword-gui --workspace "/absolute/path/to/workspace"
+```
+
+The workspace can also be changed from the window's folder selector. Use `--build-only` to prepare the app without opening a window, or `--rebuild` to force native recompilation; neither option forces a dictionary or classroom rebuild.
+
+**Grade/layout note:** the GUI supplies `--target-grade` from its grade selector (`grade1`–`grade12`). For grade-scoped CLI examples below, add `--target-grade grade1` or your chosen grade. Current dictionary sources and outputs live under `build-dictionary/original/grade1/` and `build-dictionary/output/grade1/`; archives and live lexicons also use grade folders. Older unscoped paths below describe legacy layouts—use the studio's displayed paths for the selected grade.
+
 ## Quick Start
 
 Install and verify the project:

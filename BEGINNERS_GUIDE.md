@@ -62,6 +62,30 @@ uv run pytest -q
 uv run ruff check .
 ```
 
+## Use The macOS App
+
+From the project folder, open the black-and-white studio:
+
+```bash
+uv run wordbyword-gui
+```
+
+You need macOS 14 or later. The first launch builds the app using Swift 6 or later from Xcode Command Line Tools. If the tools are missing, run `xcode-select --install`; later launches reuse the saved build.
+
+The four tabs are **Dictionary** for building vocabulary, **Classroom** for making handouts, **Vocabulary** for learning from used class materials, and **Reports** for after-class reading reports.
+
+Choose your grade at the top, then open **Studio settings** to choose the model. Ollama and PDF parsing still need the setup described in this guide. If you use a hosted provider, set its API key in the terminal environment before opening the app; the studio does not save API keys.
+
+Your older files may first appear read-only. Choose **Review layout** to see the proposed grade folders. Nothing moves until you review and confirm the migration. Imports and workflow runs stay blocked while the selected workspace still needs that migration.
+
+Use **More actions** to preview source or archive filenames before applying them. The main action at the bottom opens a confirmation sheet before starting work. Follow progress in **Run journal**, then inspect the generated files in the relevant tab.
+
+To stop, choose **Stop run** and wait for cleanup. Finished files and partial output may remain; stopping does not undo the run. If you quit during a run, **Stop and Quit** also waits for cleanup.
+
+The app uses the project folder as its workspace unless you choose another folder in the title bar. See the README's **Native macOS Studio** section for `--workspace` and build options.
+
+**For the CLI examples below:** add `--target-grade grade1` (or your chosen grade) to grade-specific commands. The app adds this for you. Older unscoped paths in this guide are legacy paths; use the grade-specific locations displayed in the app after migration, such as `build-dictionary/output/grade1/` for dictionary outputs.
+
 ## Build The Dictionary
 
 For normal use, run one command:

@@ -6,6 +6,8 @@ build/
 dist/
 wheels/
 *.egg-info
+.build/
+.swiftpm/
 
 # Virtual environments
 .venv

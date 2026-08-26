@@ -20,6 +20,7 @@ dev = [
 
 [project.scripts]
 wordbyword = "wordbyword.cli:main"
+wordbyword-gui = "wordbyword.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -28,6 +29,17 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 120
 target-version = "py314"
+
+[tool.setuptools.packages.find]
+include = ["wordbyword*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"wordbyword.gui" = [
+    "native/Package.swift",
+    "native/Sources/WordByWord/*.swift",
+    "native/Tests/WordByWordTests/*.swift",
+]
 
 [build-system]
 requires = ["setuptools>=69"]
