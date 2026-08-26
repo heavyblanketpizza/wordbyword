@@ -39,9 +39,14 @@ final class ModelTests: XCTestCase {
             .applySourceDuplicates: "--resolve-dictionary-source-duplicates"
         ]
         let source = snapshot()
+        var koreanSettings = StudioSettings()
+        koreanSettings.language = .korean
         for action in StudioAction.allCases {
             let flags = try StudioCommandBuilder.arguments(for: action, snapshot: source,
                                                            settings: StudioSettings(), selectedReport: source.files["archive"]![0].path)
+            let koreanFlags = try StudioCommandBuilder.arguments(for: action, snapshot: source,
+                                                                 settings: koreanSettings, selectedReport: source.files["archive"]![0].path)
+            XCTAssertEqual(koreanFlags, flags, "Interface language changed arguments for \(action)")
             XCTAssertTrue(flags.contains(try XCTUnwrap(commands[action])), "\(action)")
             XCTAssertFalse(flags.contains(where: { $0.hasPrefix("/legacy/") }), "\(action)")
             if action != .migrateWorkspace {
@@ -151,13 +156,149 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
         var settings = StudioSettings()
         settings.includeNumbers = true
+        settings.language = .korean
         try settings.write(to: root)
         XCTAssertEqual(try StudioSettings.read(from: root), settings)
         settings.model = "second-model"
+        settings.language = .english
         try settings.write(to: root)
         XCTAssertEqual(try StudioSettings.read(from: root), settings)
         let contents = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(".wordbyword").path)
         XCTAssertEqual(contents, ["studio-settings.json"])
+    }
+
+    func testLegacyAndUnknownLanguageSettingsPreserveCustomizedFieldsWithoutRewriting() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent(".wordbyword")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let destination = directory.appendingPathComponent("studio-settings.json")
+        var expected = StudioSettings()
+        expected.provider = "openai"
+        expected.model = "custom-model"
+        expected.baseURL = "https://example.com/v1"
+        expected.includeNumbers = true
+        expected.includePunctuation = true
+        expected.force = true
+        expected.parsePDF = false
+        expected.renderDPI = 288
+        expected.bodyFontSize = 15
+
+        let storedLanguages: [String?] = [nil, "future-language"]
+        for language in storedLanguages {
+            // This is the pre-localization file schema, independent of the new encoder.
+            var stored: [String: Any] = [
+                "provider": "openai", "model": "custom-model", "baseURL": "https://example.com/v1",
+                "includeNumbers": true, "includePunctuation": true, "force": true,
+                "parsePDF": false, "renderDPI": 288, "bodyFontSize": 15
+            ]
+            if let language { stored["language"] = language }
+            let data = try JSONSerialization.data(withJSONObject: stored)
+            try data.write(to: destination)
+            XCTAssertEqual(try StudioSettings.read(from: root), expected, language ?? "Missing language")
+            XCTAssertEqual(try Data(contentsOf: destination), data, "Reading settings must not migrate the file implicitly")
+        }
+    }
+
+    func testEveryTabAndActionHasKoreanPresentationWithoutChangingEnglish() {
+        let keys = StudioTab.allCases.flatMap { [$0.title, $0.eyebrow, $0.headline, $0.subtitle] }
+            + StudioAction.allCases.flatMap { [$0.title, $0.detail] }
+        for key in keys {
+            XCTAssertEqual(StudioLanguage.english.text(key), key)
+            let translated = StudioLanguage.korean.text(key)
+            XCTAssertNotEqual(translated, key, "Missing Korean translation: \(key)")
+            XCTAssertNotNil(translated.range(of: "[가-힣]", options: .regularExpression), key)
+        }
+    }
+
+    func testLocalizationFormatsValuesAndPreservesUnknownContent() throws {
+        let korean = StudioLanguage.korean
+        XCTAssertEqual(StudioLanguage.english.format("Grade %d", 3), "Grade 3")
+        XCTAssertEqual(korean.format("Grade %d", 3), "3학년")
+        XCTAssertEqual(korean.format("%d FILES", 0), "파일 0개")
+        XCTAssertEqual(korean.format("%@ pages · %@ sentences in the saved build", "1,234", "2,160"),
+                       "저장된 생성 결과: 1,234쪽 · 2,160문장")
+        let phaseLabels = [
+            "prepare": "준비", "run": "실행", "cleanup": "마무리 정리", "plan": "계획 수립",
+            "rename": "이름 정리", "render": "페이지 렌더링", "select": "선별", "ocr": "문자 인식"
+        ]
+        for (phase, label) in phaseLabels {
+            XCTAssertEqual(korean.phase(phase), label)
+            XCTAssertEqual(StudioLanguage.english.phase(phase), phase.uppercased())
+        }
+
+        let path = "/workspace/Completed/100%_읽기.docx"
+        XCTAssertEqual(korean.format("Selected: %@", path), "선택한 파일: " + path)
+        for raw in [path, "A future engine diagnostic", "Connection refused: /workspace/Complete/source.pdf",
+                    "원문 문장: Complete is a word, not an interface label."] {
+            XCTAssertEqual(korean.text(raw), raw)
+            XCTAssertEqual(StudioLanguage.english.text(raw), raw)
+        }
+
+        let rawPDF = "PDF document · 1,234 bytes\n\nOpen the original file to view its pages."
+        let pdf = PreviewDocument(name: "reading.PDF", path: "/workspace/reading.PDF", text: rawPDF,
+                                  truncated: false, byteCount: 1234)
+        XCTAssertEqual(korean.previewText(pdf), "PDF 문서 · 1,234바이트\n\n페이지를 보려면 원본 파일을 여세요.")
+        XCTAssertEqual(StudioLanguage.english.previewText(pdf), rawPDF)
+        for extensionName in ["txt", "docx", "jsonl"] {
+            let document = PreviewDocument(name: "reading.\(extensionName)", path: "/workspace/reading.\(extensionName)",
+                                           text: "Complete", truncated: false, byteCount: 1234)
+            XCTAssertEqual(korean.previewText(document), "Complete", "Document content must not use interface translations")
+        }
+        let oldResponse = try JSONSerialization.data(withJSONObject: [
+            "name": "reading.pdf", "path": "/workspace/reading.pdf", "text": rawPDF, "truncated": false
+        ])
+        let oldPDF = try JSONDecoder().decode(PreviewDocument.self, from: oldResponse)
+        XCTAssertEqual(korean.previewText(oldPDF), rawPDF, "An old PDF response must remain readable without metadata")
+    }
+
+    func testMigrationLocalizesExplanationsButPreservesPathsAndRawDiagnostics() {
+        let raw = [
+            "GRADE WORKSPACE MIGRATION", "", "2 proposed move(s).", "No files have been changed.", "",
+            "build-dictionary/original/Complete.pdf",
+            "  → build-dictionary/original/grade3/Complete.pdf",
+            "  clear grade token", "",
+            "build-dictionary/No files have been changed..json",
+            "  → build-dictionary/output/grade1/No files have been changed..json",
+            "  legacy grade1 dictionary output", "",
+            "Migration cannot be applied safely:",
+            "  [Errno 13] Permission denied: '/workspace/Complete.pdf'",
+            "\tUnknown diagnostic: Failed → /workspace/Read"
+        ].joined(separator: "\n")
+        let expected = [
+            "학년별 작업 폴더 정리 계획", "", "2개 항목을 이동할 예정입니다.", "아직 변경된 파일은 없습니다.", "",
+            "build-dictionary/original/Complete.pdf",
+            "  → build-dictionary/original/grade3/Complete.pdf",
+            "  파일명에서 학년 확인", "",
+            "build-dictionary/No files have been changed..json",
+            "  → build-dictionary/output/grade1/No files have been changed..json",
+            "  기존 1학년 사전 결과", "",
+            "다음 문제를 해결해야 정리 계획을 적용할 수 있습니다:",
+            "  [Errno 13] Permission denied: '/workspace/Complete.pdf'",
+            "\tUnknown diagnostic: Failed → /workspace/Read"
+        ].joined(separator: "\n")
+        let preview = PreviewDocument(name: "Workspace migration", path: "/workspace", text: raw,
+                                      truncated: false, canApply: false, plannedCount: 2)
+        XCTAssertEqual(StudioLanguage.korean.previewText(preview), expected)
+        XCTAssertEqual(StudioLanguage.english.migrationText(raw), raw)
+    }
+
+    func testArtifactLocalizationUsesStableIDsWithSafeFallbacks() {
+        let labels = [
+            "summary": "실행 정보, 수량, 단계 목록",
+            "generated_example_failures": "예문 생성 실패 기록",
+            "final_dictionary": "부족한 뜻풀이를 보완한 최종 사전"
+        ]
+        for (id, expected) in labels {
+            let artifact = StudioArtifact(id: id, name: "renamed-output.jsonl",
+                                          label: "A future backend description for \(id)",
+                                          path: "/workspace/Completed/renamed-output.jsonl", exists: true, size: 42)
+            XCTAssertEqual(StudioLanguage.korean.artifactLabel(artifact), expected)
+            XCTAssertEqual(StudioLanguage.english.artifactLabel(artifact), artifact.label)
+        }
+        let unknown = StudioArtifact(id: "future_artifact", name: "15_final_dictionary.jsonl", label: "Complete",
+                                     path: "/workspace/15_final_dictionary.jsonl", exists: false, size: 0)
+        XCTAssertEqual(StudioLanguage.korean.artifactLabel(unknown), unknown.label)
     }
 
     func testSettingsRejectSymbolicLinkDestinations() throws {
@@ -367,6 +508,34 @@ final class ModelTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(try XCTUnwrap(requestedAt)), 0.20)
         XCTAssertEqual(result?.exitCode, 130)
         XCTAssertEqual(result?.status, "cancelled")
+    }
+
+    @MainActor
+    func testAutoRefreshLoadsPersistedKoreanSettingsAndSnapshot() async throws {
+        let script = """
+        import json, sys
+        request = json.load(sys.stdin)
+        assert request['operation'] == 'snapshot'
+        print(json.dumps({"type":"snapshot", "data":{"workspace":sys.argv[-1], "grade":request['grade'], "grade_label":"1학년", "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{}, "counts":{"words":42}, "files":{}, "artifacts":[], "summary":{}}}), flush=True)
+        """
+        let fixture = try bridgeFixture(script)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var saved = StudioSettings()
+        saved.language = .korean
+        saved.model = "saved-startup-model"
+        try saved.write(to: fixture.root)
+        let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"),
+                                    moduleRoot: fixture.root)
+        let model = StudioModel(runtime: runtime, autoRefresh: true)
+        XCTAssertTrue(model.isLoading)
+        try await waitUntil { !model.isLoading }
+        XCTAssertNil(model.error)
+        XCTAssertEqual(model.language, .korean)
+        XCTAssertEqual(model.settings, saved)
+        let result = try XCTUnwrap(model.snapshot)
+        XCTAssertEqual(result.workspace, fixture.root.path)
+        XCTAssertEqual(result.grade, "grade1")
+        XCTAssertEqual(result.counts["words"], 42)
     }
 
     @MainActor

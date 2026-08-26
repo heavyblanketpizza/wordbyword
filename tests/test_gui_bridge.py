@@ -111,6 +111,15 @@ class DesktopWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(result["text"]), MAX_PREVIEW_CHARS)
         self.assertEqual(path.read_bytes(), before)
 
+    def test_pdf_preview_exposes_metadata_without_reading_or_changing_content(self) -> None:
+        path = write_file(self.root, "build-dictionary/original/grade1/자료.PDF", "%PDF-1.7\n")
+        before = inventory(self.root)
+        with patch.object(Path, "open", side_effect=AssertionError("PDF content must not be read")):
+            result = preview(self.root, str(path), "grade1")
+        self.assertEqual(result["byte_count"], path.stat().st_size)
+        self.assertEqual(result["text"], "PDF document · 9 bytes\n\nOpen the original file to view its pages.")
+        self.assertEqual(inventory(self.root), before)
+
     def test_preview_rejects_traversal_hidden_code_and_escaping_symlinks(self) -> None:
         for relative in ("build-dictionary/.private.json", "build-dictionary/script.py"):
             path = write_file(self.root, relative)

@@ -18,19 +18,19 @@ struct WordByWordApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Choose Workspace…") { model.chooseWorkspace() }
+                Button(model.t("Choose Workspace…")) { model.chooseWorkspace() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                     .disabled(model.isRunning)
             }
-            CommandMenu("Workspace") {
-                Button("Refresh Files") { model.refresh() }
+            CommandMenu(model.t("Workspace")) {
+                Button(model.t("Refresh Files")) { model.refresh() }
                     .keyboardShortcut("r", modifiers: [.command])
                     .disabled(model.isRunning)
-                Button("Show Run Journal") { model.showsLog = true }
+                Button(model.t("Show Run Journal")) { model.showsLog = true }
                     .keyboardShortcut("j", modifiers: [.command])
                 Divider()
-                Button("Reveal in Finder") { model.reveal(path: model.workspace.path) }
-                Button("Review Folder Layout") { model.showMigrationPlan() }
+                Button(model.t("Reveal in Finder")) { model.reveal(path: model.workspace.path) }
+                Button(model.t("Review Folder Layout")) { model.showMigrationPlan() }
                     .disabled(model.isRunning)
             }
         }
@@ -58,10 +58,10 @@ final class StudioAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.isRunning else { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = "A workflow is still running."
-        alert.informativeText = "Stopping waits for the worker to clean up. Files already written may remain."
-        alert.addButton(withTitle: "Keep Running")
-        alert.addButton(withTitle: "Stop and Quit")
+        alert.messageText = model.t("A workflow is still running.")
+        alert.informativeText = model.t("Stopping waits for the worker to clean up. Files already written may remain.")
+        alert.addButton(withTitle: model.t("Keep Running"))
+        alert.addButton(withTitle: model.t("Stop and Quit"))
         guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
         model.cancelRun()
         Task { @MainActor in

@@ -76,6 +76,8 @@ The four tabs are **Dictionary** for building vocabulary, **Classroom** for maki
 
 Choose your grade at the top, then open **Studio settings** to choose the model. Ollama and PDF parsing still need the setup described in this guide. If you use a hosted provider, set its API key in the terminal environment before opening the app; the studio does not save API keys.
 
+For Korean, open **Studio settings → Language / 언어**, select **한국어**, and click **Save defaults / 설정 저장**. The settings preview changes immediately, but **Cancel / 취소** leaves your saved choice unchanged. The choice is remembered for this workspace; older settings stay in English until you change it. Filenames, document content, terminal commands, and engine messages keep their original text.
+
 Your older files may first appear read-only. Choose **Review layout** to see the proposed grade folders. Nothing moves until you review and confirm the migration. Imports and workflow runs stay blocked while the selected workspace still needs that migration.
 
 Use **More actions** to preview source or archive filenames before applying them. The main action at the bottom opens a confirmation sheet before starting work. Follow progress in **Run journal**, then inspect the generated files in the relevant tab.

@@ -11,18 +11,27 @@ enum StudioTheme {
 }
 
 enum StudioType {
-    static let display = mono(24, weight: .bold)
-    static let heading = mono(17.5, weight: .medium)
     static let body = Font.system(size: 14, weight: .regular)
-    static let label = condensed(11.25, weight: .bold)
     static let detail = Font.system(size: 12, weight: .regular)
 
-    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        font(size, weight: weight, width: "Std")
+    static func display(in language: StudioLanguage) -> Font {
+        mono(24, weight: .bold, language: language)
     }
 
-    static func condensed(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        font(size, weight: weight, width: "Cn")
+    static func heading(in language: StudioLanguage) -> Font {
+        mono(17.5, weight: .medium, language: language)
+    }
+
+    static func mono(_ size: CGFloat, weight: Font.Weight = .regular,
+                     language: StudioLanguage = .english) -> Font {
+        // Martian Mono has no Hangul glyphs. Use the system's Korean typeface
+        // explicitly so weight and line metrics are consistent across labels.
+        language == .korean ? .system(size: size, weight: weight) : font(size, weight: weight, width: "Std")
+    }
+
+    static func condensed(_ size: CGFloat, weight: Font.Weight = .medium,
+                          language: StudioLanguage = .english) -> Font {
+        language == .korean ? .system(size: size, weight: weight) : font(size, weight: weight, width: "Cn")
     }
 
     private static func font(_ size: CGFloat, weight: Font.Weight, width: String) -> Font {

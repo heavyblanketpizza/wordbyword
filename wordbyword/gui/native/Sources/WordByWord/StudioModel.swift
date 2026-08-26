@@ -42,6 +42,12 @@ final class StudioModel: ObservableObject {
     private var settingsError: String?
     private var reviewedMigration: (workspace: String, canApply: Bool, count: Int)?
 
+    var language: StudioLanguage { settings.language }
+    func t(_ english: String) -> String { language.text(english) }
+    func f(_ english: String, _ arguments: CVarArg...) -> String {
+        language.formatted(english, arguments: arguments)
+    }
+
     var progress: Double? { isRunning ? progressValue : nil }
     var phase: String {
         if isCancelling { return "Waiting for the process to stop" }
@@ -104,9 +110,9 @@ final class StudioModel: ObservableObject {
     func chooseWorkspace() {
         guard !isRunning, !isSavingSettings else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose a WordByWord workspace"
-        panel.prompt = "Use workspace"
-        panel.message = "Choose the folder containing your dictionary, classroom, and vocabulary folders. A new folder stays empty until you import or run a workflow."
+        panel.title = t("Choose a WordByWord workspace")
+        panel.prompt = t("Use workspace")
+        panel.message = t("Choose the folder containing your dictionary, classroom, and vocabulary folders. A new folder stays empty until you import or run a workflow.")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
@@ -152,9 +158,9 @@ final class StudioModel: ObservableObject {
             return
         }
         let panel = NSOpenPanel()
-        panel.title = "Import \(group == "archive" ? "archived handouts" : "source material")"
-        panel.message = "Files are copied into the selected grade. Originals are left untouched and existing files are never overwritten."
-        panel.prompt = "Import copies"
+        panel.title = t(group == "archive" ? "Import archived handouts" : "Import source material")
+        panel.message = t("Files are copied into the selected grade. Originals are left untouched and existing files are never overwritten.")
+        panel.prompt = t("Import copies")
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
@@ -278,7 +284,7 @@ final class StudioModel: ObservableObject {
                     self.isLoading = false
                 } catch {
                     guard let self, self.workspaceID == id else { return }
-                    self.error = "Settings could not be saved: \(error.localizedDescription)"
+                    self.error = self.f("Settings could not be saved: %@", self.t(error.localizedDescription))
                     self.isSavingSettings = false
                     self.isLoading = false
                 }
@@ -314,7 +320,7 @@ final class StudioModel: ObservableObject {
                 self.refresh()
             } catch {
                 guard let self, self.workspaceID == id else { return }
-                self.settingsError = "Saved settings could not be loaded. Defaults are shown. \(error.localizedDescription)"
+                self.settingsError = self.f("Saved settings could not be loaded. Defaults are shown. %@", self.t(error.localizedDescription))
                 self.refresh()
             }
         }

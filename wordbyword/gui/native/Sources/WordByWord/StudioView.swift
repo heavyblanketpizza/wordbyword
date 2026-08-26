@@ -33,6 +33,8 @@ struct StudioView: View {
         .foregroundStyle(StudioTheme.ink)
         .tint(StudioTheme.ink)
         .ignoresSafeArea(.container, edges: .top)
+        .environment(\.locale, model.language.locale)
+        .environment(\.studioLanguage, model.language)
         .onReceive(model.$preview) { if $0 != nil { sheet = .preview } }
         .onReceive(model.$pendingAction) { if $0 != nil { sheet = .confirmation } }
         .onReceive(model.$showsLog) { if $0 { sheet = .journal } }
@@ -40,20 +42,20 @@ struct StudioView: View {
             get: { sheet != nil },
             set: { if !$0 { dismissSheet() } }
         )) { sheetContent }
-        .alert("This needs your attention.", isPresented: Binding(
+        .alert(model.t("This needs your attention."), isPresented: Binding(
             get: { model.error != nil },
             set: { if !$0 { model.error = nil } }
         )) {
-            Button("OK") { model.error = nil }
+            Button(model.t("OK")) { model.error = nil }
         } message: {
-            Text(model.error ?? "")
+            Text(model.t(model.error ?? ""))
         }
     }
 
     private var titleBar: some View {
         HStack(spacing: 9) {
             Text("WordByWord").font(.system(size: 13, weight: .semibold))
-            Text("Korean vocabulary studio")
+            Text(model.t("Korean vocabulary studio"))
                 .font(.system(size: 12))
                 .foregroundStyle(StudioTheme.muted)
             Spacer()
@@ -67,8 +69,8 @@ struct StudioView: View {
                 }
             }
             .buttonStyle(.plain)
-            .help("Choose a different workspace")
-            .accessibilityLabel("Choose workspace")
+            .help(model.t("Choose a different workspace"))
+            .accessibilityLabel(model.t("Choose workspace"))
             .disabled(model.isRunning || model.isLoading)
         }
         .padding(.leading, 88)
@@ -87,7 +89,7 @@ struct StudioView: View {
                         Text(tab.number)
                             .font(.system(size: 13, weight: .semibold, design: .monospaced))
                             .opacity(model.tab == tab ? 0.72 : 0.58)
-                        Text(tab.title.uppercased())
+                        Text(model.t(tab.title).uppercased())
                             .font(.system(size: 13.5, weight: .semibold))
                     }
                     .padding(.horizontal, 14)
@@ -98,17 +100,17 @@ struct StudioView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(tab.title)
+                .accessibilityLabel(model.t(tab.title))
                 .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
             }
             Spacer(minLength: 10)
             Menu {
                 ForEach(1...12, id: \.self) { number in
-                    Button("Grade \(number)") { model.changeGrade("grade\(number)") }
+                    Button(model.f("Grade %d", number)) { model.changeGrade("grade\(number)") }
                 }
             } label: {
-                Text("GRADE \(gradeNumber)")
-                    .font(StudioType.condensed(11.5, weight: .bold))
+                Text(model.f("GRADE %@", gradeNumber))
+                    .font(StudioType.condensed(11.5, weight: .bold, language: model.language))
             }
             .menuStyle(.borderlessButton)
             .padding(.horizontal, 10)
@@ -118,9 +120,9 @@ struct StudioView: View {
             .fixedSize()
             .padding(.bottom, 7)
             .disabled(model.isRunning || model.isLoading)
-            .help("Choose the target school grade")
-            .accessibilityLabel("Target grade \(gradeNumber)")
-            IconButton(title: "Studio settings", systemName: "slider.horizontal.3") { sheet = .settings }
+            .help(model.t("Choose the target school grade"))
+            .accessibilityLabel(model.f("Target grade %@", gradeNumber))
+            IconButton(title: model.t("Studio settings"), systemName: "slider.horizontal.3") { sheet = .settings }
                 .padding(.bottom, 7)
                 .disabled(model.isRunning || model.isLoading)
         }
@@ -132,22 +134,22 @@ struct StudioView: View {
     private var pageHeading: some View {
         HStack(alignment: .center, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(model.tab.eyebrow)
-                Text(model.tab.headline)
-                    .font(StudioType.display)
+                SectionLabel(model.t(model.tab.eyebrow))
+                Text(model.t(model.tab.headline))
+                    .font(StudioType.display(in: model.language))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text(model.tab.subtitle)
+                Text(model.t(model.tab.subtitle))
                     .font(StudioType.body)
                     .foregroundStyle(StudioTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             VStack(alignment: .trailing, spacing: 3) {
-                Text(metricValue.formatted())
-                    .font(StudioType.mono(30, weight: .bold))
+                Text(metricValue.formatted(.number.locale(model.language.locale)))
+                    .font(StudioType.mono(30, weight: .bold, language: model.language))
                     .monospacedDigit()
-                SectionLabel(metricLabel)
+                SectionLabel(model.t(metricLabel))
             }
             .accessibilityElement(children: .combine)
         }
@@ -159,15 +161,15 @@ struct StudioView: View {
                 .font(.system(size: 18, weight: .medium))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text("Your existing workspace, preserved.")
+                Text(model.t("Your existing workspace, preserved."))
                     .font(.system(size: 13, weight: .semibold))
-                Text("Browse your files here. Review the grade-folder plan before starting new work.")
+                Text(model.t("Browse your files here. Review the grade-folder plan before starting new work."))
                     .font(StudioType.detail)
                     .foregroundStyle(StudioTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Review layout") { model.showMigrationPlan() }
+            Button(model.t("Review layout")) { model.showMigrationPlan() }
                 .buttonStyle(MonochromeButtonStyle(compact: true))
                 .disabled(model.isRunning || model.isLoading)
         }
@@ -182,13 +184,13 @@ struct StudioView: View {
     private func noticeBanner(_ text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "info.circle")
-            Text(text).font(StudioType.detail).textSelection(.enabled)
+            Text(model.t(text)).font(StudioType.detail).textSelection(.enabled)
             Spacer()
             Button { model.notice = nil } label: {
                 Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss notice")
+            .accessibilityLabel(model.t("Dismiss notice"))
         }
         .padding(12)
         .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(StudioTheme.ink, lineWidth: 1) }
@@ -204,10 +206,10 @@ struct StudioView: View {
                         Rectangle().fill(StudioTheme.ink).frame(width: 7, height: 7)
                     }
                     Text(footerStatus)
-                        .font(StudioType.condensed(11.5, weight: .bold))
+                        .font(StudioType.condensed(11.5, weight: .bold, language: model.language))
                         .lineLimit(1)
                 }
-                Text(model.settings.model.isEmpty ? "Set a model in Studio settings" :
+                Text(model.settings.model.isEmpty ? model.t("Set a model in Studio settings") :
                         "\(model.settings.provider.uppercased())  /  \(model.settings.model)")
                     .font(StudioType.detail)
                     .foregroundStyle(StudioTheme.muted)
@@ -216,28 +218,28 @@ struct StudioView: View {
             .frame(maxWidth: 300, alignment: .leading)
             Spacer(minLength: 12)
             Button { model.showsLog = true } label: {
-                Label("Run journal", systemImage: "text.alignleft")
+                Label(model.t("Run journal"), systemImage: "text.alignleft")
             }
             .buttonStyle(MonochromeButtonStyle())
             if model.isRunning {
-                Button(model.isCancelling ? "Stopping…" : "Stop run") { model.cancelRun() }
+                Button(model.t(model.isCancelling ? "Stopping…" : "Stop run")) { model.cancelRun() }
                     .buttonStyle(MonochromeButtonStyle(primary: true))
                     .disabled(model.isCancelling)
             } else if model.snapshot?.legacyLayout == true {
                 Button {
                     model.showMigrationPlan()
                 } label: {
-                    Label("Review workspace", systemImage: "arrow.right")
+                    Label(model.t("Review workspace"), systemImage: "arrow.right")
                 }
                 .buttonStyle(MonochromeButtonStyle(primary: true))
                 .disabled(model.isLoading)
             } else {
                 Button { model.requestRun(primaryAction) } label: {
-                    Label(primaryAction.title, systemImage: "play.fill")
+                    Label(model.t(primaryAction.title), systemImage: "play.fill")
                 }
                 .buttonStyle(MonochromeButtonStyle(primary: true))
                 .disabled(!canRun)
-                .help(canRun ? "Review the configuration before running" : emptyRunHint)
+                .help(canRun ? model.t("Review the configuration before running") : emptyRunHint)
             }
         }
         .padding(.horizontal, 36)
@@ -272,6 +274,8 @@ struct StudioView: View {
         .foregroundStyle(StudioTheme.ink)
         .tint(StudioTheme.ink)
         .environment(\.colorScheme, .light)
+        .environment(\.locale, model.language.locale)
+        .environment(\.studioLanguage, model.language)
     }
 
     private func dismissSheet() {
@@ -325,24 +329,26 @@ struct StudioView: View {
     }
     private var emptyRunHint: String {
         switch model.tab {
-        case .dictionary: "Add source documents to begin."
-        case .classroom: "Add a source PDF to begin."
-        case .vocabulary: "Add a used class printout to begin."
-        case .reports: "Select an archived class printout."
+        case .dictionary: model.t("Add source documents to begin.")
+        case .classroom: model.t("Add a source PDF to begin.")
+        case .vocabulary: model.t("Add a used class printout to begin.")
+        case .reports: model.t("Select an archived class printout.")
         }
     }
     private var footerStatus: String {
-        if model.isCancelling { return "STOP REQUESTED · WAITING FOR CLEANUP" }
-        if model.isRunning { return model.phase.isEmpty ? "WORKING" : model.phase.uppercased() }
-        if model.isLoading { return "READING WORKSPACE" }
-        if model.error != nil { return "NEEDS ATTENTION" }
-        if model.logs.last?.status == "failed" { return "LAST RUN NEEDS ATTENTION" }
-        if let result = model.lastResult {
-            return result.succeeded ? "LAST RUN COMPLETE" :
-                result.exitCode == 130 ? "LAST RUN STOPPED" : "LAST RUN NEEDS ATTENTION"
+        if model.isCancelling { return model.t("STOP REQUESTED · WAITING FOR CLEANUP") }
+        if model.isRunning {
+            return model.phase.isEmpty ? model.t("WORKING") : model.language.phase(model.phase).uppercased()
         }
-        if model.snapshot?.legacyLayout == true { return "BROWSING EXISTING FILES" }
+        if model.isLoading { return model.t("READING WORKSPACE") }
+        if model.error != nil { return model.t("NEEDS ATTENTION") }
+        if model.logs.last?.status == "failed" { return model.t("LAST RUN NEEDS ATTENTION") }
+        if let result = model.lastResult {
+            return model.t(result.succeeded ? "LAST RUN COMPLETE" :
+                result.exitCode == 130 ? "LAST RUN STOPPED" : "LAST RUN NEEDS ATTENTION")
+        }
+        if model.snapshot?.legacyLayout == true { return model.t("BROWSING EXISTING FILES") }
         if !canRun { return emptyRunHint.uppercased() }
-        return "READY WHEN YOU ARE"
+        return model.t("READY WHEN YOU ARE")
     }
 }

@@ -75,8 +75,6 @@ struct StudioFile: Decodable, Identifiable, Equatable, Sendable {
     let kind: String
     let size: Int
     let modified: String
-
-    var sizeLabel: String { ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }
 }
 
 struct StudioArtifact: Decodable, Identifiable, Equatable, Sendable {
@@ -95,6 +93,7 @@ struct PreviewDocument: Decodable, Identifiable, Sendable {
     let truncated: Bool
     var canApply: Bool? = nil
     var plannedCount: Int? = nil
+    var byteCount: Int? = nil
 
     var id: String { path + "#" + name }
     var isMigration: Bool { canApply != nil || plannedCount != nil }
@@ -153,6 +152,7 @@ struct LogEntry: Identifiable, Sendable {
 }
 
 struct StudioSettings: Codable, Equatable, Sendable {
+    var language: StudioLanguage = .english
     var provider = "ollama"
     var model = "gemma4:31b"
     var baseURL = ""
@@ -162,6 +162,29 @@ struct StudioSettings: Codable, Equatable, Sendable {
     var parsePDF = true
     var renderDPI = 144
     var bodyFontSize = 13
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case language, provider, model, baseURL, includeNumbers, includePunctuation, force
+        case parsePDF, renderDPI, bodyFontSize
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        // Older workspaces have no language key. An unknown future language also
+        // falls back to English without discarding the user's model settings.
+        language = StudioLanguage(rawValue: try values.decodeIfPresent(String.self, forKey: .language) ?? "en") ?? .english
+        provider = try values.decode(String.self, forKey: .provider)
+        model = try values.decode(String.self, forKey: .model)
+        baseURL = try values.decode(String.self, forKey: .baseURL)
+        includeNumbers = try values.decode(Bool.self, forKey: .includeNumbers)
+        includePunctuation = try values.decode(Bool.self, forKey: .includePunctuation)
+        force = try values.decode(Bool.self, forKey: .force)
+        parsePDF = try values.decode(Bool.self, forKey: .parsePDF)
+        renderDPI = try values.decode(Int.self, forKey: .renderDPI)
+        bodyFontSize = try values.decode(Int.self, forKey: .bodyFontSize)
+    }
 
     func validated() throws -> StudioSettings {
         var value = self

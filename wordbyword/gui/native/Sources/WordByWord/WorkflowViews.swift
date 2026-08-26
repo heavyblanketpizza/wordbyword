@@ -46,20 +46,20 @@ struct WorkflowContent: View {
                 Menu {
                     actions
                 } label: {
-                    Label("More actions", systemImage: "ellipsis")
+                    Label(model.t("More actions"), systemImage: "ellipsis")
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .disabled(model.isRunning || model.isLoading || model.snapshot == nil ||
                           model.snapshot?.legacyLayout == true)
-                .accessibilityLabel("More \(model.tab.title) actions")
+                .accessibilityLabel(model.f("More %@ actions", model.t(model.tab.title)))
             }
             if let warnings = model.snapshot?.warnings, !warnings.isEmpty {
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(warnings, id: \.self) { warning in
-                            Text(warning)
+                            Text(model.t(warning))
                                 .font(StudioType.detail)
                                 .foregroundStyle(StudioTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -67,7 +67,7 @@ struct WorkflowContent: View {
                     }
                     .padding(.top, 5)
                 } label: {
-                    Text("Workspace notes (\(warnings.count))")
+                    Text(model.f("Workspace notes (%d)", warnings.count))
                         .font(StudioType.detail)
                         .foregroundStyle(StudioTheme.muted)
                 }
@@ -93,15 +93,15 @@ struct WorkflowContent: View {
     private var workflowHint: String {
         switch model.tab {
         case .dictionary:
-            "New sources? Preview their managed filenames in More actions. Full builds resume verified checkpoints."
+            model.t("New sources? Preview their managed filenames in More actions. Full builds resume verified checkpoints.")
         case .classroom:
-            "PDF → parsed text → grade-friendly Korean → editable DOCX. Existing successful handouts are reused."
+            model.t("PDF → parsed text → grade-friendly Korean → editable DOCX. Existing successful handouts are reused.")
         case .vocabulary:
-            "Name the archive, collect usage signals, then update your live vocabulary. Original printouts stay intact."
+            model.t("Name the archive, collect usage signals, then update your live vocabulary. Original printouts stay intact.")
         case .reports:
             model.selectedReport.isEmpty
-                ? "Select one managed, dated printout on the left. Reports are written in Korean for an adult reader."
-                : "Selected: \(URL(fileURLWithPath: model.selectedReport).lastPathComponent)"
+                ? model.t("Select one managed, dated printout on the left. Reports are written in Korean for an adult reader.")
+                : model.f("Selected: %@", URL(fileURLWithPath: model.selectedReport).lastPathComponent)
         }
     }
 
@@ -111,13 +111,13 @@ struct WorkflowContent: View {
         case .dictionary:
             actionButton(.previewSourceNames)
             actionButton(.applySourceNames)
-            Menu("Duplicate sources") {
+            Menu(model.t("Duplicate sources")) {
                 actionButton(.previewSourceDuplicates)
                 actionButton(.applySourceDuplicates)
             }
             Divider()
             actionButton(.prepareDictionary)
-            Menu("Repair a saved build") {
+            Menu(model.t("Repair a saved build")) {
                 actionButton(.cleanExamples)
                 actionButton(.cleanCandidates)
                 actionButton(.linkExamples)
@@ -147,7 +147,7 @@ struct WorkflowContent: View {
     }
 
     private func actionButton(_ action: StudioAction) -> some View {
-        Button(action.title) { model.requestRun(action) }
+        Button(model.t(action.title)) { model.requestRun(action) }
     }
 }
 
@@ -168,9 +168,9 @@ private struct PathRegister: View {
                         .font(.system(size: 16, weight: .medium))
                         .frame(width: 24)
                         .accessibilityHidden(true)
-                    SectionLabel(row.0).frame(width: 108, alignment: .leading)
+                    SectionLabel(model.t(row.0)).frame(width: 108, alignment: .leading)
                     Text(displayPath(row.1))
-                        .font(StudioType.condensed(12.5))
+                        .font(StudioType.condensed(12.5, language: model.language))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
@@ -185,14 +185,14 @@ private struct PathRegister: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Reveal \(row.0.lowercased()) in Finder")
-                    .accessibilityLabel("Reveal \(row.0.lowercased()) in Finder")
+                    .help(model.f("Reveal %@ in Finder", model.t(row.0).lowercased()))
+                    .accessibilityLabel(model.f("Reveal %@ in Finder", model.t(row.0).lowercased()))
                     .disabled(model.snapshot == nil)
                     if index == 0, rows.count > 1 {
                         Rectangle().fill(StudioTheme.hairline).frame(width: 1, height: 20)
                         Button { expanded.toggle() } label: {
                             HStack(spacing: 7) {
-                                Text("Output locations")
+                                Text(model.t("Output locations"))
                                     .font(.system(size: 11, weight: .medium))
                                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 9, weight: .semibold))
@@ -201,7 +201,7 @@ private struct PathRegister: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(expanded ? "Hide output locations" : "Show output locations")
+                        .accessibilityLabel(model.t(expanded ? "Hide output locations" : "Show output locations"))
                     }
                 }
                 .padding(.horizontal, 14)
@@ -217,7 +217,7 @@ private struct PathRegister: View {
 
     private func displayPath(_ key: String) -> String {
         guard let path = model.snapshot?.paths[key] else {
-            return model.isLoading ? "Reading workspace…" : "Not available"
+            return model.t(model.isLoading ? "Reading workspace…" : "Not available")
         }
         let prefix = (model.snapshot?.workspace ?? model.workspace.path) + "/"
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
@@ -239,21 +239,22 @@ struct FilePanel: View {
 
     var body: some View {
         let repeatedNames = duplicateNames
-        StudioPanel(title: title, icon: icon, badge: "\(files.count) \(files.count == 1 ? "FILE" : "FILES")") {
+        StudioPanel(title: model.t(title), icon: icon,
+                    badge: model.f(files.count == 1 ? "%d FILE" : "%d FILES", files.count)) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     SectionLabel(formats)
                     Spacer()
                     if allowsImport {
                         Button { model.importFiles(group: group) } label: {
-                            Label("Add files", systemImage: "plus")
+                            Label(model.t("Add files"), systemImage: "plus")
                         }
                         .buttonStyle(MonochromeButtonStyle(compact: true))
                         .disabled(model.isRunning || model.isLoading || model.snapshot?.legacyLayout == true)
-                        .help(model.snapshot?.legacyLayout == true
-                              ? "Review the workspace layout before importing new files." : "Copy files into this workspace")
+                        .help(model.t(model.snapshot?.legacyLayout == true
+                              ? "Review the workspace layout before importing new files." : "Copy files into this workspace"))
                     } else {
-                        IconButton(title: "Refresh \(title.lowercased())", systemName: "arrow.clockwise") {
+                        IconButton(title: model.f("Refresh %@", model.t(title).lowercased()), systemName: "arrow.clockwise") {
                             model.refresh()
                         }
                         .disabled(model.isLoading || model.isRunning)
@@ -279,8 +280,8 @@ struct FilePanel: View {
                                     else { model.loadPreview(path: file.path) }
                                 }
                                 .contextMenu {
-                                    Button("Preview") { model.loadPreview(path: file.path) }
-                                    Button("Reveal in Finder") { model.reveal(path: file.path) }
+                                    Button(model.t("Preview")) { model.loadPreview(path: file.path) }
+                                    Button(model.t("Reveal in Finder")) { model.reveal(path: file.path) }
                                 }
                                 if file.id != files.last?.id {
                                     Rectangle().fill(StudioTheme.hairline).frame(height: 1)
@@ -295,13 +296,9 @@ struct FilePanel: View {
                 if group == "sources", let summary = model.snapshot?.summary,
                    (summary["extracted_pages"] ?? 0) > 0 {
                     HStack(spacing: 5) {
-                        Text((summary["extracted_pages"] ?? 0).formatted())
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        Text("pages")
-                        Text("·").padding(.horizontal, 4)
-                        Text((summary["sentences"] ?? 0).formatted())
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        Text("sentences in the saved build")
+                        Text(model.f("%@ pages · %@ sentences in the saved build",
+                                     (summary["extracted_pages"] ?? 0).formatted(.number.locale(model.language.locale)),
+                                     (summary["sentences"] ?? 0).formatted(.number.locale(model.language.locale))))
                         Spacer(minLength: 0)
                     }
                     .font(.system(size: 11))
@@ -317,33 +314,34 @@ struct FilePanel: View {
     private var formats: String {
         switch group {
         case "sources": "PDF / TXT / MD"
-        case "class_sources": "SOURCE PDFS"
-        case "archive": selectsReport ? "SELECT ONE PRINTOUT" : "DOCX / PDF"
-        default: "EDITABLE DOCX"
+        case "class_sources": model.t("SOURCE PDFS")
+        case "archive": selectsReport ? model.t("SELECT ONE PRINTOUT") : "DOCX / PDF"
+        default: model.t("EDITABLE DOCX")
         }
     }
     private var emptyIcon: String { allowsImport ? "doc.badge.plus" : "tray" }
     private var emptyTitle: String {
         switch group {
-        case "sources": "A dictionary starts with a source."
-        case "class_sources": "Bring a reading to class."
-        case "handouts": "Your next handout goes here."
-        case "archive": "Keep what you teach."
-        default: "A little reflection goes a long way."
+        case "sources": model.t("A dictionary starts with a source.")
+        case "class_sources": model.t("Bring a reading to class.")
+        case "handouts": model.t("Your next handout goes here.")
+        case "archive": model.t("Keep what you teach.")
+        default: model.t("A little reflection goes a long way.")
         }
     }
     private var emptyDetail: String {
         switch group {
-        case "sources": "Add a book, document, or text file. Your originals are copied, never moved."
-        case "class_sources": "Add a PDF to parse, rewrite, and turn into a Korean classroom handout."
-        case "handouts": "Completed printouts will appear here, ready to review and open in Word."
-        case "archive": "Add a used class printout in Vocabulary to build a record of words taught."
-        default: "Generate a report from one archived class printout. Finished reports appear here."
+        case "sources": model.t("Add a book, document, or text file. Your originals are copied, never moved.")
+        case "class_sources": model.t("Add a PDF to parse, rewrite, and turn into a Korean classroom handout.")
+        case "handouts": model.t("Completed printouts will appear here, ready to review and open in Word.")
+        case "archive": model.t("Add a used class printout in Vocabulary to build a record of words taught.")
+        default: model.t("Generate a report from one archived class printout. Finished reports appear here.")
         }
     }
 }
 
 struct FileRecordRow: View {
+    @Environment(\.studioLanguage) private var language
     let file: StudioFile
     var context: String? = nil
     var selected = false
@@ -370,7 +368,8 @@ struct FileRecordRow: View {
                         .font(.system(size: 13, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("\(file.kind.uppercased())  ·  \(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))")
+                    Text(language.format("%@  ·  %@", file.kind.uppercased(),
+                                         Int64(file.size).formatted(.byteCount(style: .file).locale(language.locale))))
                         .font(.system(size: 11))
                         .foregroundStyle(StudioTheme.muted)
                 }
@@ -386,7 +385,7 @@ struct FileRecordRow: View {
         .buttonStyle(.plain)
         .foregroundStyle(StudioTheme.ink)
         .accessibilityLabel(displayName)
-        .accessibilityValue(selected ? "Selected" : file.kind)
+        .accessibilityValue(selected ? language.text("Selected") : file.kind)
         .help(file.path)
     }
 }
@@ -402,22 +401,22 @@ private struct CheckpointPanel: View {
     ]
 
     var body: some View {
-        StudioPanel(title: "Saved checkpoints", icon: "square.stack.3d.up") {
+        StudioPanel(title: model.t("Saved checkpoints"), icon: "square.stack.3d.up") {
             VStack(spacing: 0) {
                 ForEach(groups, id: \.0) { group in
                     HStack(spacing: 10) {
                         Text(group.0)
-                            .font(StudioType.condensed(11, weight: .bold))
+                            .font(StudioType.condensed(11, weight: .bold, language: model.language))
                             .frame(width: 24, height: 24)
                             .overlay { Rectangle().strokeBorder(StudioTheme.ink, lineWidth: 1) }
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(group.1).font(.system(size: 12.5, weight: .semibold))
-                            Text(String(format: "%02d — %02d", group.2.lowerBound, group.2.upperBound))
-                                .font(StudioType.condensed(10.5))
+                            Text(model.t(group.1)).font(.system(size: 12.5, weight: .semibold))
+                            Text(model.f("%02d — %02d", group.2.lowerBound, group.2.upperBound))
+                                .font(StudioType.condensed(10.5, language: model.language))
                                 .foregroundStyle(StudioTheme.muted)
                         }
                         Spacer(minLength: 8)
-                        Text("\(savedCount(group.2))/\(group.2.count)")
+                        Text(model.f("%d/%d", savedCount(group.2), group.2.count))
                             .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                     }
                     .padding(.horizontal, 14)
@@ -429,7 +428,7 @@ private struct CheckpointPanel: View {
                 }
                 Button { showOutputs() } label: {
                     HStack {
-                        Text("Inspect build artifacts").font(.system(size: 12, weight: .semibold))
+                        Text(model.t("Inspect build artifacts")).font(.system(size: 12, weight: .semibold))
                         Spacer()
                         Image(systemName: "arrow.right").font(.system(size: 12, weight: .medium))
                     }
@@ -456,7 +455,7 @@ private struct VocabularyPanel: View {
     @ObservedObject var model: StudioModel
 
     var body: some View {
-        StudioPanel(title: "Close the learning loop", icon: "arrow.triangle.2.circlepath") {
+        StudioPanel(title: model.t("Close the learning loop"), icon: "arrow.triangle.2.circlepath") {
             VStack(alignment: .leading, spacing: 0) {
                 actionRow("01", title: "Name the archive",
                           detail: "Review names before applying them.", action: .previewArchiveNames)
@@ -473,10 +472,10 @@ private struct VocabularyPanel: View {
     private func actionRow(_ number: String, title: String, detail: String, action: StudioAction) -> some View {
         Button { model.requestRun(action) } label: {
             HStack(alignment: .top, spacing: 10) {
-                Text(number).font(StudioType.condensed(11, weight: .bold)).padding(.top, 2)
+                Text(number).font(StudioType.condensed(11, weight: .bold, language: model.language)).padding(.top, 2)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(title).font(.system(size: 12.5, weight: .semibold))
-                    Text(detail).font(.system(size: 11.5))
+                    Text(model.t(title)).font(.system(size: 12.5, weight: .semibold))
+                    Text(model.t(detail)).font(.system(size: 11.5))
                         .foregroundStyle(StudioTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }

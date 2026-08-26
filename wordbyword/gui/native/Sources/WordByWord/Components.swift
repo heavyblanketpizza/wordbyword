@@ -37,6 +37,7 @@ struct MonochromeButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.studioLanguage) private var language
 
     init(primary: Bool = false, compact: Bool = false) {
         self.primary = primary
@@ -47,7 +48,7 @@ struct MonochromeButtonStyle: ButtonStyle {
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         let depression: CGFloat = primary && configuration.isPressed ? 1.5 : 0
         configuration.label
-            .font(StudioType.mono(compact ? 11.5 : 13.75, weight: .semibold))
+            .font(StudioType.mono(compact ? 11.5 : 13.75, weight: .semibold, language: language))
             .padding(.horizontal, compact ? 11 : 17)
             .frame(height: compact ? 32 : 44)
             .foregroundStyle(primary ? StudioTheme.canvas : StudioTheme.ink)
@@ -98,6 +99,7 @@ struct IconButton: View {
 }
 
 struct StatusBadge: View {
+    @Environment(\.studioLanguage) private var language
     let text: String
     var filled: Bool
 
@@ -108,7 +110,7 @@ struct StatusBadge: View {
 
     var body: some View {
         Text(text)
-            .font(StudioType.condensed(10.5, weight: .medium))
+            .font(StudioType.condensed(10.5, weight: .medium, language: language))
             .tracking(0.2)
             .lineLimit(1)
             .padding(.horizontal, 8)
@@ -125,6 +127,7 @@ struct StatusBadge: View {
 }
 
 struct SectionLabel: View {
+    @Environment(\.studioLanguage) private var language
     let text: String
 
     init(_ text: String) {
@@ -133,7 +136,7 @@ struct SectionLabel: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(StudioType.label)
+            .font(StudioType.condensed(11.25, weight: .bold, language: language))
             .tracking(0.55)
             .foregroundStyle(StudioTheme.muted)
             .accessibilityLabel(text)
@@ -194,6 +197,7 @@ struct StudioPanel<Content: View>: View {
 }
 
 struct EmptyState: View {
+    @Environment(\.studioLanguage) private var language
     let icon: String
     let title: String
     let detail: String
@@ -204,7 +208,7 @@ struct EmptyState: View {
                 .font(.system(size: 28, weight: .regular))
                 .accessibilityHidden(true)
             Text(title)
-                .font(StudioType.heading)
+                .font(StudioType.heading(in: language))
                 .accessibilityAddTraits(.isHeader)
             Text(detail)
                 .font(StudioType.body)

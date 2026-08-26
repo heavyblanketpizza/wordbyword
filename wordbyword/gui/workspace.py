@@ -356,13 +356,16 @@ def preview(root: Path, value: str, grade_value: object = "grade1") -> dict[str,
     path = safe_data_path(root, value, must_exist=True)
     if not path.is_file():
         raise WorkspaceError("Choose a saved file to preview, not a folder.")
+    metadata: dict[str, object] = {}
     if path.suffix.lower() in TEXT_EXTENSIONS:
         with path.open("rb") as handle:
             content = handle.read(MAX_PREVIEW_BYTES + 1)
         truncated = len(content) > MAX_PREVIEW_BYTES
         text = content[:MAX_PREVIEW_BYTES].decode("utf-8-sig", errors="replace")
     elif path.suffix.lower() == ".pdf":
-        text = f"PDF document · {path.stat().st_size:,} bytes\n\nOpen the original file to view its pages."
+        byte_count = path.stat().st_size
+        metadata["byte_count"] = byte_count
+        text = f"PDF document · {byte_count:,} bytes\n\nOpen the original file to view its pages."
         truncated = False
     elif path.suffix.lower() == ".docx":
         # Read only the bounded text XML, avoiding document rendering or zip
@@ -389,6 +392,7 @@ def preview(root: Path, value: str, grade_value: object = "grade1") -> dict[str,
     return {
         "name": path.name, "path": str(path), "text": text[:MAX_PREVIEW_CHARS],
         "truncated": truncated or len(text) > MAX_PREVIEW_CHARS,
+        **metadata,
     }
 
 

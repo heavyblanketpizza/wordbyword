@@ -31,6 +31,8 @@ The studio requires **macOS 14 or later**. Its first build also requires **Swift
 
 Choose the grade in the toolbar and configure the provider/model in **Studio settings**. Use **More actions** for filename previews, duplicate review, and individual workflow stages. Each run opens a review sheet before execution; **Run journal** shows progress and errors. Model and OCR prerequisites still apply.
 
+**Interface language:** Open **Studio settings → Language / 언어**, select **한국어**, then choose **Save defaults / 설정 저장**. The settings sheet previews the selection immediately; **Cancel / 취소** discards it. The choice is saved per workspace in `.wordbyword/studio-settings.json`; existing settings without a language choice default to English. Filenames, document content, CLI commands, and raw engine logs retain their original text.
+
 Existing files in a legacy folder layout are shown **read-only**. Opening the studio does not migrate source data. Choose **Review layout**, inspect the proposed moves, and explicitly confirm the migration before importing or running workflows. Conflicting or incomplete migration plans cannot be applied from the studio.
 
 Provider API keys stay in the launch environment: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY` / `GEMINI_API_KEY`. Export them before launching; they are not saved in studio settings. Hosted model tasks send source content to the selected provider and may incur charges. Non-secret settings are saved only when requested, in `.wordbyword/studio-settings.json`.
