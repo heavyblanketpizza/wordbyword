@@ -17,11 +17,7 @@ uv sync --dev
 uv run wordbyword --help
 ```
 
-The project expects Python `>=3.14`; `uv` should handle that for normal local development. You can also open the GUI with:
-
-```bash
-uv run wordbyword-gui
-```
+The project expects Python `>=3.14`; `uv` should handle that for normal local development.
 
 Put dictionary source files here:
 

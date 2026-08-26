@@ -23,11 +23,7 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-Command examples use the installed console script, `uv run wordbyword`. Running from source with `uv run python -m wordbyword` is equivalent. The GUI entrypoint is:
-
-```bash
-uv run wordbyword-gui
-```
+Command examples use the installed console script, `uv run wordbyword`. Running from source with `uv run python -m wordbyword` is equivalent.
 
 Manage dictionary source filenames after adding files to `build-dictionary/original/`:
 
@@ -367,7 +363,7 @@ The old Ollama flags still work as aliases:
 uv run wordbyword --build-dictionary --ollama-model gemma4:31b --ollama-base-url http://localhost:11434
 ```
 
-For hosted text-only LLM tasks, choose a provider and set its API key in the environment. API keys are not stored in GUI settings or project files.
+For hosted text-only LLM tasks, choose a provider and set its API key in the environment. API keys are not stored in project files.
 
 ```bash
 export OPENAI_API_KEY=...

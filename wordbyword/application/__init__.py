@@ -1,4 +1,4 @@
-"""Application command layer shared by CLI and GUI adapters."""
+"""Application command layer for wordbyword workflows."""
 
 from typing import TYPE_CHECKING
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,7 +41,6 @@ from wordbyword.grade_profiles import (
     default_whole_rewrite_output_root,
     grade_workspace,
     normalize_target_grade,
-    path_mentions_other_grade,
 )
 
 PADDLEOCR_VL_SIDECAR_ENV_VAR = "WORDBYWORD_PADDLEOCR_VL_SIDECAR_ENV"
@@ -105,14 +104,6 @@ def llm_runtime_config_from_args(args: object) -> LLMRuntimeConfig:
         model = explicit_model or ""
         base_url = explicit_base_url
     return llm_runtime_config(provider=normalized, model=model, base_url=base_url)
-
-
-def llm_runtime_config_from_values(values: Mapping[str, object]) -> LLMRuntimeConfig:
-    return llm_runtime_config(
-        provider=values.get("provider", "ollama"),
-        model=values.get("model", ""),
-        base_url=values.get("base_url", None),
-    )
 
 
 class LazyCompletionClient:
@@ -322,58 +313,6 @@ def rewrite_vocabulary_source(
         kind="dictionary_seed",
         sha256=resolve_sha256(dictionary_path),
     )
-
-
-def reject_other_grade_paths(values: Mapping[str, object], target_grade: str, *keys: str) -> None:
-    for key in keys:
-        text = optional_text_value(values, key)
-        if text is not None and path_mentions_other_grade(text, target_grade):
-            raise ValueError(f"{key} contains a different grade token than target grade {target_grade}: {text}")
-
-
-def path_value(values: Mapping[str, object], key: str, default: Path | str = "") -> Path:
-    value = values.get(key)
-    text = str(value if value not in {None, ""} else default)
-    return Path(text)
-
-
-def optional_path_value(values: Mapping[str, object], key: str) -> Path | None:
-    text = optional_text_value(values, key)
-    return None if text is None else Path(text)
-
-
-def text_value(values: Mapping[str, object], key: str) -> str:
-    value = values.get(key)
-    return "" if value is None else str(value)
-
-
-def optional_text_value(values: Mapping[str, object], key: str) -> str | None:
-    text = text_value(values, key).strip()
-    return text or None
-
-
-def bool_value(values: Mapping[str, object], key: str) -> bool:
-    value = values.get(key)
-    if isinstance(value, str):
-        return value.lower() in {"1", "true", "yes", "on"}
-    return bool(value)
-
-
-def int_value(values: Mapping[str, object], key: str, default: int) -> int:
-    try:
-        return int(values.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def optional_int_value(values: Mapping[str, object], key: str) -> int | None:
-    value = optional_text_value(values, key)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
 
 
 def source_parse_options_from_args(

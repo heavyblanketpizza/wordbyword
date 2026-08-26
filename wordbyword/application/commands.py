@@ -29,12 +29,8 @@ class CommandId(StrEnum):
     CLASS_PRINTOUTS = "class_printouts"
     AFTER_CLASS_REPORT = "after_class_report"
     RESOLVE_ARCHIVE_DUPLICATES = "resolve_archive_duplicates"
-    ARCHIVE_DUPLICATES_PREVIEW = "archive_duplicates_preview"
-    ARCHIVE_DUPLICATES_APPLY = "archive_duplicates_apply"
     RESOLVE_DICTIONARY_SOURCE_DUPLICATES = "resolve_dictionary_source_duplicates"
     RENAME_CLASS_SESSION_ARCHIVE = "rename_class_session_archive"
-    ARCHIVE_RENAME_PREVIEW = "archive_rename_preview"
-    ARCHIVE_RENAME_APPLY = "archive_rename_apply"
     RENAME_DICTIONARY_SOURCE_ARCHIVE = "rename_dictionary_source_archive"
     USAGE_SIGNALS = "usage_signals"
     LIVE_LEXICON = "live_lexicon"
@@ -337,12 +333,6 @@ _SPECS: dict[CommandId, CommandSpec] = {
     CommandId.RESOLVE_ARCHIVE_DUPLICATES: CommandSpec(
         CommandId.RESOLVE_ARCHIVE_DUPLICATES, "archive duplicate resolution", "archive"
     ),
-    CommandId.ARCHIVE_DUPLICATES_PREVIEW: CommandSpec(
-        CommandId.ARCHIVE_DUPLICATES_PREVIEW, "archive duplicate resolution", "archive"
-    ),
-    CommandId.ARCHIVE_DUPLICATES_APPLY: CommandSpec(
-        CommandId.ARCHIVE_DUPLICATES_APPLY, "archive duplicate resolution", "archive"
-    ),
     CommandId.RESOLVE_DICTIONARY_SOURCE_DUPLICATES: CommandSpec(
         CommandId.RESOLVE_DICTIONARY_SOURCE_DUPLICATES,
         "dictionary source duplicate resolution",
@@ -350,12 +340,6 @@ _SPECS: dict[CommandId, CommandSpec] = {
     ),
     CommandId.RENAME_CLASS_SESSION_ARCHIVE: CommandSpec(
         CommandId.RENAME_CLASS_SESSION_ARCHIVE, "class session archive rename", "archive"
-    ),
-    CommandId.ARCHIVE_RENAME_PREVIEW: CommandSpec(
-        CommandId.ARCHIVE_RENAME_PREVIEW, "class session archive rename", "archive"
-    ),
-    CommandId.ARCHIVE_RENAME_APPLY: CommandSpec(
-        CommandId.ARCHIVE_RENAME_APPLY, "class session archive rename", "archive"
     ),
     CommandId.RENAME_DICTIONARY_SOURCE_ARCHIVE: CommandSpec(
         CommandId.RENAME_DICTIONARY_SOURCE_ARCHIVE,

@@ -8,7 +8,6 @@ dependencies = [
     "kiwipiepy>=0.23.1",
     "pillow>=12.0.0",
     "pydantic>=2.12.5",
-    "PySide6>=6.11.1",
     "pymupdf>=1.27.2.2",
     "python-docx>=1.1.2",
 ]
@@ -21,7 +20,6 @@ dev = [
 
 [project.scripts]
 wordbyword = "wordbyword.cli:main"
-wordbyword-gui = "wordbyword.gui:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -30,19 +28,6 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 120
 target-version = "py314"
-
-[tool.setuptools.package-data]
-"wordbyword.gui" = [
-    "qml/*.qml",
-    "assets/i18n/*.json",
-    "assets/icons/*.txt",
-    "assets/icons/black/*.svg",
-    "assets/icons/white/*.svg",
-    "assets/fonts/pretendard/*.ttf",
-    "assets/fonts/pretendard/*.txt",
-    "assets/fonts/jetbrains-mono/*.ttf",
-    "assets/fonts/jetbrains-mono/*.txt",
-]
 
 [build-system]
 requires = ["setuptools>=69"]

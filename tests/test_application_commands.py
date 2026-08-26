@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from wordbyword.application.commands import (
     ArchiveRenameRequest,
+    ClassPrintoutsRequest,
     CommandId,
     CommandResult,
     DictionaryBuildRequest,
@@ -20,33 +21,13 @@ from wordbyword.application.commands import (
     registered_command_ids,
 )
 from wordbyword.application.use_cases import run_request
+from wordbyword.application.workspace import RewriteVocabularySource
 from wordbyword.cli import build_parser
 from wordbyword.cli.request_builder import build_cli_request, command_id_from_cli_args
 from wordbyword.dictionary_build.pipeline import PipelineResult
-from wordbyword.gui.request_builder import build_gui_request, gui_workflow_command_ids
 
 
 class ApplicationCommandRegistryTests(unittest.TestCase):
-    def test_all_gui_workflow_ids_resolve_to_registered_specs(self) -> None:
-        registered = set(registered_command_ids())
-
-        self.assertEqual(
-            gui_workflow_command_ids(),
-            {
-                "dictionary_build": CommandId.DICTIONARY_BUILD,
-                "dictionary_prep": CommandId.DICTIONARY_PREP,
-                "class_printouts": CommandId.CLASS_PRINTOUTS,
-                "archive_rename_preview": CommandId.ARCHIVE_RENAME_PREVIEW,
-                "archive_rename_apply": CommandId.ARCHIVE_RENAME_APPLY,
-                "archive_duplicates_preview": CommandId.ARCHIVE_DUPLICATES_PREVIEW,
-                "archive_duplicates_apply": CommandId.ARCHIVE_DUPLICATES_APPLY,
-                "usage_signals": CommandId.USAGE_SIGNALS,
-                "live_lexicon": CommandId.LIVE_LEXICON,
-                "after_class_report": CommandId.AFTER_CLASS_REPORT,
-            },
-        )
-        self.assertLessEqual(set(gui_workflow_command_ids().values()), registered)
-
     def test_cli_commands_have_existing_lock_labels(self) -> None:
         cases = {
             ("--show-distribution",): None,
@@ -75,6 +56,7 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
             ("--generate-missing-meanings",): "missing meaning generation",
         }
         parser = build_parser()
+        resolved_ids: set[CommandId] = set()
 
         for argv, expected_label in cases.items():
             with self.subTest(argv=argv):
@@ -83,21 +65,9 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
 
                 self.assertIsNotNone(command_id)
                 self.assertEqual(command_spec(command_id).lock_label, expected_label)
+                resolved_ids.add(command_id)
 
-    def test_gui_modules_do_not_import_cli_app(self) -> None:
-        gui_root = Path(__file__).resolve().parents[1] / "wordbyword" / "gui"
-        offenders: list[Path] = []
-        for path in gui_root.rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom) and node.module == "wordbyword.cli.app":
-                    offenders.append(path)
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name == "wordbyword.cli.app":
-                            offenders.append(path)
-
-        self.assertEqual(offenders, [])
+        self.assertEqual(resolved_ids, set(registered_command_ids()))
 
     def test_application_commands_import_does_not_load_adapters(self) -> None:
         code = (
@@ -107,7 +77,6 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
             "    name\n"
             "    for name in (\n"
             "        'wordbyword.cli.app',\n"
-            "        'wordbyword.gui.workflows',\n"
             "        'wordbyword.application.workspace',\n"
             "        'wordbyword.classroom_printout_studio.source_parsing.materials',\n"
             "        'wordbyword.classroom_printout_studio.source_parsing.paddleocr_vl',\n"
@@ -131,9 +100,8 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
         code = (
             "import sys\n"
             "import wordbyword.application.use_cases\n"
-            "unexpected = [name for name in ('wordbyword.cli.app', 'wordbyword.gui.workflows') if name in sys.modules]\n"
-            "if unexpected:\n"
-            "    raise SystemExit(', '.join(unexpected))\n"
+            "if 'wordbyword.cli.app' in sys.modules:\n"
+            "    raise SystemExit('wordbyword.cli.app')\n"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -144,11 +112,10 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
-    def test_cli_and_gui_adapters_do_not_import_domain_workflows(self) -> None:
+    def test_cli_adapter_does_not_import_domain_workflows(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         adapter_paths = [
             project_root / "wordbyword" / "cli" / "app.py",
-            project_root / "wordbyword" / "gui" / "workflows.py",
         ]
         forbidden_prefixes = (
             "wordbyword.after_class_reports",
@@ -172,7 +139,7 @@ class ApplicationCommandRegistryTests(unittest.TestCase):
 
 
 class ApplicationCommandAdapterTests(unittest.TestCase):
-    def test_dictionary_cli_and_gui_requests_match(self) -> None:
+    def test_dictionary_cli_options_build_request(self) -> None:
         parser = build_parser()
         cli_args = parser.parse_args(
             [
@@ -190,19 +157,21 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                 "--include-numbers",
             ]
         )
-        gui_values = {
-            "target_grade": "grade1",
-            "dictionary_input_dir": "input",
-            "dictionary_output_dir": "output",
-            "reference_dictionary_path": "reference.jsonl",
-            "model": "gemma-test",
-            "base_url": "",
-            "dictionary_force": False,
-            "include_numbers": True,
-            "include_punctuation": False,
-        }
+        expected = DictionaryBuildRequest(
+            command_id=CommandId.DICTIONARY_BUILD,
+            target_checkpoint="15",
+            target_grade="grade1",
+            input_dir=Path("input"),
+            output_dir=Path("output"),
+            reference_dictionary_path=Path("reference.jsonl"),
+            model="gemma-test",
+            base_url=None,
+            force=False,
+            include_numbers=True,
+            include_punctuation=False,
+        )
 
-        self.assertEqual(build_cli_request(cli_args), build_gui_request("dictionary_build", gui_values))
+        self.assertEqual(build_cli_request(cli_args), expected)
 
     def test_hosted_provider_runtime_flows_into_requests(self) -> None:
         parser = build_parser()
@@ -217,28 +186,13 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                 "https://example.test/gemini",
             ]
         )
-        gui_values = {
-            "target_grade": "grade1",
-            "dictionary_input_dir": "build-dictionary/original/grade1",
-            "dictionary_output_dir": "build-dictionary/build/grade1",
-            "reference_dictionary_path": "build-dictionary/references/reference-dictionary.jsonl",
-            "provider": "google",
-            "model": "gemini-test",
-            "base_url": "https://example.test/gemini",
-            "dictionary_force": False,
-            "include_numbers": False,
-            "include_punctuation": False,
-        }
-
         cli_request = build_cli_request(cli_args)
-        gui_request = build_gui_request("dictionary_build", gui_values)
 
         self.assertEqual(cli_request.provider, "google")  # type: ignore[union-attr]
-        self.assertEqual(gui_request.provider, "google")  # type: ignore[union-attr]
         self.assertEqual(cli_request.model, "gemini-test")  # type: ignore[union-attr]
-        self.assertEqual(gui_request.base_url, "https://example.test/gemini")  # type: ignore[union-attr]
+        self.assertEqual(cli_request.base_url, "https://example.test/gemini")  # type: ignore[union-attr]
 
-    def test_class_printouts_cli_and_gui_requests_match(self) -> None:
+    def test_class_printouts_cli_options_build_request(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             rewrite_dictionary = Path(workspace) / "live.jsonl"
             rewrite_dictionary.write_text("{}\n", encoding="utf-8")
@@ -269,27 +223,34 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                     "--force-class-printouts",
                 ]
             )
-            gui_values = {
-                "target_grade": "grade1",
-                "class_source_dir": "sources",
-                "source_output_root": "parsed",
-                "rewrite_output_root": "rewritten",
-                "print_output_root": "printed",
-                "dictionary_output_dir": "dictionary-output",
-                "live_lexicon_path": "live.jsonl",
-                "rewrite_dictionary_path": str(rewrite_dictionary),
-                "model": "gemma-test",
-                "base_url": "",
-                "force_class_printouts": True,
-                "skip_pdf_parse": True,
-                "pdf_render_dpi": "180",
-                "print_font_path": "",
-                "print_body_font_size": "",
-            }
+            expected = ClassPrintoutsRequest(
+                command_id=CommandId.CLASS_PRINTOUTS,
+                target_grade="grade1",
+                source_dir=Path("sources"),
+                parse_output_root=Path("parsed"),
+                rewrite_output_root=Path("rewritten"),
+                print_output_root=Path("printed"),
+                dictionary_output_dir=Path("dictionary-output"),
+                live_lexicon_path=Path("live.jsonl"),
+                rewrite_dictionary_path=rewrite_dictionary,
+                vocabulary_source=RewriteVocabularySource(
+                    path=rewrite_dictionary,
+                    kind="explicit",
+                    sha256=hashlib.sha256(b"{}\n").hexdigest(),
+                ),
+                model="gemma-test",
+                base_url=None,
+                force_class_printouts=True,
+                parse_pdf=False,
+                render_dpi=180,
+                paddleocr_vl_settings=None,
+                font_path=None,
+                body_font_size=None,
+            )
 
-            self.assertEqual(build_cli_request(cli_args), build_gui_request("class_printouts", gui_values))
+            self.assertEqual(build_cli_request(cli_args), expected)
 
-    def test_archive_rename_cli_and_gui_requests_match_except_adapter_id(self) -> None:
+    def test_archive_rename_cli_options_build_request(self) -> None:
         parser = build_parser()
         cli_args = parser.parse_args(
             [
@@ -302,18 +263,16 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
                 "gemma-test",
             ]
         )
-        gui_values = {
-            "target_grade": "grade1",
-            "archive_root": "archive",
-            "model": "gemma-test",
-            "base_url": "",
-        }
-        cli_request = build_cli_request(cli_args)
-        gui_request = build_gui_request("archive_rename_apply", gui_values)
+        expected = ArchiveRenameRequest(
+            command_id=CommandId.RENAME_CLASS_SESSION_ARCHIVE,
+            target_grade="grade1",
+            archive_root=Path("archive"),
+            model="gemma-test",
+            base_url=None,
+            apply=True,
+        )
 
-        self.assertIsInstance(cli_request, ArchiveRenameRequest)
-        self.assertIsInstance(gui_request, ArchiveRenameRequest)
-        self.assertEqual(_without_command_id(cli_request), _without_command_id(gui_request))
+        self.assertEqual(build_cli_request(cli_args), expected)
 
     def test_run_request_dispatches_dictionary_build_to_application_handler(self) -> None:
         request = DictionaryBuildRequest(
@@ -366,32 +325,6 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
         app_run_request.assert_called_once()
         self.assertIsInstance(app_run_request.call_args.args[0], ShowDistributionRequest)
 
-    def test_gui_run_workflow_delegates_to_application_boundary(self) -> None:
-        from wordbyword.gui import workflows
-
-        request = ShowDistributionRequest(
-            command_id=CommandId.SHOW_DISTRIBUTION,
-            jsonl_path=Path("dictionary.jsonl"),
-            model="gemma-test",
-        )
-
-        def emit(event: object) -> None:
-            return None
-
-        with (
-            patch("wordbyword.gui.workflows.build_gui_request", return_value=request) as build_request,
-            patch(
-                "wordbyword.application.use_cases.run_request",
-                return_value=CommandResult(0, "complete", "done"),
-            ) as app_run_request,
-        ):
-            result = workflows.run_workflow("dictionary_build", {"model": "gemma-test"}, emit)
-
-        build_request.assert_called_once_with("dictionary_build", {"model": "gemma-test"})
-        app_run_request.assert_called_once()
-        self.assertEqual(result.status, "complete")
-        self.assertEqual(result.detail, "done")
-
     def test_application_package_exports_run_request(self) -> None:
         import wordbyword.application as application
 
@@ -409,11 +342,3 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0)
         show_distribution.assert_called_once_with(request)
-
-
-def _without_command_id(request: object) -> dict[str, object]:
-    return {
-        field.name: getattr(request, field.name)
-        for field in fields(request)
-        if field.name not in {"command_id"}
-    }
