@@ -1,5 +1,7 @@
 # wordbyword
 
+[English](README.md) | [한국어](README.ko.md)
+
 `wordbyword` builds Korean learner-vocabulary artifacts from source documents, rewrites class source materials into grade-friendly Korean, renders editable DOCX handouts, and tracks vocabulary signals from materials used in class.
 
 The root `README.md` is the canonical technical guide. `BEGINNERS_GUIDE.md` is the tracked plain-language guide. Generated output folders do not own project documentation.
