@@ -10,7 +10,7 @@
 
 - 의존성 설치 및 명령 실행을 위한 `uv`.
 - `pyproject.toml`에 선언된 Python `>=3.14`. 가능하면 `uv`가 인터프리터를 설치하도록 하세요.
-- 모델 기반 워크플로를 위한 LLM 제공자. 기본값은 'arete:31b'를 사용하는 로컬 Ollama이며, 텍스트 전용 LLM 작업에는 Fallback으로 penAI, Anthropic/Claude, Google/Gemini도 지원됩니다.
+- 모델 기반 워크플로를 위한 LLM 제공자. 기본값은 `gemma4:31b`를 사용하는 로컬 Ollama이며, 텍스트 전용 LLM 작업에는 OpenAI, Anthropic/Claude, Google/Gemini도 지원됩니다.
 - 수업 원본 PDF 파싱을 위한 PaddleOCR-VL. 프로젝트 의존성 세트는 기본 환경에 PaddleOCR-VL을 설치하지 않으므로, 사이드카 환경이나 `paddleocr`을 import할 수 있는 최신 Python 환경을 사용하세요.
 - DOCX 출력을 위한 한국어 지원 글꼴. 렌더러는 macOS, Linux 및 Noto/Nanum의 일반적인 글꼴을 자동으로 감지합니다. 필요한 경우에만 글꼴 경로를 직접 지정하세요.
 
