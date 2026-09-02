@@ -50,6 +50,18 @@ final class StudioModel: ObservableObject {
         language.formatted(english, arguments: arguments)
     }
 
+    func displayPath(_ path: String) -> String {
+        guard !path.isEmpty else { return path }
+        let root = workspace.standardizedFileURL.path
+        let target = (path.hasPrefix("/")
+                      ? URL(fileURLWithPath: path)
+                      : workspace.appendingPathComponent(path)).standardizedFileURL.path
+        if target == root { return "~" }
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        guard target.hasPrefix(prefix) else { return path }
+        return "~/" + target.dropFirst(prefix.count)
+    }
+
     var progress: Double? { isRunning ? progressValue : nil }
     var isDictionaryBuildRunning: Bool { isRunning && activeAction == .buildDictionary }
     var phase: String {

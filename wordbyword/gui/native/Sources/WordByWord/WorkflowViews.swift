@@ -175,7 +175,7 @@ private struct PathRegister: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(model.snapshot?.paths[row.1] ?? "")
+                        .help(model.snapshot?.paths[row.1].map(model.displayPath) ?? "")
                     Button {
                         if let path = model.snapshot?.paths[row.1] { model.reveal(path: path) }
                     } label: {
@@ -219,8 +219,7 @@ private struct PathRegister: View {
         guard let path = model.snapshot?.paths[key] else {
             return model.t(model.isLoading ? "Reading workspace…" : "Not available")
         }
-        let prefix = (model.snapshot?.workspace ?? model.workspace.path) + "/"
-        return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : path
+        return model.displayPath(path)
     }
 }
 
@@ -272,6 +271,7 @@ struct FilePanel: View {
                         LazyVStack(spacing: 0) {
                             ForEach(files) { file in
                                 FileRecordRow(file: file,
+                                              pathLabel: model.displayPath(file.path),
                                               context: repeatedNames.contains(file.name) ||
                                                 ["material.docx", "after_class_report.docx"].contains(file.name)
                                                 ? URL(fileURLWithPath: file.path).deletingLastPathComponent().lastPathComponent : nil,
@@ -343,6 +343,7 @@ struct FilePanel: View {
 struct FileRecordRow: View {
     @Environment(\.studioLanguage) private var language
     let file: StudioFile
+    let pathLabel: String
     var context: String? = nil
     var selected = false
     let action: () -> Void
@@ -386,7 +387,7 @@ struct FileRecordRow: View {
         .foregroundStyle(StudioTheme.ink)
         .accessibilityLabel(displayName)
         .accessibilityValue(selected ? language.text("Selected") : file.kind)
-        .help(file.path)
+        .help(pathLabel)
     }
 }
 

@@ -191,7 +191,7 @@ struct RunReviewSheet: View {
                 .background(StudioTheme.faint)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 VStack(spacing: 0) {
-                    reviewRow(model.t("WORKSPACE"), model.workspace.path)
+                    reviewRow(model.t("WORKSPACE"), model.displayPath(model.workspace.path))
                     if action != .migrateWorkspace {
                         reviewRow(model.t("TARGET"), targetGradeLabel)
                         if usesLanguageModel {
@@ -364,7 +364,7 @@ struct DistributionSheet: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .help(distribution.path)
+                    .help(model.displayPath(distribution.path))
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 14)
@@ -481,7 +481,7 @@ struct PreviewSheet: View {
                          close: close)
             if !preview.isMigration {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(preview.path)
+                    Text(model.displayPath(preview.path))
                         .font(StudioType.system(11, design: .monospaced))
                         .foregroundStyle(StudioTheme.muted)
                         .lineLimit(1)

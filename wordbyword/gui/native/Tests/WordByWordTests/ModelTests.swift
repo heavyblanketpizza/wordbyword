@@ -417,6 +417,24 @@ final class ModelTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspacePathsDisplayFromTheProjectRoot() {
+        let runtime = StudioRuntime(workspace: URL(fileURLWithPath: "/workspace/wordbyword"),
+                                    python: URL(fileURLWithPath: "/usr/bin/python3"),
+                                    moduleRoot: URL(fileURLWithPath: "/workspace/wordbyword"))
+        let model = StudioModel(runtime: runtime, autoRefresh: false)
+
+        XCTAssertEqual(model.displayPath("/workspace/wordbyword"), "~")
+        XCTAssertEqual(
+            model.displayPath("/workspace/wordbyword/classroom-printout-studio/output/lesson.docx"),
+            "~/classroom-printout-studio/output/lesson.docx"
+        )
+        XCTAssertEqual(model.displayPath("build-dictionary/output/grade2"), "~/build-dictionary/output/grade2")
+        XCTAssertEqual(model.displayPath("/workspace/wordbyword-copy/lesson.docx"),
+                       "/workspace/wordbyword-copy/lesson.docx")
+        XCTAssertEqual(model.displayPath("/outside/lesson.docx"), "/outside/lesson.docx")
+    }
+
+    @MainActor
     func testSuccessfulDictionaryBuildRefreshesAndOpensVisualization() async throws {
         let script = """
         import json, os, sys
