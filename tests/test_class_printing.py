@@ -103,17 +103,17 @@ class PrintableMaterialTest(unittest.TestCase):
             for filename in (
                 "print_plan.json",
                 "content.md",
-                "material.docx",
+                "lesson.docx",
                 "attempts.jsonl",
                 "failures.jsonl",
                 "quality_report.json",
                 "manifest.json",
             ):
                 self.assertTrue((output_dir / filename).is_file(), filename)
-            self.assertFalse((output_dir / "material.pdf").exists())
+            self.assertFalse((output_dir / "lesson.pdf").exists())
             self.assertTrue((output_dir / "assets" / "fig1.png").is_file())
 
-            docx = Document(str(output_dir / "material.docx"))
+            docx = Document(str(output_dir / "lesson.docx"))
             paragraphs = "\n".join(paragraph.text for paragraph in docx.paragraphs)
             self.assertIn("쉬운 과학 이야기", paragraphs)
             self.assertIn("어린이가 읽기 쉬운 첫 문장입니다.", paragraphs)
@@ -126,14 +126,14 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertEqual(quality["selected_image_count"], 1)
             self.assertEqual(quality["output_formats"], ["docx"])
             self.assertTrue(quality["requires_human_revision"])
-            self.assertEqual(quality["revision_target"], "material.docx")
+            self.assertEqual(quality["revision_target"], "lesson.docx")
             self.assertNotIn("pdf_page_count", quality)
             self.assertEqual(quality["asset_mode"], "vision-candidate-images")
             self.assertEqual(quality["attached_image_count"], 1)
             self.assertEqual(quality["visual_candidate_count"], 1)
             manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertNotIn("pdf", manifest["files"])
-            self.assertEqual(manifest["files"]["docx"], "material.docx")
+            self.assertEqual(manifest["files"]["docx"], "lesson.docx")
             self.assertEqual(manifest["printable"]["target_grade"], "grade10")
             self.assertEqual(manifest["printable"]["target_profile"], "grade10-ko")
             self.assertTrue(manifest["printable"]["requires_human_revision"])
@@ -191,8 +191,8 @@ class PrintableMaterialTest(unittest.TestCase):
             self.assertFalse(progress_events[-1].accepted)
             self.assertIn("unknown asset_id", progress_events[-1].failure_reason)
             output_dir = output_root / "lesson"
-            self.assertFalse((output_dir / "material.pdf").exists())
-            self.assertFalse((output_dir / "material.docx").exists())
+            self.assertFalse((output_dir / "lesson.pdf").exists())
+            self.assertFalse((output_dir / "lesson.docx").exists())
             failures = read_jsonl(output_dir / "failures.jsonl")
             self.assertIn("unknown asset_id", failures[0]["failure_reason"])
             quality = json.loads((output_dir / "quality_report.json").read_text(encoding="utf-8"))
@@ -318,6 +318,42 @@ class PrintableMaterialTest(unittest.TestCase):
 
             self.assertIn("not attached as a visual candidate", str(error.exception))
 
+    def test_print_plan_repairs_nested_sections_and_misplaced_images(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            context = build_printable_context(write_rewritten_fixture(Path(workspace) / "rewritten"))
+            payload = {
+                "source_id": "lesson",
+                "title": "쉬운 과학 이야기",
+                "subtitle": "",
+                "body_font_size_pt": 13,
+                "sections": [
+                    {
+                        "heading": "첫 부분",
+                        "paragraphs": [
+                            "어린이가 읽는 첫 문장입니다.",
+                            {
+                                "heading": "이어지는 부분",
+                                "paragraphs": ["어린이가 읽는 다음 문장입니다.?]}"],
+                            },
+                        ],
+                        "selected_images": [{"asset_id": "fig1"}],
+                    }
+                ],
+            }
+
+            document = parse_and_validate_print_plan_response(
+                CompletionResult(
+                    provider="ollama",
+                    model="fake",
+                    content=json.dumps(payload, ensure_ascii=False),
+                ),
+                context=context,
+            )
+
+            self.assertEqual([section.heading for section in document.sections], ["첫 부분", "이어지는 부분"])
+            self.assertEqual(document.sections[1].paragraphs, ["어린이가 읽는 다음 문장입니다.?"])
+            self.assertEqual([image.asset_id for image in document.selected_images], ["fig1"])
+
 
 class PrintableCliTest(unittest.TestCase):
     def test_cli_prints_one_class_material_without_running_dictionary_pipeline(self) -> None:
@@ -351,8 +387,8 @@ class PrintableCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertTrue((output_root / "lesson" / "material.docx").is_file())
-            self.assertFalse((output_root / "lesson" / "material.pdf").exists())
+            self.assertTrue((output_root / "lesson" / "lesson.docx").is_file())
+            self.assertFalse((output_root / "lesson" / "lesson.pdf").exists())
             self.assertIn("printable class material written", stdout.getvalue())
             self.assertNotIn("pdf:", stdout.getvalue())
 
@@ -389,8 +425,8 @@ class PrintableCliTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             mock_pipeline.assert_not_called()
-            self.assertTrue((output_root / "lesson" / "material.docx").is_file())
-            self.assertTrue((output_root / "lesson-two" / "material.docx").is_file())
+            self.assertTrue((output_root / "lesson" / "lesson.docx").is_file())
+            self.assertTrue((output_root / "lesson-two" / "lesson-two.docx").is_file())
             self.assertIn("written: 2", stdout.getvalue())
 
 

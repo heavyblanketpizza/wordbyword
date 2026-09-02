@@ -638,7 +638,8 @@ def update_class_printout_ledger_entry(
         raise ClassPrintoutWorkflowError("Class printout ledger has invalid entries object.")
     print_output_dir = Path(getattr(print_output, "output_dir", "")) if print_output is not None else None
     printable_manifest = print_output_dir / "manifest.json" if print_output_dir is not None else None
-    printable_docx = print_output_dir / "material.docx" if print_output_dir is not None else None
+    printable_docx_value = getattr(print_output, "docx_path", None) if print_output is not None else None
+    printable_docx = Path(printable_docx_value) if printable_docx_value else None
     entry_key = class_printout_ledger_entry_key(
         target_grade=target_grade,
         source_sha256=source.sha256,

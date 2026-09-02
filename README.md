@@ -296,7 +296,7 @@ uv run wordbyword --print-class-materials --print-font-path /System/Library/Font
 
 - `print_plan.json`
 - `content.md`
-- `material.docx`
+- `<원본 파일명>.docx` (예: `example.pdf` → `example.docx`)
 - `attempts.jsonl`
 - `failures.jsonl`
 - `quality_report.json`

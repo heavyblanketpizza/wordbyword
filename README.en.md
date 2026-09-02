@@ -296,7 +296,7 @@ Printable outputs per source:
 
 - `print_plan.json`
 - `content.md`
-- `material.docx`
+- `<original filename>.docx` (for example, `example.pdf` → `example.docx`)
 - `attempts.jsonl`
 - `failures.jsonl`
 - `quality_report.json`

@@ -1009,7 +1009,10 @@ def _print_result(outputs: object) -> CommandResult:
     accepted = bool(getattr(outputs, "accepted"))
     artifacts = {"output_dir": str(getattr(outputs, "output_dir"))}
     if accepted:
-        artifacts["docx"] = str(Path(str(getattr(outputs, "output_dir"))) / "material.docx")
+        docx_path = getattr(outputs, "docx_path", None)
+        if docx_path is None:
+            docx_path = Path(str(getattr(outputs, "output_dir"))) / f"{getattr(outputs, 'source_id')}.docx"
+        artifacts["docx"] = str(docx_path)
     detail = (
         f"printable class material written: {getattr(outputs, 'source_id')}"
         if accepted

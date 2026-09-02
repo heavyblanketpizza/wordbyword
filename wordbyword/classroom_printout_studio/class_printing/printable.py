@@ -57,6 +57,7 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".
 PAGE_NUMBER_PATTERN = re.compile(r"page-(\d{4})")
 HTML_IMAGE_PATTERN = re.compile(r"<img\b", re.IGNORECASE)
 MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*]\([^)]+\)")
+TRAILING_JSON_ARTIFACT_PATTERN = re.compile(r"(?<=[.!?…])[\]}]+$")
 FORBIDDEN_ACTIVITY_HEADING_PATTERN = re.compile(
     r"(?:\b(?:question|questions|worksheet|activity|quiz|answers?)\b|문제|활동|퀴즈|정답|질문)",
     re.IGNORECASE,
@@ -229,6 +230,7 @@ class PrintablePrompt:
 class PrintableMaterialOutputs:
     source_id: str
     output_dir: Path
+    docx_path: Path | None
     accepted: bool
     failure_reason: str
     attempt_rows: list[dict[str, object]]
@@ -410,6 +412,7 @@ def print_class_material(
     return PrintableMaterialOutputs(
         source_id=context.source_id,
         output_dir=output_dir,
+        docx_path=output_dir / printable_docx_filename(context) if accepted else None,
         accepted=accepted,
         failure_reason=failure_reason,
         attempt_rows=attempt_rows,
@@ -620,7 +623,7 @@ def parse_and_validate_print_plan_response(
 ) -> PrintableDocument:
     if MARKDOWN_FENCE in result.content:
         raise PrintableMaterialError("Printable plan response included a markdown fence.")
-    parsed = parse_json_object(result.content)
+    parsed = repair_printable_plan_shape(parse_json_object(result.content))
     try:
         document = PrintableDocument.model_validate(parsed)
     except ValidationError as exc:
@@ -635,6 +638,59 @@ def parse_and_validate_print_plan_response(
         visual_candidate_assets=visual_candidate_assets,
     )
     return document
+
+
+def repair_printable_plan_shape(parsed: Mapping[str, object]) -> dict[str, object]:
+    """Repair the limited section nesting drift produced by local models."""
+    repaired = dict(parsed)
+    raw_sections = parsed.get("sections")
+    if not isinstance(raw_sections, list):
+        return repaired
+
+    selected_images = parsed.get("selected_images")
+    collected_images = list(selected_images) if isinstance(selected_images, list) else []
+    repaired_sections: list[object] = []
+
+    def flatten_section(raw_section: object) -> list[object]:
+        if not isinstance(raw_section, Mapping):
+            return [raw_section]
+
+        section = dict(raw_section)
+        misplaced_images = section.get("selected_images")
+        if isinstance(misplaced_images, list):
+            collected_images.extend(misplaced_images)
+            section.pop("selected_images", None)
+
+        paragraphs = section.get("paragraphs")
+        if not isinstance(paragraphs, list):
+            return [section]
+
+        direct_paragraphs: list[object] = []
+        nested_sections: list[object] = []
+        for paragraph in paragraphs:
+            if (
+                isinstance(paragraph, Mapping)
+                and isinstance(paragraph.get("heading"), str)
+                and isinstance(paragraph.get("paragraphs"), list)
+            ):
+                nested_sections.extend(flatten_section(paragraph))
+            else:
+                direct_paragraphs.append(paragraph)
+
+        flattened: list[object] = []
+        if direct_paragraphs or not nested_sections:
+            section["paragraphs"] = direct_paragraphs
+            flattened.append(section)
+        flattened.extend(nested_sections)
+        return flattened
+
+    for raw_section in raw_sections:
+        repaired_sections.extend(flatten_section(raw_section))
+
+    repaired["sections"] = repaired_sections
+    if collected_images or "selected_images" not in repaired:
+        repaired["selected_images"] = collected_images
+    return repaired
 
 
 def assert_client_supports_printable_images(client: SupportsCompletion) -> None:
@@ -662,7 +718,11 @@ def normalize_printable_document(
     sections = [
         PrintableSection(
             heading=section.heading.strip(),
-            paragraphs=[paragraph.strip() for paragraph in section.paragraphs if paragraph.strip()],
+            paragraphs=[
+                TRAILING_JSON_ARTIFACT_PATTERN.sub("", paragraph.strip())
+                for paragraph in section.paragraphs
+                if paragraph.strip()
+            ],
         )
         for section in document.sections
     ]
@@ -754,7 +814,7 @@ def write_printable_artifacts(
         encoding="utf-8",
     )
     render_docx(
-        output_dir / "material.docx",
+        output_dir / printable_docx_filename(context),
         document=document,
         context=context,
         font_name=font_name,
@@ -1220,7 +1280,7 @@ def build_quality_report(
         "font_name": font_name,
         "output_formats": ["docx"] if accepted else [],
         "requires_human_revision": accepted,
-        "revision_target": "material.docx" if accepted else "",
+        "revision_target": printable_docx_filename(context) if accepted else "",
         "asset_catalog_count": len(context.assets),
         "asset_mode": printable_asset_mode(prompt.attached_assets),
         "attached_image_count": len(prompt.attached_assets),
@@ -1248,11 +1308,12 @@ def build_printable_manifest(
         "quality_report_json": "quality_report.json",
     }
     if accepted:
+        docx_filename = printable_docx_filename(context)
         files.update(
             {
                 "print_plan_json": "print_plan.json",
                 "content_markdown": "content.md",
-                "docx": "material.docx",
+                "docx": docx_filename,
             }
         )
     return {
@@ -1284,11 +1345,19 @@ def build_printable_manifest(
             "attached_image_count": len(prompt.attached_assets),
             "visual_candidate_count": len(prompt.attached_assets),
             "requires_human_revision": accepted,
-            "revision_target": "material.docx" if accepted else "",
+            "revision_target": printable_docx_filename(context) if accepted else "",
             "rendered_at": datetime.now(timezone.utc).isoformat(),
         },
         "files": files,
     }
+
+
+def printable_docx_filename(context: PrintableContext) -> str:
+    source_name = Path(context.source_filename).name
+    source_stem = Path(source_name).stem.strip()
+    if not source_stem or source_stem in {".", ".."}:
+        source_stem = context.source_id.strip() or "class-printout"
+    return f"{source_stem}.docx"
 
 
 def resolve_korean_font(font_path: Path | None) -> tuple[Path, str]:

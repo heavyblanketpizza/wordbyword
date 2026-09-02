@@ -970,7 +970,7 @@ class ParserDefaultsTest(unittest.TestCase):
             ):
                 self.assertEqual(main(args), 0)
 
-            (print_root / "lesson" / "material.docx").unlink()
+            (print_root / "lesson" / "lesson.docx").unlink()
 
             with (
                 patch("sys.stdout", io.StringIO()),
@@ -1183,7 +1183,7 @@ class ParserDefaultsTest(unittest.TestCase):
         rendered = stdout.getvalue()
         self.assertIn("PRINTABLE CLASS // DOCX MATERIAL", rendered)
         self.assertIn("PLAN", rendered)
-        self.assertIn("material.docx", rendered)
+        self.assertIn("lesson.docx", rendered)
         self.assertNotIn("print class [", rendered)
 
     def test_interactive_print_class_materials_output_renders_styled_summary(self) -> None:
@@ -1446,17 +1446,19 @@ def write_printed_class_printout_bundle(
 ) -> SimpleNamespace:
     output_dir = print_root / source_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "material.docx").write_bytes(b"docx")
+    docx_filename = f"{source_id}.docx"
+    (output_dir / docx_filename).write_bytes(b"docx")
     manifest = {
         "schema_version": "wordbyword.printable_material.v1",
         "source": {"id": source_id, "target_grade": "grade1", "filename": f"{source_id}.txt", "sha256": source_sha256},
         "printable": {"status": "written", "target_grade": "grade1", "target_profile": "grade1-ko"},
-        "files": {"docx": "material.docx"},
+        "files": {"docx": docx_filename},
     }
     (output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return SimpleNamespace(
         source_id=source_id,
         output_dir=output_dir,
+        docx_path=output_dir / docx_filename,
         accepted=True,
         failure_reason="",
         attempt_rows=[{"selected_asset_ids": [], "body_font_size_pt": 13}],
