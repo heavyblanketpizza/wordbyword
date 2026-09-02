@@ -40,7 +40,7 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
                 {move.target_path for move in result.moves},
             )
             self.assertIn(
-                root / "build-dictionary" / "output" / "grade1" / legacy_dictionary.name,
+                root / "build-dictionary" / "output" / "grade2" / legacy_dictionary.name,
                 {move.target_path for move in result.moves},
             )
             self.assertIn(
@@ -80,13 +80,13 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
             self.assertTrue(
                 (root / "build-dictionary" / "original" / NEEDS_GRADE_REVIEW / "needs-label.pdf").is_file()
             )
-            self.assertTrue((root / "build-dictionary" / "output" / "grade1" / "15_final_dictionary.jsonl").is_file())
+            self.assertTrue((root / "build-dictionary" / "output" / "grade2" / "15_final_dictionary.jsonl").is_file())
             self.assertTrue(
                 (
                     root
                     / "classroom-printout-studio"
                     / "class-source-materials"
-                    / "grade1"
+                    / "grade2"
                     / "lesson.txt"
                 ).is_file()
             )
@@ -105,7 +105,7 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
                     / "classroom-printout-studio"
                     / "class-source-materials"
                     / "parsed"
-                    / "grade1"
+                    / "grade2"
                     / "lesson"
                     / "manifest.json"
                 ).is_file()
@@ -129,7 +129,7 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
                 ).is_file()
             )
             self.assertTrue(
-                (root / "wbw-vocabulary-intelligence" / "usage-signal-build" / "grade1" / "00_summary.json").is_file()
+                (root / "wbw-vocabulary-intelligence" / "usage-signal-build" / "grade2" / "00_summary.json").is_file()
             )
             self.assertTrue(
                 (
@@ -147,3 +147,28 @@ class GradeWorkspaceMigrationTest(unittest.TestCase):
             second = migrate_grade_workspaces(root=root, apply=True)
             self.assertEqual(second.applied_count, 0)
             self.assertEqual(second.planned_count, 0)
+
+    def test_grade_two_textbook_sources_and_flat_dictionary_outputs_migrate_together(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            source_names = ["2-1_국어[나].pdf", "2-1_국어활동.pdf", "2-1국어[가].pdf"]
+            for name in source_names:
+                path = root / "build-dictionary" / "original" / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("source", encoding="utf-8")
+            final_dictionary = root / "build-dictionary" / "15_final_dictionary.jsonl"
+            final_dictionary.write_text("{}\n", encoding="utf-8")
+
+            result = migrate_grade_workspaces(root=root, apply=False)
+            targets = {move.target_path for move in result.moves}
+
+            for name in source_names:
+                self.assertIn(root / "build-dictionary" / "original" / "grade2" / name, targets)
+            self.assertIn(
+                root / "build-dictionary" / "output" / "grade2" / "15_final_dictionary.jsonl",
+                targets,
+            )
+            self.assertNotIn(
+                root / "build-dictionary" / "original" / NEEDS_GRADE_REVIEW / "2-1_국어[나].pdf",
+                targets,
+            )

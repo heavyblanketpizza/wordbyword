@@ -6,7 +6,7 @@ struct StudioView: View {
     @State private var sheet: StudioSheet?
 
     private enum StudioSheet {
-        case settings, outputs, journal, preview, confirmation
+        case settings, outputs, journal, preview, distribution, confirmation
     }
 
     var body: some View {
@@ -18,6 +18,7 @@ struct StudioView: View {
                     pageHeading
                     if model.snapshot?.legacyLayout == true { legacyNotice }
                     if let notice = model.notice { noticeBanner(notice) }
+                    if model.isDictionaryBuildRunning { DictionaryBuildLockNotice() }
                     WorkflowContent(model: model, showOutputs: { sheet = .outputs })
                 }
                 .padding(.horizontal, 36)
@@ -32,10 +33,12 @@ struct StudioView: View {
         .background(StudioTheme.canvas)
         .foregroundStyle(StudioTheme.ink)
         .tint(StudioTheme.ink)
+        .font(StudioType.body)
         .ignoresSafeArea(.container, edges: .top)
         .environment(\.locale, model.language.locale)
         .environment(\.studioLanguage, model.language)
         .onReceive(model.$preview) { if $0 != nil { sheet = .preview } }
+        .onReceive(model.$distribution) { if $0 != nil { sheet = .distribution } }
         .onReceive(model.$pendingAction) { if $0 != nil { sheet = .confirmation } }
         .onReceive(model.$showsLog) { if $0 { sheet = .journal } }
         .sheet(isPresented: Binding(
@@ -54,18 +57,18 @@ struct StudioView: View {
 
     private var titleBar: some View {
         HStack(spacing: 9) {
-            Text("WordByWord").font(.system(size: 13, weight: .semibold))
+            Text("WordByWord").font(StudioType.system(13, weight: .semibold))
             Text(model.t("Korean vocabulary studio"))
-                .font(.system(size: 12))
+                .font(StudioType.system(12))
                 .foregroundStyle(StudioTheme.muted)
             Spacer()
             Button { model.chooseWorkspace() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "folder").font(.system(size: 11))
+                    Image(systemName: "folder").font(StudioType.system(11))
                     Text(model.workspace.lastPathComponent)
                         .lineLimit(1)
-                        .font(.system(size: 11, weight: .medium))
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                        .font(StudioType.system(11, weight: .medium))
+                    Image(systemName: "chevron.down").font(StudioType.system(8, weight: .semibold))
                 }
             }
             .buttonStyle(.plain)
@@ -87,10 +90,10 @@ struct StudioView: View {
                 Button { model.tab = tab } label: {
                     HStack(spacing: 8) {
                         Text(tab.number)
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .font(StudioType.system(13, weight: .semibold, design: .monospaced))
                             .opacity(model.tab == tab ? 0.72 : 0.58)
                         Text(model.t(tab.title).uppercased())
-                            .font(.system(size: 13.5, weight: .semibold))
+                            .font(StudioType.system(13.5, weight: .semibold))
                     }
                     .padding(.horizontal, 14)
                     .frame(height: 40)
@@ -104,24 +107,16 @@ struct StudioView: View {
                 .accessibilityAddTraits(model.tab == tab ? .isSelected : [])
             }
             Spacer(minLength: 10)
-            Menu {
-                ForEach(1...12, id: \.self) { number in
-                    Button(model.f("Grade %d", number)) { model.changeGrade("grade\(number)") }
-                }
-            } label: {
-                Text(model.f("GRADE %@", gradeNumber))
-                    .font(StudioType.condensed(11.5, weight: .bold, language: model.language))
-            }
-            .menuStyle(.borderlessButton)
+            Label(model.t("GRADE 2 ONLY"), systemImage: "graduationcap.fill")
+            .font(StudioType.condensed(11.5, weight: .bold, language: model.language))
             .padding(.horizontal, 10)
             .frame(height: 32)
             .background(.white)
             .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(StudioTheme.ink, lineWidth: 1) }
             .fixedSize()
             .padding(.bottom, 7)
-            .disabled(model.isRunning || model.isLoading)
-            .help(model.t("Choose the target school grade"))
-            .accessibilityLabel(model.f("Target grade %@", gradeNumber))
+            .help(model.t("This app is configured only for second-grade materials."))
+            .accessibilityLabel(model.t("Second grade only"))
             IconButton(title: model.t("Studio settings"), systemName: "slider.horizontal.3") { sheet = .settings }
                 .padding(.bottom, 7)
                 .disabled(model.isRunning || model.isLoading)
@@ -158,12 +153,12 @@ struct StudioView: View {
     private var legacyNotice: some View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: "square.stack.3d.up")
-                .font(.system(size: 18, weight: .medium))
+                .font(StudioType.system(18, weight: .medium))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(model.t("Your existing workspace, preserved."))
-                    .font(.system(size: 13, weight: .semibold))
-                Text(model.t("Browse your files here. Review the grade-folder plan before starting new work."))
+                    .font(StudioType.system(13, weight: .semibold))
+                Text(model.t("Browse your files here. Review the Grade 2 folder plan before starting new work."))
                     .font(StudioType.detail)
                     .foregroundStyle(StudioTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -187,7 +182,7 @@ struct StudioView: View {
             Text(model.t(text)).font(StudioType.detail).textSelection(.enabled)
             Spacer()
             Button { model.notice = nil } label: {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                Image(systemName: "xmark").font(StudioType.system(10, weight: .bold))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(model.t("Dismiss notice"))
@@ -222,6 +217,15 @@ struct StudioView: View {
             }
             .buttonStyle(MonochromeButtonStyle())
             if model.isRunning {
+                if model.isDictionaryBuildRunning {
+                    Button {} label: {
+                        Label(model.t(StudioAction.buildDictionary.title), systemImage: "lock.fill")
+                    }
+                    .buttonStyle(MonochromeButtonStyle())
+                    .disabled(true)
+                    .accessibilityIdentifier("dictionary-build-disabled-footer")
+                    .help(model.t("Dictionary-build buttons stay locked until this run finishes or stops."))
+                }
                 Button(model.t(model.isCancelling ? "Stopping…" : "Stop run")) { model.cancelRun() }
                     .buttonStyle(MonochromeButtonStyle(primary: true))
                     .disabled(model.isCancelling)
@@ -234,7 +238,10 @@ struct StudioView: View {
                 .buttonStyle(MonochromeButtonStyle(primary: true))
                 .disabled(model.isLoading)
             } else {
-                Button { model.requestRun(primaryAction) } label: {
+                Button {
+                    if primaryAction == .buildDictionary { model.requestDictionaryBuild() }
+                    else { model.requestRun(primaryAction) }
+                } label: {
                     Label(model.t(primaryAction.title), systemImage: "play.fill")
                 }
                 .buttonStyle(MonochromeButtonStyle(primary: true))
@@ -262,6 +269,10 @@ struct StudioView: View {
                 if let preview = model.preview {
                     PreviewSheet(model: model, preview: preview, close: dismissSheet)
                 }
+            case .distribution:
+                if let distribution = model.distribution {
+                    DistributionSheet(model: model, distribution: distribution, close: dismissSheet)
+                }
             case .confirmation:
                 if let action = model.pendingAction {
                     RunReviewSheet(model: model, action: action, close: dismissSheet)
@@ -273,6 +284,7 @@ struct StudioView: View {
         .background(.white)
         .foregroundStyle(StudioTheme.ink)
         .tint(StudioTheme.ink)
+        .font(StudioType.body)
         .environment(\.colorScheme, .light)
         .environment(\.locale, model.language.locale)
         .environment(\.studioLanguage, model.language)
@@ -286,11 +298,11 @@ struct StudioView: View {
         }
         sheet = nil
         model.preview = nil
+        model.distribution = nil
         model.pendingAction = nil
         model.showsLog = false
     }
 
-    private var gradeNumber: String { String(model.grade.dropFirst(5)) }
     private var metricValue: Int {
         model.snapshot?.counts[metricKey] ?? 0
     }

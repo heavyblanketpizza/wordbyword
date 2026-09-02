@@ -76,6 +76,7 @@ class DictionaryBuildRequest:
     base_url: str | None
     force: bool
     provider: str = "ollama"
+    enforce_managed_sources: bool = True
 
 
 @dataclass(frozen=True)

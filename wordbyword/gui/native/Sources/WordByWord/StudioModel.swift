@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class StudioModel: ObservableObject {
     @Published var tab: StudioTab = .dictionary
-    @Published var grade = "grade1"
+    @Published var grade = "grade2"
     @Published var workspace: URL
     @Published var snapshot: WorkspaceSnapshot?
     @Published var settings = StudioSettings() {
@@ -27,8 +27,10 @@ final class StudioModel: ObservableObject {
     @Published var lastResult: RunResult?
     @Published var showsLog = false
     @Published var preview: PreviewDocument?
+    @Published var distribution: DictionaryDistribution?
     @Published var selectedReport = ""
     @Published var pendingAction: StudioAction?
+    @Published private(set) var activeAction: StudioAction?
     @Published private var progressValue: Double?
 
     private let runtime: StudioRuntime
@@ -49,6 +51,7 @@ final class StudioModel: ObservableObject {
     }
 
     var progress: Double? { isRunning ? progressValue : nil }
+    var isDictionaryBuildRunning: Bool { isRunning && activeAction == .buildDictionary }
     var phase: String {
         if isCancelling { return "Waiting for the process to stop" }
         if isRunning { return logs.last?.phase.replacingOccurrences(of: "_", with: " ") ?? "Starting" }
@@ -95,15 +98,8 @@ final class StudioModel: ObservableObject {
     }
 
     func changeGrade(_ value: String) {
-        guard !isRunning, !isSavingSettings, (1...12).map({ "grade\($0)" }).contains(value), value != grade else { return }
-        grade = value
-        snapshot = nil
-        preview = nil
-        pendingAction = nil
-        selectedReport = ""
-        lastResult = nil
-        logs = []
-        notice = nil
+        guard value == "grade2", grade != value, !isRunning, !isSavingSettings else { return }
+        grade = "grade2"
         refresh()
     }
 
@@ -132,6 +128,7 @@ final class StudioModel: ObservableObject {
                 self.error = nil
                 self.notice = nil
                 self.preview = nil
+                self.distribution = nil
                 self.pendingAction = nil
                 self.selectedReport = ""
                 self.lastResult = nil
@@ -200,6 +197,51 @@ final class StudioModel: ObservableObject {
         }
     }
 
+    var hasDictionaryDistribution: Bool { dictionaryDistributionArtifact() != nil }
+
+    func requestDictionaryBuild() {
+        guard !isRunning, !isLoading, !isSavingSettings else { return }
+        if snapshot?.legacyLayout == true {
+            notice = "Organize the current files into the Grade 2 folder before extracting vocabulary. The visualization remains available for existing saved dictionaries."
+            showMigrationPlan()
+        } else {
+            requestRun(.buildDictionary)
+        }
+    }
+
+    func loadDictionaryDistribution(requireFinal: Bool = false) {
+        guard !isRunning, !isSavingSettings else { return }
+        guard let artifact = dictionaryDistributionArtifact(requireFinal: requireFinal) else {
+            error = requireFinal
+                ? "The build completed without a saved stage-15 final dictionary, so the visualization could not be opened."
+                : "Build dictionary stages 00–15 before opening the vocabulary visualization."
+            return
+        }
+        let (id, client, root, targetGrade) = beginRead()
+        error = nil
+        Task { [weak self] in
+            do {
+                var result: DictionaryDistribution?
+                for try await packet in client.packets(for: BridgeRequest(
+                    operation: "distribution", grade: targetGrade, path: artifact.path
+                )) {
+                    if case .distribution(let value) = packet { result = value }
+                }
+                guard let self, self.isCurrentRead(id, root: root, grade: targetGrade) else { return }
+                guard let result, result.path == artifact.path else {
+                    throw StudioFailure("The vocabulary visualization did not match the selected dictionary artifact.")
+                }
+                self.distribution = result
+                self.error = self.settingsError
+                self.finishRead(id)
+            } catch {
+                guard let self, self.isCurrentRead(id, root: root, grade: targetGrade) else { return }
+                self.error = error.localizedDescription
+                self.finishRead(id)
+            }
+        }
+    }
+
     func showMigrationPlan() {
         guard !isRunning, !isSavingSettings else { return }
         let (id, client, root, targetGrade) = beginRead()
@@ -253,7 +295,7 @@ final class StudioModel: ObservableObject {
         pendingAction = nil
         do {
             let arguments = try arguments(for: action)
-            start(request: BridgeRequest(operation: "run", arguments: arguments), title: action.title)
+            start(request: BridgeRequest(operation: "run", arguments: arguments), title: action.title, action: action)
         } catch { self.error = error.localizedDescription }
     }
 
@@ -350,7 +392,7 @@ final class StudioModel: ObservableObject {
         readClient = nil
     }
 
-    private func start(request: BridgeRequest, title: String) {
+    private func start(request: BridgeRequest, title: String, action: StudioAction? = nil) {
         guard !isRunning, !isSavingSettings else { return }
         readClient?.cancel()
         readID = UUID()
@@ -359,11 +401,13 @@ final class StudioModel: ObservableObject {
         let id = UUID()
         runID = id
         runClient = client
+        activeAction = action
         isRunning = true
         isCancelling = false
         progressValue = nil
         error = nil
         notice = nil
+        distribution = nil
         lastResult = nil
         logs = [LogEntry(phase: "Starting", detail: title)]
         showsLog = true
@@ -388,6 +432,7 @@ final class StudioModel: ObservableObject {
             self.runClient = nil
             self.runID = nil
             self.isRunning = false
+            self.activeAction = nil
             self.isCancelling = false
             self.progressValue = nil
             self.reviewedMigration = nil
@@ -413,11 +458,12 @@ final class StudioModel: ObservableObject {
             }
             // Refresh after both success and failure; partial outputs may have been saved.
             let operationError = self.error
-            self.refreshAfterRun(preserving: operationError)
+            self.refreshAfterRun(preserving: operationError,
+                                 showDistribution: action == .buildDictionary && result?.succeeded == true)
         }
     }
 
-    private func refreshAfterRun(preserving operationError: String?) {
+    private func refreshAfterRun(preserving operationError: String?, showDistribution: Bool = false) {
         let (id, client, root, targetGrade) = beginRead()
         Task { [weak self] in
             do {
@@ -438,6 +484,7 @@ final class StudioModel: ObservableObject {
                 }
                 self.error = operationError ?? self.settingsError
                 self.finishRead(id)
+                if showDistribution, operationError == nil { self.loadDictionaryDistribution(requireFinal: true) }
             } catch {
                 guard let self, self.isCurrentRead(id, root: root, grade: targetGrade) else { return }
                 self.error = operationError ?? error.localizedDescription
@@ -449,5 +496,18 @@ final class StudioModel: ObservableObject {
     private func append(_ entry: LogEntry) {
         logs.append(entry)
         if logs.count > 500 { logs.removeFirst(logs.count - 500) }
+    }
+
+    private func dictionaryDistributionArtifact(requireFinal: Bool = false) -> StudioArtifact? {
+        if requireFinal {
+            return snapshot?.artifacts.first { $0.id == "final_dictionary" && $0.exists }
+        }
+        let priority = [
+            "final_dictionary", "meaning_dictionary_candidates", "generated_example_dictionary",
+            "linked_dictionary_candidates", "cleaned_dictionary_candidates", "dictionary_candidates",
+        ]
+        let available = Dictionary(uniqueKeysWithValues: (snapshot?.artifacts ?? [])
+            .filter(\.exists).map { ($0.id, $0) })
+        return priority.compactMap { available[$0] }.first
     }
 }

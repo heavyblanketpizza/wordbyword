@@ -38,7 +38,7 @@ enum StudioTab: String, CaseIterable, Identifiable, Sendable {
     }
     var subtitle: String {
         switch self {
-        case .dictionary: return "Build a Korean dictionary from source documents, one grade at a time."
+        case .dictionary: return "Build a Korean dictionary from Grade 2 source documents."
         case .classroom: return "Parse, rewrite, and print reading material for your selected grade."
         case .vocabulary: return "Connect archived lessons to the words your students actually encounter."
         case .reports: return "Create a reading report from one archived class handout."
@@ -94,9 +94,37 @@ struct PreviewDocument: Decodable, Identifiable, Sendable {
     var canApply: Bool? = nil
     var plannedCount: Int? = nil
     var byteCount: Int? = nil
+    var table: PreviewTable? = nil
 
     var id: String { path + "#" + name }
     var isMigration: Bool { canApply != nil || plannedCount != nil }
+}
+
+struct PreviewTable: Decodable, Sendable {
+    let format: String
+    let columns: [String]
+    let rows: [[String]]
+    let truncated: Bool
+}
+
+struct DictionaryDistribution: Decodable, Identifiable, Sendable {
+    let artifactId: String
+    let name: String
+    let path: String
+    let stage: String
+    let entryCount: Int
+    let learningSignal: DistributionSeries
+    let occurrenceCount: DistributionSeries
+
+    var id: String { path + "#distribution" }
+}
+
+struct DistributionSeries: Decodable, Sendable {
+    let bins: [Int]
+    let minimum: Double?
+    let median: Double?
+    let maximum: Double?
+    let axisLabels: [String]
 }
 
 struct RunResult: Decodable, Sendable {
@@ -273,7 +301,7 @@ enum StudioAction: String, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .buildDictionary: return "Build dictionary"
+        case .buildDictionary: return "Build dictionary 00–15"
         case .prepareDictionary: return "Prepare dictionary"
         case .previewSourceNames: return "Preview source names"
         case .applySourceNames: return "Apply source names"
@@ -304,7 +332,7 @@ enum StudioAction: String, CaseIterable, Identifiable, Sendable {
     var detail: String {
         switch self {
         case .buildDictionary:
-            return "Run dictionary stages 00–15 for the selected grade. Later stages use your configured model and may incur provider charges. Existing checkpoints are reused unless force rebuild is on."
+            return "Run dictionary stages 00–15 for grade 2, then open the vocabulary distribution. The original textbook filenames stay unchanged. Later stages use your configured model. Existing checkpoints are reused unless force rebuild is on."
         case .prepareDictionary:
             return "Run stages 00–09 without a language model. This removes existing stages 10–15 for the selected grade, including the final dictionary. Rebuild the full dictionary to restore those outputs."
         case .previewSourceNames:
@@ -370,8 +398,8 @@ enum StudioCommandBuilder {
     static func arguments(for action: StudioAction, snapshot: WorkspaceSnapshot,
                           settings: StudioSettings, selectedReport: String) throws -> [String] {
         if action == .migrateWorkspace { return ["--migrate-grade-workspaces", "--apply"] }
-        guard (1...12).map({ "grade\($0)" }).contains(snapshot.grade) else {
-            throw StudioFailure("Choose a grade from 1 through 12.")
+        guard snapshot.grade == "grade2" else {
+            throw StudioFailure("This app only runs grade 2 workflows.")
         }
         guard !snapshot.legacyLayout || !action.mutatesWorkspace else {
             throw StudioFailure("Review and organize the legacy workspace before making changes. Your existing files remain available to browse.")

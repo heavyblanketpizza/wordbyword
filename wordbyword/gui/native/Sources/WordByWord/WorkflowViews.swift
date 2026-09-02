@@ -47,7 +47,7 @@ struct WorkflowContent: View {
                     actions
                 } label: {
                     Label(model.t("More actions"), systemImage: "ellipsis")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(StudioType.system(12, weight: .semibold))
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -165,7 +165,7 @@ private struct PathRegister: View {
             ForEach(Array(visibleRows.enumerated()), id: \.offset) { index, row in
                 HStack(spacing: 12) {
                     Image(systemName: row.1.contains("path") ? "doc" : "folder")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(StudioType.system(16, weight: .medium))
                         .frame(width: 24)
                         .accessibilityHidden(true)
                     SectionLabel(model.t(row.0)).frame(width: 108, alignment: .leading)
@@ -180,7 +180,7 @@ private struct PathRegister: View {
                         if let path = model.snapshot?.paths[row.1] { model.reveal(path: path) }
                     } label: {
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(StudioType.system(12, weight: .semibold))
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
@@ -193,9 +193,9 @@ private struct PathRegister: View {
                         Button { expanded.toggle() } label: {
                             HStack(spacing: 7) {
                                 Text(model.t("Output locations"))
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(StudioType.system(11, weight: .medium))
                                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .font(StudioType.system(9, weight: .semibold))
                             }
                             .frame(height: 28)
                             .contentShape(Rectangle())
@@ -301,7 +301,7 @@ struct FilePanel: View {
                                      (summary["sentences"] ?? 0).formatted(.number.locale(model.language.locale))))
                         Spacer(minLength: 0)
                     }
-                    .font(.system(size: 11))
+                    .font(StudioType.system(11))
                     .foregroundStyle(StudioTheme.muted)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
@@ -359,23 +359,23 @@ struct FileRecordRow: View {
                         .fill(selected ? StudioTheme.ink : StudioTheme.canvas)
                     RoundedRectangle(cornerRadius: 5).strokeBorder(StudioTheme.ink, lineWidth: 1)
                     Image(systemName: selected ? "checkmark" : "doc.text")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(StudioType.system(13, weight: .medium))
                         .foregroundStyle(selected ? .white : StudioTheme.ink)
                 }
                 .frame(width: 29, height: 33)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(displayName)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(StudioType.system(13, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Text(language.format("%@  ·  %@", file.kind.uppercased(),
                                          Int64(file.size).formatted(.byteCount(style: .file).locale(language.locale))))
-                        .font(.system(size: 11))
+                        .font(StudioType.system(11))
                         .foregroundStyle(StudioTheme.muted)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: selected ? "checkmark" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(StudioType.system(10, weight: .semibold))
             }
             .padding(.horizontal, 14)
             .frame(height: 55)
@@ -403,6 +403,37 @@ private struct CheckpointPanel: View {
     var body: some View {
         StudioPanel(title: model.t("Saved checkpoints"), icon: "square.stack.3d.up") {
             VStack(spacing: 0) {
+                Button { model.requestDictionaryBuild() } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "text.magnifyingglass")
+                            .font(StudioType.system(17, weight: .semibold))
+                        Text(model.t("Build dictionary 00–15"))
+                            .font(StudioType.system(13.5, weight: .bold))
+                        Spacer(minLength: 4)
+                        HStack(spacing: 6) {
+                            Image(systemName: model.snapshot?.legacyLayout == true ? "folder.badge.gearshape" : "play.fill")
+                            Text(model.t(model.snapshot?.legacyLayout == true ? "ORGANIZE, THEN RUN" : "RUN"))
+                        }
+                        .font(StudioType.system(10.5, weight: .bold))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .foregroundStyle(StudioTheme.ink)
+                        .background(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 56)
+                    .foregroundStyle(.white)
+                    .background(StudioTheme.ink)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canRequestBuild)
+                .opacity(canRequestBuild ? 1 : 0.42)
+                .accessibilityIdentifier("dictionary-build-visualize")
+                .help(model.t(model.isDictionaryBuildRunning
+                              ? "Dictionary-build buttons stay locked until this run finishes or stops."
+                              : buildActionDetail))
                 ForEach(groups, id: \.0) { group in
                     HStack(spacing: 10) {
                         Text(group.0)
@@ -410,14 +441,14 @@ private struct CheckpointPanel: View {
                             .frame(width: 24, height: 24)
                             .overlay { Rectangle().strokeBorder(StudioTheme.ink, lineWidth: 1) }
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(model.t(group.1)).font(.system(size: 12.5, weight: .semibold))
+                            Text(model.t(group.1)).font(StudioType.system(12.5, weight: .semibold))
                             Text(model.f("%02d — %02d", group.2.lowerBound, group.2.upperBound))
                                 .font(StudioType.condensed(10.5, language: model.language))
                                 .foregroundStyle(StudioTheme.muted)
                         }
                         Spacer(minLength: 8)
                         Text(model.f("%d/%d", savedCount(group.2), group.2.count))
-                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .font(StudioType.system(11.5, weight: .medium, design: .monospaced))
                     }
                     .padding(.horizontal, 14)
                     .frame(height: 48)
@@ -426,21 +457,47 @@ private struct CheckpointPanel: View {
                             .padding(.horizontal, 14)
                     }
                 }
-                Button { showOutputs() } label: {
-                    HStack {
-                        Text(model.t("Inspect build artifacts")).font(.system(size: 12, weight: .semibold))
-                        Spacer()
-                        Image(systemName: "arrow.right").font(.system(size: 12, weight: .medium))
+                HStack(spacing: 0) {
+                    Button { showOutputs() } label: {
+                        HStack {
+                            Text(model.t("Inspect build artifacts")).font(StudioType.system(12, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "arrow.right").font(StudioType.system(12, weight: .medium))
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 42)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 14)
-                    .frame(height: 42)
-                    .background(StudioTheme.faint)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .disabled(model.snapshot == nil || model.isLoading)
+                    Rectangle().fill(StudioTheme.hairline).frame(width: 1, height: 24)
+                    Button { model.loadDictionaryDistribution() } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "chart.bar.xaxis")
+                            Text(model.t("View visualization")).font(StudioType.system(12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 42)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!model.hasDictionaryDistribution || model.isLoading || model.isRunning)
+                    .accessibilityIdentifier("dictionary-view-visualization")
                 }
-                .buttonStyle(.plain)
-                .disabled(model.snapshot == nil || model.isLoading)
+                .background(StudioTheme.faint)
             }
         }
+    }
+
+    private var buildActionDetail: String {
+        model.snapshot?.legacyLayout == true
+            ? "Organize the existing files into the grade 2 folder, then run."
+            : "Keep the Grade 2 source names, run stages 00–15, then open the vocabulary charts."
+    }
+
+    private var canRequestBuild: Bool {
+        guard !model.isRunning, !model.isLoading, let snapshot = model.snapshot else { return false }
+        return (snapshot.counts["sources"] ?? 0) > 0
     }
 
     private func savedCount(_ range: ClosedRange<Int>) -> Int {
@@ -474,13 +531,13 @@ private struct VocabularyPanel: View {
             HStack(alignment: .top, spacing: 10) {
                 Text(number).font(StudioType.condensed(11, weight: .bold, language: model.language)).padding(.top, 2)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(model.t(title)).font(.system(size: 12.5, weight: .semibold))
-                    Text(model.t(detail)).font(.system(size: 11.5))
+                    Text(model.t(title)).font(StudioType.system(12.5, weight: .semibold))
+                    Text(model.t(detail)).font(StudioType.system(11.5))
                         .foregroundStyle(StudioTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "arrow.right").font(.system(size: 11, weight: .medium))
+                Image(systemName: "arrow.right").font(StudioType.system(11, weight: .medium))
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

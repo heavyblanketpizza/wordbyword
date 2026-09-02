@@ -1,0 +1,352 @@
+{
+  "schema_version": "wordbyword.grade_workspace_migration.v1",
+  "dry_run": false,
+  "created_at": "2026-09-02T06:35:00.128931+00:00",
+  "planned_count": 38,
+  "applied_count": 38,
+  "skipped_count": 0,
+  "moves": [
+    {
+      "kind": "dictionary_original",
+      "source_path": "build-dictionary/original/2-1_국어[나].pdf",
+      "target_path": "build-dictionary/original/grade2/2-1_국어[나].pdf",
+      "target_grade": "grade2",
+      "reason": "clear grade token",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_original",
+      "source_path": "build-dictionary/original/2-1_국어활동.pdf",
+      "target_path": "build-dictionary/original/grade2/2-1_국어활동.pdf",
+      "target_grade": "grade2",
+      "reason": "clear grade token",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_original",
+      "source_path": "build-dictionary/original/2-1국어[가].pdf",
+      "target_path": "build-dictionary/original/grade2/2-1국어[가].pdf",
+      "target_grade": "grade2",
+      "reason": "clear grade token",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/00_summary.json",
+      "target_path": "build-dictionary/output/grade2/00_summary.json",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/01_extracted_pages.csv",
+      "target_path": "build-dictionary/output/grade2/01_extracted_pages.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/02_sentences.csv",
+      "target_path": "build-dictionary/output/grade2/02_sentences.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/03_tokens.csv",
+      "target_path": "build-dictionary/output/grade2/03_tokens.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/04_surface_words.csv",
+      "target_path": "build-dictionary/output/grade2/04_surface_words.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/05_vocabulary_raw.csv",
+      "target_path": "build-dictionary/output/grade2/05_vocabulary_raw.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/06_candidate_terms.csv",
+      "target_path": "build-dictionary/output/grade2/06_candidate_terms.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/07_rejected_terms.csv",
+      "target_path": "build-dictionary/output/grade2/07_rejected_terms.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/08_dictionary_candidates.jsonl",
+      "target_path": "build-dictionary/output/grade2/08_dictionary_candidates.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/09_example_sentences.csv",
+      "target_path": "build-dictionary/output/grade2/09_example_sentences.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/10_cleaned_example_sentences.csv",
+      "target_path": "build-dictionary/output/grade2/10_cleaned_example_sentences.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/11_cleaned_dictionary_candidates.jsonl",
+      "target_path": "build-dictionary/output/grade2/11_cleaned_dictionary_candidates.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/12_dictionary_candidates_with_cleaned_examples.jsonl",
+      "target_path": "build-dictionary/output/grade2/12_dictionary_candidates_with_cleaned_examples.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/13_vocabulary_with_generated_examples.jsonl",
+      "target_path": "build-dictionary/output/grade2/13_vocabulary_with_generated_examples.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/14_vocabulary_with_meanings.jsonl",
+      "target_path": "build-dictionary/output/grade2/14_vocabulary_with_meanings.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "dictionary_output",
+      "source_path": "build-dictionary/15_final_dictionary.jsonl",
+      "target_path": "build-dictionary/output/grade2/15_final_dictionary.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 dictionary output",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "parsed_class_source",
+      "source_path": "classroom-printout-studio/class-source-materials/parsed/popular-chemistryprize2025",
+      "target_path": "classroom-printout-studio/class-source-materials/parsed/grade2/popular-chemistryprize2025",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 parsed source bundle",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "parsed_class_source",
+      "source_path": "classroom-printout-studio/class-source-materials/parsed/popular-medicineprize2025",
+      "target_path": "classroom-printout-studio/class-source-materials/parsed/grade2/popular-medicineprize2025",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 parsed source bundle",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "parsed_class_source",
+      "source_path": "classroom-printout-studio/class-source-materials/parsed/popular-physicsprize2025",
+      "target_path": "classroom-printout-studio/class-source-materials/parsed/grade2/popular-physicsprize2025",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 parsed source bundle",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "class_archive",
+      "source_path": "wbw-vocabulary-intelligence/class-session-archive/2026-05-22_grade5-chemistry-nobel-prize-metal-organic-frameworks-story.docx",
+      "target_path": "wbw-vocabulary-intelligence/class-session-archive/grade5/2026-05-22_grade5-chemistry-nobel-prize-metal-organic-frameworks-story.docx",
+      "target_grade": "grade5",
+      "reason": "managed archive filename grade",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "class_archive",
+      "source_path": "wbw-vocabulary-intelligence/class-session-archive/2026-05-22_grade5-human-body-immune-system-regulatory-t-cells-and-immune-system.docx",
+      "target_path": "wbw-vocabulary-intelligence/class-session-archive/grade5/2026-05-22_grade5-human-body-immune-system-regulatory-t-cells-and-immune-system.docx",
+      "target_grade": "grade5",
+      "reason": "managed archive filename grade",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "class_archive",
+      "source_path": "wbw-vocabulary-intelligence/class-session-archive/2026-05-22_grade6-quantum-physics-macroscopic-quantum-tunneling-and-energy-quantiz.docx",
+      "target_path": "wbw-vocabulary-intelligence/class-session-archive/grade6/2026-05-22_grade6-quantum-physics-macroscopic-quantum-tunneling-and-energy-quantiz.docx",
+      "target_grade": "grade6",
+      "reason": "managed archive filename grade",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/00_summary.json",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/00_summary.json",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/01_extracted_pages.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/01_extracted_pages.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/02_sentences.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/02_sentences.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/03_tokens.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/03_tokens.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/04_surface_words.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/04_surface_words.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/05_vocabulary_raw.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/05_vocabulary_raw.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/06_candidate_terms.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/06_candidate_terms.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/07_rejected_terms.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/07_rejected_terms.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/08_dictionary_candidates.jsonl",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/08_dictionary_candidates.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/09_example_sentences.csv",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/09_example_sentences.csv",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "usage_signal",
+      "source_path": "wbw-vocabulary-intelligence/usage-signal-build/10_unmatched_usage_candidates.jsonl",
+      "target_path": "wbw-vocabulary-intelligence/usage-signal-build/grade2/10_unmatched_usage_candidates.jsonl",
+      "target_grade": "grade2",
+      "reason": "legacy grade2 usage signal artifact",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "live_lexicon",
+      "source_path": "wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-canonical.jsonl",
+      "target_path": "wbw-vocabulary-intelligence/live-grade-lexicon/grade1/canonical.jsonl",
+      "target_grade": "grade1",
+      "reason": "legacy flat live lexicon",
+      "applied": true,
+      "skipped": false
+    },
+    {
+      "kind": "live_lexicon",
+      "source_path": "wbw-vocabulary-intelligence/live-grade-lexicon/grade1-live-lexicon-supplemental.jsonl",
+      "target_path": "wbw-vocabulary-intelligence/live-grade-lexicon/grade1/supplemental.jsonl",
+      "target_grade": "grade1",
+      "reason": "legacy flat live lexicon",
+      "applied": true,
+      "skipped": false
+    }
+  ]
+}

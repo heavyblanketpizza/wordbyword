@@ -10,6 +10,7 @@ VALID_TARGET_GRADES = tuple(f"grade{grade}" for grade in range(1, 13))
 GRADE_WITH_UNKNOWN_PATTERN = r"grade(?:1[0-2]|[1-9]|-unknown)"
 TARGET_GRADE_PATTERN = r"grade(?:1[0-2]|[1-9])"
 GRADE_TOKEN_PATTERN = re.compile(r"grade(?:1[0-2]|[1-9])")
+ELEMENTARY_TEXTBOOK_PATTERN = re.compile(r"^(?P<grade>[1-6])[-_](?:1|2)(?=\D|$)")
 
 DICTIONARY_ROOT = Path("build-dictionary")
 DICTIONARY_SOURCE_ROOT = DICTIONARY_ROOT / "original"
@@ -214,7 +215,12 @@ def default_after_class_report_output_root(value: object = DEFAULT_TARGET_GRADE)
 
 
 def path_grade_tokens(path: Path | str) -> set[str]:
-    return {match.group(0) for match in GRADE_TOKEN_PATTERN.finditer(str(path))}
+    value = str(path)
+    tokens = {match.group(0) for match in GRADE_TOKEN_PATTERN.finditer(value)}
+    textbook_match = ELEMENTARY_TEXTBOOK_PATTERN.match(Path(value).name)
+    if textbook_match is not None:
+        tokens.add(f"grade{textbook_match.group('grade')}")
+    return tokens
 
 
 def path_mentions_other_grade(path: Path | str, target_grade: object) -> bool:

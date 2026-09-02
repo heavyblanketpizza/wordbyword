@@ -20,14 +20,45 @@ from wordbyword.application.commands import (
     command_spec,
     registered_command_ids,
 )
-from wordbyword.application.use_cases import run_request
+from wordbyword.application.use_cases import _cleanup_progress, run_request
 from wordbyword.application.workspace import RewriteVocabularySource
 from wordbyword.cli import build_parser
 from wordbyword.cli.request_builder import build_cli_request, command_id_from_cli_args
+from wordbyword.dictionary_build.example_cleanup import CleanupBatchProgress
 from wordbyword.dictionary_build.pipeline import PipelineResult
 
 
 class ApplicationCommandRegistryTests(unittest.TestCase):
+    def test_cleanup_progress_labels_the_active_batch_not_the_completed_batch_count(self) -> None:
+        events = []
+        progress = _cleanup_progress("dictionary", events.append, label="dictionary cleanup")
+
+        for phase, batch_index, completed_batches, completed_rows in [
+            ("start", 1, 0, 0),
+            ("complete", 1, 1, 40),
+            ("start", 2, 1, 40),
+        ]:
+            progress(CleanupBatchProgress(
+                phase=phase,
+                batch_index=batch_index,
+                total_batches=62,
+                completed_batches=completed_batches,
+                completed_rows=completed_rows,
+                total_rows=2_458,
+                current_batch_size=40,
+            ))
+
+        self.assertEqual(
+            [item.detail for item in events],
+            [
+                "dictionary cleanup: batch 1/62, rows 0/2458",
+                "dictionary cleanup: batch 1/62, rows 40/2458",
+                "dictionary cleanup: batch 2/62, rows 40/2458",
+            ],
+        )
+        self.assertEqual([item.payload["batch_index"] for item in events], [1, 1, 2])
+        self.assertEqual([item.payload["completed_batches"] for item in events], [0, 1, 1])
+
     def test_cli_commands_have_existing_lock_labels(self) -> None:
         cases = {
             ("--show-distribution",): None,
@@ -308,6 +339,7 @@ class ApplicationCommandAdapterTests(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0)
         self.assertTrue(build_dictionary.called)
+        self.assertTrue(build_dictionary.call_args.kwargs["enforce_managed_sources"])
 
     def test_cli_run_immediate_command_delegates_to_application_boundary(self) -> None:
         from wordbyword.cli import app as cli_app

@@ -15,13 +15,14 @@ import re
 import sys
 import threading
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any, TextIO
 
 sys.dont_write_bytecode = True
 
 from wordbyword.gui.workspace import (  # noqa: E402
+    dictionary_distribution,
     import_files,
     migration_preview,
     preview,
@@ -191,12 +192,17 @@ def _validate_request_paths(root: Path, request: Any) -> None:
 
 
 def _run(root: Path, arguments: list[str], emit: PacketSink) -> int:
-    from wordbyword.application.commands import CommandId, command_spec
+    from wordbyword.application.commands import CommandId, DictionaryBuildRequest, command_spec
     from wordbyword.application.use_cases import run_request
     from wordbyword.execution_guard import acquire_workspace_command_guard
 
     request = build_request(arguments)
     _validate_request_paths(root, request)
+    if isinstance(request, DictionaryBuildRequest) and request.target_grade == "grade2":
+        # The desktop app is intentionally a Grade 2 workspace. Textbook files
+        # such as `2-1_국어[나].pdf` may keep their familiar names; their hashes
+        # still participate in cache invalidation and checkpoint provenance.
+        request = replace(request, enforce_managed_sources=False)
     specification = command_spec(request.command_id)
     guard = (
         acquire_workspace_command_guard(specification.lock_label, workspace_root=root)
@@ -225,10 +231,14 @@ def dispatch_request(root: Path, request: dict[str, object], emit: PacketSink) -
         if "operation" in request and "op" in request and request["operation"] != request["op"]:
             raise BridgeError("The desktop operation selectors disagree.")
         operation = _string(request.get("operation", request.get("op")), "operation")
-        grade = request.get("grade", "grade1")
+        grade = request.get("grade", "grade2")
         with _working_directory(root):
             if operation == "snapshot":
                 emit({"type": "snapshot", "data": snapshot(root, grade)})
+            elif operation == "distribution":
+                emit({"type": "distribution", "data": dictionary_distribution(
+                    root, _string(request.get("path"), "path"), grade
+                )})
             elif operation == "preview":
                 emit({"type": "preview", "data": preview(root, _string(request.get("path"), "path"), grade)})
             elif operation == "migration_plan":

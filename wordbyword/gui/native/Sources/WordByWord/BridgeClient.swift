@@ -50,6 +50,7 @@ struct BridgeRequest: Encodable, Sendable {
     var terminalType: String {
         switch operation {
         case "snapshot": return "snapshot"
+        case "distribution": return "distribution"
         case "preview", "migration_plan": return "preview"
         default: return "result"
         }
@@ -61,6 +62,7 @@ enum BridgePacket: Decodable, Sendable {
     case event(CommandEvent)
     case result(RunResult)
     case preview(PreviewDocument)
+    case distribution(DictionaryDistribution)
     case error(String)
 
     private enum CodingKeys: String, CodingKey { case type, data, message }
@@ -72,6 +74,7 @@ enum BridgePacket: Decodable, Sendable {
         case "event": self = .event(try container.decode(CommandEvent.self, forKey: .data))
         case "result": self = .result(try container.decode(RunResult.self, forKey: .data))
         case "preview": self = .preview(try container.decode(PreviewDocument.self, forKey: .data))
+        case "distribution": self = .distribution(try container.decode(DictionaryDistribution.self, forKey: .data))
         case "error": self = .error(try container.decode(String.self, forKey: .message))
         default: throw StudioFailure("The Python bridge returned an unknown packet type: \(type).")
         }
@@ -83,6 +86,7 @@ enum BridgePacket: Decodable, Sendable {
         case .event: return "event"
         case .result: return "result"
         case .preview: return "preview"
+        case .distribution: return "distribution"
         case .error: return "error"
         }
     }

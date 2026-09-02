@@ -75,6 +75,35 @@ struct MonochromeButtonStyle: ButtonStyle {
     }
 }
 
+struct DictionaryBuildLockNotice: View {
+    @Environment(\.studioLanguage) private var language
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(StudioType.system(16, weight: .semibold))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(language.text("Dictionary build in progress"))
+                    .font(StudioType.system(13, weight: .bold))
+                Text(language.text("Stages 00–15 are being generated. Dictionary-build buttons stay locked until this run finishes or stops."))
+                    .font(StudioType.detail)
+                    .foregroundStyle(StudioTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(12)
+        .background(StudioTheme.faint)
+        .overlay {
+            RoundedRectangle(cornerRadius: 7).strokeBorder(StudioTheme.ink, lineWidth: 1.25)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("dictionary-build-running-warning")
+    }
+}
+
 struct IconButton: View {
     let title: String
     let systemName: String
@@ -89,7 +118,7 @@ struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 13, weight: .semibold))
+                .font(StudioType.system(13, weight: .semibold))
                 .frame(width: 13, height: 16)
         }
         .buttonStyle(MonochromeButtonStyle(compact: true))
@@ -167,12 +196,12 @@ struct StudioPanel<Content: View>: View {
             HStack(spacing: 8) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(StudioType.system(13.5, weight: .semibold))
                         .frame(width: 18)
                         .accessibilityHidden(true)
                 }
                 Text(title.uppercased())
-                    .font(.system(size: 13.5, weight: .bold))
+                    .font(StudioType.system(13.5, weight: .bold))
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 8)
@@ -205,7 +234,7 @@ struct EmptyState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 28, weight: .regular))
+                .font(StudioType.system(28, weight: .regular))
                 .accessibilityHidden(true)
             Text(title)
                 .font(StudioType.heading(in: language))
@@ -242,14 +271,14 @@ struct MonoToggle: View {
                         .strokeBorder(StudioTheme.ink, lineWidth: 1.5)
                     if isOn {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(StudioType.system(11, weight: .bold))
                             .foregroundStyle(StudioTheme.canvas)
                     }
                 }
                 .frame(width: 20, height: 20)
                 .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 14, weight: .medium))
+                    Text(title).font(StudioType.system(14, weight: .medium))
                     if let detail, !detail.isEmpty {
                         Text(detail)
                             .font(StudioType.detail)

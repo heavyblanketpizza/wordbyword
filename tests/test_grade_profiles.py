@@ -20,6 +20,7 @@ from wordbyword.grade_profiles import (
     grade_workspace,
     normalize_grade_level,
     normalize_target_grade,
+    path_grade_tokens,
     report_target_profile_for_grade,
     target_profile_for_grade,
 )
@@ -134,6 +135,13 @@ def test_grade_normalization_accepts_korean_school_shorthand_and_unknown_metadat
     assert grade_label("grade-unknown") == "초등학생"
     assert report_target_profile_for_grade("grade-unknown") == "elementary-ko-a4-adult-report"
     assert extract_grade_from_source_id("2026-05-10_grade10-physics-light") == "grade10"
+
+
+def test_textbook_semester_filenames_identify_elementary_grade_without_mistaking_dates() -> None:
+    assert path_grade_tokens("2-1_국어[나].pdf") == {"grade2"}
+    assert path_grade_tokens("2_2-국어활동.pdf") == {"grade2"}
+    assert path_grade_tokens("2026-05-10_국어.pdf") == set()
+    assert path_grade_tokens("2-10_revision.pdf") == set()
 
 
 def test_target_grade_rejects_unknown_generation_target() -> None:

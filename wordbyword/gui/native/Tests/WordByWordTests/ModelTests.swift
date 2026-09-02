@@ -10,15 +10,16 @@ final class ModelTests: XCTestCase {
         "live_lexicon_path", "supplemental_lexicon_path", "unmatched_usage_output_path", "after_class_report_output_root"
     ]
 
-    private func snapshot(grade: String = "grade3", legacy: Bool = false, root: String = "/workspace",
-                          report: String = "/workspace/archive_root/grade3/lesson.docx") -> WorkspaceSnapshot {
+    private func snapshot(grade: String = "grade2", legacy: Bool = false, root: String = "/workspace",
+                          report: String = "/workspace/archive_root/grade2/lesson.docx",
+                          artifacts: [StudioArtifact] = [], counts: [String: Int] = [:]) -> WorkspaceSnapshot {
         let canonical = Dictionary(uniqueKeysWithValues: pathKeys.map { ($0, "\(root)/\($0)/\(grade)") })
         let browsing = Dictionary(uniqueKeysWithValues: pathKeys.map { ($0, "/legacy/\($0)") })
-        return WorkspaceSnapshot(workspace: root, grade: grade, gradeLabel: "3학년", legacyLayout: legacy,
-                                 warnings: [], paths: browsing, runPaths: canonical, counts: [:],
+        return WorkspaceSnapshot(workspace: root, grade: grade, gradeLabel: "2학년", legacyLayout: legacy,
+                                 warnings: [], paths: browsing, runPaths: canonical, counts: counts,
                                  files: ["archive": [StudioFile(id: report, name: "lesson.docx", path: report,
                                                                 kind: "DOCX", size: 12, modified: "")]],
-                                 artifacts: [], summary: [:])
+                                 artifacts: artifacts, summary: [:])
     }
 
     func testEveryActionUsesExpectedCLICommandAndCanonicalPaths() throws {
@@ -50,7 +51,7 @@ final class ModelTests: XCTestCase {
             XCTAssertTrue(flags.contains(try XCTUnwrap(commands[action])), "\(action)")
             XCTAssertFalse(flags.contains(where: { $0.hasPrefix("/legacy/") }), "\(action)")
             if action != .migrateWorkspace {
-                XCTAssertEqual(Array(flags.prefix(2)), ["--target-grade", "grade3"], "\(action)")
+                XCTAssertEqual(Array(flags.prefix(2)), ["--target-grade", "grade2"], "\(action)")
             } else {
                 XCTAssertEqual(flags, ["--migrate-grade-workspaces", "--apply"])
             }
@@ -86,6 +87,11 @@ final class ModelTests: XCTestCase {
         }
         XCTAssertTrue(StudioAction.prepareDictionary.destructive)
         XCTAssertTrue(StudioAction.prepareDictionary.detail.contains("removes existing stages 10–15"))
+        XCTAssertEqual(StudioAction.buildDictionary.title, "Build dictionary 00–15")
+        XCTAssertTrue(StudioAction.buildDictionary.detail.contains("stages 00–15"))
+        XCTAssertTrue(StudioAction.buildDictionary.detail.contains("vocabulary distribution"))
+        XCTAssertFalse(StudioAction.buildDictionary.detail.localizedCaseInsensitiveContains("charge"))
+        XCTAssertFalse(StudioLanguage.korean.text(StudioAction.buildDictionary.detail).contains("이용 요금"))
     }
 
     func testWorkflowSpecificSettingsMapWithoutLeakingForceFlags() throws {
@@ -101,7 +107,7 @@ final class ModelTests: XCTestCase {
         settings.baseURL = "https://example.com/v1"
         for action in StudioAction.allCases where action != .migrateWorkspace {
             let flags = try StudioCommandBuilder.arguments(for: action, snapshot: snapshot(), settings: settings,
-                                                           selectedReport: "/workspace/archive_root/grade3/lesson.docx")
+                                                           selectedReport: "/workspace/archive_root/grade2/lesson.docx")
             XCTAssertEqual(flags.contains("--force"), [.buildDictionary, .prepareDictionary].contains(action))
             XCTAssertEqual(flags.contains("--force-class-printouts"), action == .buildClassroom)
             XCTAssertEqual(flags.contains("--skip-pdf-parse"), [.buildClassroom, .parseSources].contains(action))
@@ -120,13 +126,13 @@ final class ModelTests: XCTestCase {
     func testInvalidGradesAndReportsAreRejected() throws {
         XCTAssertThrowsError(try StudioCommandBuilder.arguments(for: .buildDictionary, snapshot: snapshot(grade: "grade99"),
                                                                  settings: StudioSettings(), selectedReport: ""))
-        for report in ["", "/outside/lesson.docx", "/workspace/archive_root/grade3/lesson.txt"] {
+        for report in ["", "/outside/lesson.docx", "/workspace/archive_root/grade2/lesson.txt"] {
             XCTAssertThrowsError(try StudioCommandBuilder.arguments(for: .generateReport, snapshot: snapshot(),
                                                                      settings: StudioSettings(), selectedReport: report))
         }
         XCTAssertThrowsError(try StudioCommandBuilder.arguments(for: .generateReport,
-                                                                 snapshot: snapshot(report: "/workspace/archive_root/grade3/lesson.txt"),
-                                                                 settings: StudioSettings(), selectedReport: "/workspace/archive_root/grade3/lesson.txt"))
+                                                                 snapshot: snapshot(report: "/workspace/archive_root/grade2/lesson.txt"),
+                                                                 settings: StudioSettings(), selectedReport: "/workspace/archive_root/grade2/lesson.txt"))
     }
 
     func testSettingsValidateAndDoNotStoreCredentials() throws {
@@ -250,6 +256,24 @@ final class ModelTests: XCTestCase {
         ])
         let oldPDF = try JSONDecoder().decode(PreviewDocument.self, from: oldResponse)
         XCTAssertEqual(korean.previewText(oldPDF), rawPDF, "An old PDF response must remain readable without metadata")
+        XCTAssertNil(oldPDF.table)
+
+        let tableResponse = try JSONSerialization.data(withJSONObject: [
+            "name": "08_dictionary_candidates.jsonl", "path": "/workspace/08_dictionary_candidates.jsonl",
+            "text": "raw", "truncated": false,
+            "table": ["format": "JSONL", "columns": ["display", "count"],
+                      "rows": [["물", "47"]], "truncated": false]
+        ])
+        let tablePreview = try JSONDecoder().decode(PreviewDocument.self, from: tableResponse)
+        XCTAssertEqual(tablePreview.table?.format, "JSONL")
+        XCTAssertEqual(tablePreview.table?.columns, ["display", "count"])
+        XCTAssertEqual(tablePreview.table?.rows, [["물", "47"]])
+        XCTAssertEqual(korean.text("Table"), "표")
+        XCTAssertEqual(korean.format("Showing %d rows · %d columns", 1, 2), "행 1개 · 열 2개 표시")
+    }
+
+    func testInterfaceTypographyUsesTheRequestedScale() {
+        XCTAssertEqual(StudioType.scale, 1.25)
     }
 
     func testMigrationLocalizesExplanationsButPreservesPathsAndRawDiagnostics() {
@@ -259,8 +283,8 @@ final class ModelTests: XCTestCase {
             "  → build-dictionary/original/grade3/Complete.pdf",
             "  clear grade token", "",
             "build-dictionary/No files have been changed..json",
-            "  → build-dictionary/output/grade1/No files have been changed..json",
-            "  legacy grade1 dictionary output", "",
+            "  → build-dictionary/output/grade2/No files have been changed..json",
+            "  legacy grade2 dictionary output", "",
             "Migration cannot be applied safely:",
             "  [Errno 13] Permission denied: '/workspace/Complete.pdf'",
             "\tUnknown diagnostic: Failed → /workspace/Read"
@@ -271,8 +295,8 @@ final class ModelTests: XCTestCase {
             "  → build-dictionary/original/grade3/Complete.pdf",
             "  파일명에서 학년 확인", "",
             "build-dictionary/No files have been changed..json",
-            "  → build-dictionary/output/grade1/No files have been changed..json",
-            "  기존 1학년 사전 결과", "",
+            "  → build-dictionary/output/grade2/No files have been changed..json",
+            "  기존 2학년 사전 결과", "",
             "다음 문제를 해결해야 정리 계획을 적용할 수 있습니다:",
             "  [Errno 13] Permission denied: '/workspace/Complete.pdf'",
             "\tUnknown diagnostic: Failed → /workspace/Read"
@@ -378,19 +402,108 @@ final class ModelTests: XCTestCase {
                                     python: URL(fileURLWithPath: "/usr/bin/python3"),
                                     moduleRoot: URL(fileURLWithPath: "/workspace"))
         let model = StudioModel(runtime: runtime, autoRefresh: false)
-        model.grade = "grade3"
         model.snapshot = snapshot()
         XCTAssertThrowsError(try model.arguments(for: .migrateWorkspace))
         model.isRunning = true
         model.changeGrade("grade4")
         model.settings.model = "changed"
         model.requestRun(.buildDictionary)
-        XCTAssertEqual(model.grade, "grade3")
+        XCTAssertEqual(model.grade, "grade2")
         XCTAssertEqual(model.settings.model, "gemma4:31b")
         XCTAssertNil(model.pendingAction)
         model.isRunning = false
         model.requestRun(.buildDictionary)
         XCTAssertEqual(model.pendingAction, .buildDictionary)
+    }
+
+    @MainActor
+    func testSuccessfulDictionaryBuildRefreshesAndOpensVisualization() async throws {
+        let script = """
+        import json, os, sys
+        request = json.load(sys.stdin)
+        root = sys.argv[-1]
+        final_path = os.path.join(root, 'dictionary_output_dir', 'grade2', '15_final_dictionary.jsonl')
+        if request['operation'] == 'run':
+            with open(os.path.join(root, 'run-request.json'), 'w') as output:
+                json.dump(request, output)
+            print(json.dumps({"type":"result", "data":{"exit_code":0, "status":"complete",
+              "detail":"full dictionary complete", "artifacts":{"final_dictionary":final_path}, "error":""}}), flush=True)
+        elif request['operation'] == 'snapshot':
+            artifact = {"id":"final_dictionary", "name":"15_final_dictionary.jsonl", "label":"Final dictionary",
+                        "path":final_path, "exists":True, "size":200}
+            print(json.dumps({"type":"snapshot", "data":{"workspace":root, "grade":request['grade'],
+              "grade_label":"2학년", "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{},
+              "counts":{"sources":1,"words":3}, "files":{}, "artifacts":[artifact], "summary":{}}}), flush=True)
+        elif request['operation'] == 'distribution':
+            assert request['path'] == final_path
+            print(json.dumps({"type":"distribution", "data":{"artifact_id":"final_dictionary",
+              "name":"15_final_dictionary.jsonl", "path":final_path, "stage":"15", "entry_count":3,
+              "learning_signal":{"bins":[1,1,1],"minimum":-0.5,"median":0.0,"maximum":0.5,
+                                   "axis_labels":["-0.50","0.00","0.50"]},
+              "occurrence_count":{"bins":[1,1,1],"minimum":1,"median":5,"maximum":20,
+                                    "axis_labels":["1","4","20"]}}}), flush=True)
+        else:
+            raise AssertionError(request)
+        """
+        let fixture = try bridgeFixture(script)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"),
+                                    moduleRoot: fixture.root)
+        let model = StudioModel(runtime: runtime, autoRefresh: false)
+        model.snapshot = snapshot(grade: "grade2", root: fixture.root.path, counts: ["sources": 1])
+
+        model.requestDictionaryBuild()
+        XCTAssertEqual(model.pendingAction, .buildDictionary)
+        model.confirmRun()
+        try await waitUntil { !model.isRunning && !model.isLoading && model.distribution != nil }
+
+        let requestData = try Data(contentsOf: fixture.root.appendingPathComponent("run-request.json"))
+        let request = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestData) as? [String: Any])
+        let arguments = try XCTUnwrap(request["arguments"] as? [String])
+        XCTAssertTrue(arguments.contains("--build-dictionary"))
+        XCTAssertFalse(arguments.contains("--show-distribution"))
+        XCTAssertTrue(model.lastResult?.succeeded == true)
+        XCTAssertEqual(model.distribution?.stage, "15")
+        XCTAssertEqual(model.distribution?.entryCount, 3)
+        XCTAssertEqual(model.distribution?.learningSignal.bins, [1, 1, 1])
+    }
+
+    @MainActor
+    func testSuccessfulBuildDoesNotVisualizeAnOlderIntermediateArtifactAsStageFifteen() async throws {
+        let script = """
+        import json, os, sys
+        request = json.load(sys.stdin)
+        root = sys.argv[-1]
+        if request['operation'] == 'run':
+            print(json.dumps({"type":"result", "data":{"exit_code":0, "status":"complete",
+              "detail":"full dictionary complete", "artifacts":{}, "error":""}}), flush=True)
+        elif request['operation'] == 'snapshot':
+            path = os.path.join(root, '08_dictionary_candidates.jsonl')
+            artifact = {"id":"dictionary_candidates", "name":"08_dictionary_candidates.jsonl",
+                        "label":"Candidates", "path":path, "exists":True, "size":100}
+            print(json.dumps({"type":"snapshot", "data":{"workspace":root, "grade":request['grade'],
+              "grade_label":"2학년", "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{},
+              "counts":{"sources":1,"words":0}, "files":{}, "artifacts":[artifact], "summary":{}}}), flush=True)
+        else:
+            open(os.path.join(root, 'unexpected-distribution-request'), 'w').close()
+            raise AssertionError(request)
+        """
+        let fixture = try bridgeFixture(script)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"),
+                                    moduleRoot: fixture.root)
+        let model = StudioModel(runtime: runtime, autoRefresh: false)
+        model.snapshot = snapshot(grade: "grade2", root: fixture.root.path, counts: ["sources": 1])
+
+        model.requestDictionaryBuild()
+        model.confirmRun()
+        try await waitUntil { !model.isRunning && !model.isLoading && model.error != nil }
+
+        XCTAssertTrue(model.lastResult?.succeeded == true)
+        XCTAssertNil(model.distribution)
+        XCTAssertTrue(model.error?.contains("stage-15") == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root
+            .appendingPathComponent("unexpected-distribution-request").path))
     }
 
     func testBridgeDrainsStderrAndFragmentedPacketsBeforeFinishing() async throws {
@@ -416,6 +529,34 @@ final class ModelTests: XCTestCase {
         }
         XCTAssertEqual(event.detail, "한국어")
         XCTAssertTrue(result.succeeded)
+    }
+
+    func testBridgeDecodesDistributionAsItsOwnTerminalPacket() async throws {
+        let script = """
+        import json, sys
+        request = json.load(sys.stdin)
+        assert request['operation'] == 'distribution'
+        print(json.dumps({"type":"distribution", "data":{
+          "artifact_id":"final_dictionary", "name":"15_final_dictionary.jsonl", "path":request['path'],
+          "stage":"15", "entry_count":3,
+          "learning_signal":{"bins":[1,2], "minimum":-0.5, "median":0.0, "maximum":0.5, "axis_labels":["-0.50","0.00","0.50"]},
+          "occurrence_count":{"bins":[2,1], "minimum":1, "median":5, "maximum":20, "axis_labels":["1","4","20"]}
+        }}), flush=True)
+        """
+        let fixture = try bridgeFixture(script)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let path = fixture.root.appendingPathComponent("15_final_dictionary.jsonl").path
+        var packets: [BridgePacket] = []
+        for try await packet in fixture.client.packets(for: BridgeRequest(
+            operation: "distribution", grade: "grade1", path: path
+        )) { packets.append(packet) }
+        XCTAssertEqual(packets.count, 1)
+        guard case .distribution(let distribution) = packets[0] else {
+            return XCTFail("Expected a distribution packet")
+        }
+        XCTAssertEqual(distribution.entryCount, 3)
+        XCTAssertEqual(distribution.learningSignal.bins, [1, 2])
+        XCTAssertEqual(distribution.occurrenceCount.maximum, 20)
     }
 
     func testBridgeRejectsMalformedMissingAndFalseSuccessResponses() async throws {
@@ -516,7 +657,7 @@ final class ModelTests: XCTestCase {
         import json, sys
         request = json.load(sys.stdin)
         assert request['operation'] == 'snapshot'
-        print(json.dumps({"type":"snapshot", "data":{"workspace":sys.argv[-1], "grade":request['grade'], "grade_label":"1학년", "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{}, "counts":{"words":42}, "files":{}, "artifacts":[], "summary":{}}}), flush=True)
+        print(json.dumps({"type":"snapshot", "data":{"workspace":sys.argv[-1], "grade":request['grade'], "grade_label":"2학년", "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{}, "counts":{"words":42}, "files":{}, "artifacts":[], "summary":{}}}), flush=True)
         """
         let fixture = try bridgeFixture(script)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -534,34 +675,24 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(model.settings, saved)
         let result = try XCTUnwrap(model.snapshot)
         XCTAssertEqual(result.workspace, fixture.root.path)
-        XCTAssertEqual(result.grade, "grade1")
+        XCTAssertEqual(result.grade, "grade2")
         XCTAssertEqual(result.counts["words"], 42)
     }
 
     @MainActor
-    func testStaleSnapshotCannotReplaceNewGrade() async throws {
-        let script = """
-        import json, os, signal, sys, time
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        request = json.load(sys.stdin)
-        grade = request['grade']
-        if grade == 'grade1':
-            open(os.path.join(sys.argv[-1], 'first-started'), 'w').close()
-            time.sleep(0.9)
-        print(json.dumps({"type":"snapshot", "data":{"workspace":sys.argv[-1], "grade":grade, "grade_label":grade, "legacy_layout":False, "warnings":[], "paths":{}, "run_paths":{}, "counts":{}, "files":{}, "artifacts":[], "summary":{}}}), flush=True)
-        """
-        let fixture = try bridgeFixture(script)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"), moduleRoot: fixture.root)
+    func testAppGradeCannotBeChangedFromGradeTwo() {
+        let runtime = StudioRuntime(workspace: URL(fileURLWithPath: "/workspace"),
+                                    python: URL(fileURLWithPath: "/usr/bin/python3"),
+                                    moduleRoot: URL(fileURLWithPath: "/workspace"))
         let model = StudioModel(runtime: runtime, autoRefresh: false)
-        model.refresh()
-        try await waitUntil { FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("first-started").path) }
-        model.changeGrade("grade2")
-        try await waitUntil { !model.isLoading && model.snapshot?.grade == "grade2" }
-        try await Task.sleep(nanoseconds: 1_000_000_000)
+        model.changeGrade("grade1")
         XCTAssertEqual(model.grade, "grade2")
-        XCTAssertEqual(model.snapshot?.grade, "grade2")
-        XCTAssertNil(model.error)
+        XCTAssertThrowsError(try StudioCommandBuilder.arguments(
+            for: .buildDictionary,
+            snapshot: snapshot(grade: "grade1"),
+            settings: StudioSettings(),
+            selectedReport: ""
+        ))
     }
 
     @MainActor
@@ -586,18 +717,26 @@ final class ModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"), moduleRoot: fixture.root)
         let model = StudioModel(runtime: runtime, autoRefresh: false)
-        model.snapshot = snapshot(grade: "grade1", root: fixture.root.path)
-        model.requestRun(.previewDuplicates)
+        model.snapshot = snapshot(grade: "grade2", root: fixture.root.path, counts: ["sources": 1])
+        model.requestDictionaryBuild()
+        XCTAssertEqual(model.pendingAction, .buildDictionary)
         model.confirmRun()
         try await waitUntil { model.logs.contains(where: { $0.phase == "ready" }) }
+        XCTAssertTrue(model.isDictionaryBuildRunning)
+        XCTAssertEqual(model.activeAction, .buildDictionary)
+        model.requestDictionaryBuild()
+        XCTAssertNil(model.pendingAction)
         model.cancelRun()
         XCTAssertTrue(model.isRunning)
         XCTAssertTrue(model.isCancelling)
+        XCTAssertTrue(model.isDictionaryBuildRunning)
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertTrue(model.isRunning)
         try await waitUntil { !model.isRunning && !model.isLoading }
         XCTAssertEqual(model.lastResult?.status, "cancelled")
         XCTAssertFalse(model.isCancelling)
+        XCTAssertFalse(model.isDictionaryBuildRunning)
+        XCTAssertNil(model.activeAction)
         XCTAssertNil(model.error)
     }
 
@@ -617,7 +756,7 @@ final class ModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let runtime = StudioRuntime(workspace: fixture.root, python: fixture.root.appendingPathComponent("test-python"), moduleRoot: fixture.root)
         let model = StudioModel(runtime: runtime, autoRefresh: false)
-        model.snapshot = snapshot(grade: "grade1", root: fixture.root.path)
+        model.snapshot = snapshot(grade: "grade2", root: fixture.root.path)
         model.requestRun(.previewDuplicates)
         model.confirmRun()
         try await waitUntil { !model.isRunning && !model.isLoading }

@@ -20,7 +20,7 @@ from wordbyword.grade_profiles import (
     USAGE_SIGNAL_BUILD_ROOT,
     VALID_TARGET_GRADES,
     extract_grade_from_source_id,
-    normalize_grade_level,
+    path_grade_tokens,
 )
 
 MIGRATION_SCHEMA_VERSION = "wordbyword.grade_workspace_migration.v1"
@@ -44,6 +44,7 @@ SUPPORTED_SOURCE_SUFFIXES = {
     ".bmp",
 }
 DICTIONARY_STAGE_PATTERN = re.compile(r"^(?:0[0-9]|1[0-5])_")
+LEGACY_UNSCOPED_GRADE = "grade2"
 
 
 MigrationKind = Literal[
@@ -168,9 +169,21 @@ def plan_dictionary_output_moves(root: Path) -> list[GradeWorkspaceMigrationMove
         if path.name in {"original", "output", "references"} or path.name.startswith("."):
             continue
         if path.is_file() and is_dictionary_output_file(path):
-            moves.append(migration_move("dictionary_output", path, unique_destination(output_base / "grade1" / path.name), "grade1", "legacy grade1 dictionary output"))
+            moves.append(migration_move(
+                "dictionary_output",
+                path,
+                unique_destination(output_base / LEGACY_UNSCOPED_GRADE / path.name),
+                LEGACY_UNSCOPED_GRADE,
+                "legacy grade2 dictionary output",
+            ))
         elif path.is_dir() and DICTIONARY_STAGE_PATTERN.match(path.name):
-            moves.append(migration_move("dictionary_output", path, unique_destination(output_base / "grade1" / path.name), "grade1", "legacy grade1 dictionary stage directory"))
+            moves.append(migration_move(
+                "dictionary_output",
+                path,
+                unique_destination(output_base / LEGACY_UNSCOPED_GRADE / path.name),
+                LEGACY_UNSCOPED_GRADE,
+                "legacy grade2 dictionary stage directory",
+            ))
     return moves
 
 
@@ -189,9 +202,9 @@ def plan_class_source_original_moves(root: Path) -> list[GradeWorkspaceMigration
             migration_move(
                 "class_source_original",
                 path,
-                unique_destination(base / "grade1" / path.name),
-                "grade1",
-                "legacy grade1 class source",
+                unique_destination(base / LEGACY_UNSCOPED_GRADE / path.name),
+                LEGACY_UNSCOPED_GRADE,
+                "legacy grade2 class source",
             )
         )
     if legacy_original_base.is_dir():
@@ -230,9 +243,9 @@ def plan_parsed_class_source_moves(root: Path) -> list[GradeWorkspaceMigrationMo
                 migration_move(
                     "parsed_class_source",
                     path,
-                    unique_destination(base / "grade1" / path.name),
-                    "grade1",
-                    "legacy grade1 parsed source bundle",
+                    unique_destination(base / LEGACY_UNSCOPED_GRADE / path.name),
+                    LEGACY_UNSCOPED_GRADE,
+                    "legacy grade2 parsed source bundle",
                 )
             )
     return moves
@@ -273,9 +286,9 @@ def plan_usage_signal_moves(root: Path) -> list[GradeWorkspaceMigrationMove]:
                 migration_move(
                     "usage_signal",
                     path,
-                    unique_destination(base / "grade1" / path.name),
-                    "grade1",
-                    "legacy grade1 usage signal artifact",
+                    unique_destination(base / LEGACY_UNSCOPED_GRADE / path.name),
+                    LEGACY_UNSCOPED_GRADE,
+                    "legacy grade2 usage signal artifact",
                 )
             )
     return moves
@@ -372,8 +385,8 @@ def mark_skipped(move: GradeWorkspaceMigrationMove, reason: str) -> GradeWorkspa
 
 
 def infer_grade_for_path(path: Path) -> str:
-    normalized = normalize_grade_level(" ".join(path.parts), allow_unknown=True)
-    return normalized
+    tokens = path_grade_tokens(path)
+    return next(iter(tokens)) if len(tokens) == 1 else UNKNOWN_GRADE
 
 
 def flattened_relative_name(relative: Path) -> str:

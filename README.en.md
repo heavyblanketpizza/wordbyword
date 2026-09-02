@@ -31,7 +31,9 @@ The studio requires **macOS 14 or later**. Its first build also requires **Swift
 | Vocabulary | Manage archived class materials, build usage signals, and update the live lexicon. |
 | Reports | Generate an after-class reading report from one selected archived handout. |
 
-Choose the grade in the toolbar and configure the provider/model in **Studio settings**. Use **More actions** for filename previews, duplicate review, and individual workflow stages. Each run opens a review sheet before execution; **Run journal** shows progress and errors. Model and OCR prerequisites still apply.
+The desktop app is dedicated to **Grade 2**. Configure the provider/model in **Studio settings**. Use **More actions** for filename previews, duplicate review, and individual workflow stages. Each run opens a review sheet before execution; **Run journal** shows progress and errors. Model and OCR prerequisites still apply.
+
+In the Dictionary tab, the black **Build dictionary 00–15** button runs every stage for the Grade 2 originals and then automatically opens learning-signal and occurrence-count charts. The desktop app accepts familiar source names such as `2-1_국어[나].pdf` without renaming them. **View visualization** opens the latest saved dictionary result without another model call.
 
 **Interface language:** Open **Studio settings → Language / 언어**, select **한국어**, then choose **Save defaults / 설정 저장**. The settings sheet previews the selection immediately; **Cancel / 취소** discards it. The choice is saved per workspace in `.wordbyword/studio-settings.json`; existing settings without a language choice default to English. Filenames, document content, CLI commands, and raw engine logs retain their original text.
 
@@ -49,7 +51,7 @@ uv run wordbyword-gui --workspace "/absolute/path/to/workspace"
 
 The workspace can also be changed from the window's folder selector. Use `--build-only` to prepare the app without opening a window, or `--rebuild` to force native recompilation; neither option forces a dictionary or classroom rebuild.
 
-**Grade/layout note:** the GUI supplies `--target-grade` from its grade selector (`grade1`–`grade12`). For grade-scoped CLI examples below, add `--target-grade grade1` or your chosen grade. Current dictionary sources and outputs live under `build-dictionary/original/grade1/` and `build-dictionary/output/grade1/`; archives and live lexicons also use grade folders. Older unscoped paths below describe legacy layouts—use the studio's displayed paths for the selected grade.
+**Grade/layout note:** the GUI always supplies `--target-grade grade2`, and organizes existing unscoped dictionary sources and outputs into Grade 2 folders. Its current dictionary paths are `build-dictionary/original/grade2/` and `build-dictionary/output/grade2/`. The CLI still supports `grade1`–`grade12`, so specify the needed `--target-grade` in CLI examples below.
 
 ## Quick Start
 

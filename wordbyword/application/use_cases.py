@@ -247,6 +247,7 @@ def build_dictionary(request: DictionaryBuildRequest, emit_event: ProgressSink |
                 ),
             ),
             target_checkpoint=request.target_checkpoint,
+            enforce_managed_sources=request.enforce_managed_sources,
         )
     except UnresolvedGeneratedExampleFailures as error:
         detail = (
@@ -808,7 +809,7 @@ def _cleanup_progress(workflow: str, emit_event: ProgressSink | None, *, label: 
         total_batches = int(getattr(value, "total_batches", 0))
         completed_rows = int(getattr(value, "completed_rows", 0))
         total_rows = int(getattr(value, "total_rows", 0))
-        detail = f"{label}: batch {completed_batches}/{total_batches}, rows {completed_rows}/{total_rows}"
+        detail = f"{label}: batch {batch_index}/{total_batches}, rows {completed_rows}/{total_rows}"
         emit(
             emit_event,
             event(

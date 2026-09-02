@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import SwiftUI
 
 struct SettingsSheet: View {
@@ -89,7 +90,7 @@ struct SettingsSheet: View {
                                 Stepper(language.format("Render · %d DPI", draft.renderDPI), value: $draft.renderDPI, in: 72...600, step: 36)
                                 Stepper(language.format("Handout · %d pt", draft.bodyFontSize), value: $draft.bodyFontSize, in: 11...15)
                             }
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(StudioType.system(12.5, weight: .medium))
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
@@ -131,14 +132,14 @@ struct SettingsSheet: View {
 
     private func settingRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 16) {
-            Text(title).font(.system(size: 13, weight: .medium)).frame(width: 86, alignment: .leading)
+            Text(title).font(StudioType.system(13, weight: .medium)).frame(width: 86, alignment: .leading)
             content()
         }
     }
 
     private func studioField(_ placeholder: String, text: Binding<String>) -> some View {
         TextField(placeholder, text: text)
-            .font(.system(size: 13, design: .monospaced))
+            .font(StudioType.system(13, design: .monospaced))
             .textFieldStyle(.plain)
             .padding(.horizontal, 11)
             .frame(height: 36)
@@ -180,7 +181,7 @@ struct RunReviewSheet: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: action.destructive ? "exclamationmark.triangle" : "info.circle")
-                        .font(.system(size: 19, weight: .medium))
+                        .font(StudioType.system(19, weight: .medium))
                     Text(model.t(action.detail))
                         .font(StudioType.body)
                         .lineSpacing(4)
@@ -208,14 +209,14 @@ struct RunReviewSheet: View {
                 DisclosureGroup(model.t("Command details")) {
                     ScrollView {
                         Text(commandPreview)
-                            .font(.system(size: 11.5, design: .monospaced))
+                            .font(StudioType.system(11.5, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.top, 10)
                     }
                     .frame(maxHeight: 130)
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(StudioType.system(12, weight: .medium))
                 Text(model.t("You can stop a running task from the run journal. Files already written may remain."))
                     .font(StudioType.detail)
                     .foregroundStyle(StudioTheme.muted)
@@ -245,7 +246,7 @@ struct RunReviewSheet: View {
     private func reviewRow(_ label: String, _ value: String) -> some View {
         HStack(spacing: 12) {
             SectionLabel(label).frame(width: 102, alignment: .leading)
-            Text(value).font(.system(size: 12.5, weight: .medium))
+            Text(value).font(StudioType.system(12.5, weight: .medium))
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
@@ -306,16 +307,16 @@ struct ArtifactsSheet: View {
                                     .background(artifact.exists ? StudioTheme.ink : StudioTheme.faint)
                                     .foregroundStyle(artifact.exists ? .white : StudioTheme.muted)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(model.language.artifactLabel(artifact)).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                    Text(model.language.artifactLabel(artifact)).font(StudioType.system(13, weight: .semibold)).lineLimit(1)
                                     Text(artifact.name)
-                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .font(StudioType.system(11.5, design: .monospaced))
                                         .foregroundStyle(StudioTheme.muted)
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 }
                                 Spacer(minLength: 10)
                                 StatusBadge(model.t(artifact.exists ? "AVAILABLE" : "NOT WRITTEN"), filled: artifact.exists)
-                                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                                Image(systemName: "chevron.right").font(StudioType.system(10, weight: .semibold))
                             }
                             .padding(.horizontal, 28)
                             .frame(height: 62)
@@ -345,10 +346,133 @@ struct ArtifactsSheet: View {
     }
 }
 
+struct DistributionSheet: View {
+    @ObservedObject var model: StudioModel
+    let distribution: DictionaryDistribution
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SheetHeading(eyebrow: model.t("VOCABULARY VISUALIZATION"),
+                         title: model.t("Vocabulary distribution."), close: close)
+            HStack(spacing: 14) {
+                distributionMetric(model.f("%@ HEADWORDS", distribution.entryCount.formatted(.number.locale(model.language.locale))))
+                distributionMetric(model.f("STAGE %@", distribution.stage))
+                Text(distribution.name)
+                    .font(StudioType.system(11.5, design: .monospaced))
+                    .foregroundStyle(StudioTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help(distribution.path)
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 14)
+            Rectangle().fill(StudioTheme.ink).frame(height: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    histogram(title: "Learning signal", detail: "How strongly each word is supported as grade-relevant vocabulary.",
+                              series: distribution.learningSignal, integerValues: false)
+                    histogram(title: "Occurrence count", detail: "How often vocabulary appears in the sources, shown on a logarithmic scale.",
+                              series: distribution.occurrenceCount, integerValues: true)
+                }
+                .padding(28)
+            }
+            .frame(height: 470)
+            SheetFooter {
+                Button(model.t("Reveal dictionary file")) { model.reveal(path: distribution.path) }
+                    .buttonStyle(MonochromeButtonStyle())
+                Spacer()
+                Button(model.t("Done"), action: close)
+                    .buttonStyle(MonochromeButtonStyle(primary: true))
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .frame(width: 860)
+        .environment(\.studioLanguage, model.language)
+        .environment(\.locale, model.language.locale)
+    }
+
+    private func distributionMetric(_ value: String) -> some View {
+        Text(value)
+            .font(StudioType.condensed(10.5, weight: .bold, language: model.language))
+            .padding(.horizontal, 9)
+            .frame(height: 25)
+            .background(StudioTheme.faint)
+            .overlay { RoundedRectangle(cornerRadius: 4).strokeBorder(StudioTheme.hairline, lineWidth: 1) }
+    }
+
+    private func histogram(title: String, detail: String, series: DistributionSeries,
+                           integerValues: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(model.t(title)).font(StudioType.system(14, weight: .semibold))
+                Text(model.t(detail)).font(StudioType.detail).foregroundStyle(StudioTheme.muted)
+                Spacer()
+                Text(statistics(for: series, integerValues: integerValues))
+                    .font(StudioType.condensed(10.5, language: model.language))
+                    .foregroundStyle(StudioTheme.muted)
+            }
+            Chart(Array(series.bins.enumerated()), id: \.offset) { item in
+                BarMark(x: .value("Bin", item.offset), y: .value("Headwords", item.element),
+                        width: .fixed(20))
+                    .foregroundStyle(StudioTheme.ink)
+            }
+            .chartXScale(domain: -2...(series.bins.count + 1))
+            .chartXAxis {
+                AxisMarks(values: axisIndices(for: series)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(StudioTheme.hairline)
+                    AxisTick().foregroundStyle(StudioTheme.ink)
+                    AxisValueLabel {
+                        if let index = value.as(Int.self), let label = axisLabel(index: index, series: series) {
+                            Text(label).font(StudioType.condensed(10, language: model.language))
+                        }
+                    }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { _ in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                        .foregroundStyle(StudioTheme.hairline)
+                    AxisValueLabel().font(StudioType.condensed(10, language: model.language))
+                }
+            }
+            .frame(height: 145)
+            .accessibilityLabel(model.t(title))
+            .accessibilityValue(model.f("%d vocabulary entries", series.bins.reduce(0, +)))
+        }
+    }
+
+    private func axisIndices(for series: DistributionSeries) -> [Int] {
+        guard !series.bins.isEmpty else { return [] }
+        return [0, series.bins.count / 2, series.bins.count - 1]
+    }
+
+    private func axisLabel(index: Int, series: DistributionSeries) -> String? {
+        let indices = axisIndices(for: series)
+        guard let position = indices.firstIndex(of: index), series.axisLabels.indices.contains(position) else { return nil }
+        return series.axisLabels[position]
+    }
+
+    private func statistics(for series: DistributionSeries, integerValues: Bool) -> String {
+        guard let minimum = series.minimum, let median = series.median, let maximum = series.maximum else {
+            return model.t("NO DATA")
+        }
+        func value(_ number: Double) -> String {
+            integerValues
+                ? Int(number.rounded()).formatted(.number.locale(model.language.locale))
+                : String(format: "%.3f", locale: model.language.locale, number)
+        }
+        return model.f("MIN %@  ·  MEDIAN %@  ·  MAX %@", value(minimum), value(median), value(maximum))
+    }
+}
+
 struct PreviewSheet: View {
     @ObservedObject var model: StudioModel
     let preview: PreviewDocument
     let close: () -> Void
+    @State private var displayMode = PreviewDisplayMode.table
 
     var body: some View {
         VStack(spacing: 0) {
@@ -356,26 +480,50 @@ struct PreviewSheet: View {
                          title: preview.isMigration ? model.t("A place for every grade.") : preview.name,
                          close: close)
             if !preview.isMigration {
-                Text(preview.path)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(StudioTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 12)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(preview.path)
+                        .font(StudioType.system(11, design: .monospaced))
+                        .foregroundStyle(StudioTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    if let table = preview.table, !table.columns.isEmpty {
+                        HStack(spacing: 10) {
+                            StatusBadge(model.f("%@ TABLE", table.format), filled: true)
+                            Text(model.f("Showing %d rows · %d columns", table.rows.count, table.columns.count))
+                                .font(StudioType.detail)
+                                .foregroundStyle(StudioTheme.muted)
+                            Spacer()
+                            Picker(model.t("Preview format"), selection: $displayMode) {
+                                Text(model.t("Table")).tag(PreviewDisplayMode.table)
+                                Text(model.t("Raw")).tag(PreviewDisplayMode.raw)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 210)
+                            .accessibilityLabel(model.t("Preview format"))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 12)
             }
-            ScrollView {
-                Text(preview.text.isEmpty ? model.t("This file has no previewable text.") : model.language.previewText(preview))
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .lineSpacing(5)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(28)
+            if let table = preview.table, !table.columns.isEmpty, displayMode == .table, !preview.isMigration {
+                PreviewTableView(model: model, table: table)
+                    .frame(height: 470)
+            } else {
+                ScrollView {
+                    Text(preview.text.isEmpty ? model.t("This file has no previewable text.") : model.language.previewText(preview))
+                        .font(StudioType.system(12.5, design: .monospaced))
+                        .lineSpacing(5)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(28)
+                }
+                .frame(height: 470)
+                .background(StudioTheme.faint)
             }
-            .frame(height: 410)
-            .background(StudioTheme.faint)
             if preview.truncated {
                 Text(model.t("This is a bounded preview. Open the original file to inspect the rest."))
                     .font(StudioType.detail)
@@ -403,9 +551,90 @@ struct PreviewSheet: View {
                 }
             }
         }
-        .frame(width: 820)
+        .frame(width: 1_060)
         .environment(\.studioLanguage, model.language)
         .environment(\.locale, model.language.locale)
+    }
+}
+
+private enum PreviewDisplayMode: Hashable {
+    case table, raw
+}
+
+private struct PreviewTableView: View {
+    @ObservedObject var model: StudioModel
+    let table: PreviewTable
+
+    var body: some View {
+        let widths = table.columns.map(columnWidth)
+        let numericColumns = table.columns.indices.map(isNumericColumn)
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                Section {
+                    ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+                        tableRow(row, widths: widths, numericColumns: numericColumns, header: false)
+                            .background(rowIndex.isMultiple(of: 2) ? StudioTheme.canvas : StudioTheme.faint)
+                    }
+                } header: {
+                    tableRow(table.columns, widths: widths, numericColumns: numericColumns, header: true)
+                }
+            }
+            .frame(width: widths.reduce(0, +), alignment: .topLeading)
+        }
+        .background(StudioTheme.canvas)
+        .overlay(alignment: .top) { Rectangle().fill(StudioTheme.ink).frame(height: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(model.f("%@ table preview", table.format))
+    }
+
+    private func tableRow(_ values: [String], widths: [CGFloat], numericColumns: [Bool],
+                          header: Bool) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(table.columns.indices, id: \.self) { index in
+                let value = values.indices.contains(index) ? values[index] : ""
+                Text(header ? model.t(value).replacingOccurrences(of: "_", with: " ") : value)
+                    .font(header
+                          ? StudioType.condensed(11.5, weight: .bold, language: model.language)
+                          : StudioType.system(12))
+                    .foregroundStyle(header ? StudioTheme.canvas : StudioTheme.ink)
+                    .lineLimit(header ? 3 : 4)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, header ? 11 : 10)
+                    .frame(width: widths[index], alignment: numericColumns[index] ? .topTrailing : .topLeading)
+                    .overlay(alignment: .trailing) {
+                        if index < table.columns.count - 1 {
+                            Rectangle().fill(header ? StudioTheme.canvas.opacity(0.18) : StudioTheme.hairline)
+                                .frame(width: 1)
+                        }
+                    }
+            }
+        }
+        .background(header ? StudioTheme.ink : Color.clear)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(header ? StudioTheme.ink : StudioTheme.hairline).frame(height: 1)
+        }
+    }
+
+    private func columnWidth(_ column: String) -> CGFloat {
+        let key = column.lowercased()
+        if ["text", "sentence", "example", "meaning", "reason", "variants"].contains(where: { key.contains($0) }) {
+            return 300
+        }
+        if ["count", "score", "rate", "page", "index", "start", "end", "confidence", "similarity"].contains(where: { key.contains($0) }) {
+            return 140
+        }
+        if key.contains("canonical") || key.hasSuffix("keys") { return 220 }
+        if key.contains("document") || key.contains("source") { return 200 }
+        return 180
+    }
+
+    private func isNumericColumn(_ index: Int) -> Bool {
+        let values = table.rows.compactMap { row -> String? in
+            guard row.indices.contains(index), !row[index].isEmpty else { return nil }
+            return row[index]
+        }.prefix(20)
+        return !values.isEmpty && values.allSatisfy { Double($0) != nil }
     }
 }
 
@@ -459,6 +688,11 @@ struct JournalSheet: View {
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 14)
+            if model.isDictionaryBuildRunning {
+                DictionaryBuildLockNotice()
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 12)
+            }
             Text(model.t("Engine details are shown in their original language."))
                 .font(StudioType.detail)
                 .foregroundStyle(StudioTheme.muted)
@@ -543,14 +777,14 @@ struct JournalSheet: View {
     private func logRow(_ entry: LogEntry) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Text(entry.timestamp, format: .dateTime.hour().minute().second())
-                .font(.system(size: 10.5, design: .monospaced))
+                .font(StudioType.system(10.5, design: .monospaced))
                 .foregroundStyle(StudioTheme.muted)
                 .frame(width: 88, alignment: .leading)
             Text(model.language.phase(entry.phase))
                 .font(StudioType.condensed(10.5, weight: .bold, language: model.language))
                 .frame(width: 98, alignment: .leading)
             Text(entry.workflow == "studio" ? model.t(entry.detail) : entry.detail)
-                .font(.system(size: 12.5, design: .monospaced))
+                .font(StudioType.system(12.5, design: .monospaced))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
