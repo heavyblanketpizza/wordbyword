@@ -514,7 +514,8 @@ struct PreviewSheet: View {
                     .frame(height: 470)
             } else {
                 ScrollView {
-                    Text(preview.text.isEmpty ? model.t("This file has no previewable text.") : model.language.previewText(preview))
+                    Text(preview.text.isEmpty ? model.t("This file has no previewable text.")
+                         : model.displayText(model.language.previewText(preview)))
                         .font(StudioType.system(12.5, design: .monospaced))
                         .lineSpacing(5)
                         .textSelection(.enabled)
@@ -729,7 +730,9 @@ struct JournalSheet: View {
             .background(StudioTheme.faint)
             SheetFooter {
                 Button(model.t("Copy log")) {
-                    let log = model.logs.map { "[\($0.phase)] \($0.detail)" }.joined(separator: "\n")
+                    let log = model.logs.map {
+                        "[\($0.phase)] \(model.displayText($0.detail))"
+                    }.joined(separator: "\n")
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(log, forType: .string)
                 }
@@ -783,7 +786,7 @@ struct JournalSheet: View {
             Text(model.language.phase(entry.phase))
                 .font(StudioType.condensed(10.5, weight: .bold, language: model.language))
                 .frame(width: 98, alignment: .leading)
-            Text(entry.workflow == "studio" ? model.t(entry.detail) : entry.detail)
+            Text(model.displayText(entry.workflow == "studio" ? model.t(entry.detail) : entry.detail))
                 .font(StudioType.system(12.5, design: .monospaced))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

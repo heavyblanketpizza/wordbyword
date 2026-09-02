@@ -51,7 +51,7 @@ struct StudioView: View {
         )) {
             Button(model.t("OK")) { model.error = nil }
         } message: {
-            Text(model.t(model.error ?? ""))
+            Text(model.displayText(model.t(model.error ?? "")))
         }
     }
 
@@ -179,7 +179,7 @@ struct StudioView: View {
     private func noticeBanner(_ text: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "info.circle")
-            Text(model.t(text)).font(StudioType.detail).textSelection(.enabled)
+            Text(model.displayText(model.t(text))).font(StudioType.detail).textSelection(.enabled)
             Spacer()
             Button { model.notice = nil } label: {
                 Image(systemName: "xmark").font(StudioType.system(10, weight: .bold))

@@ -62,6 +62,14 @@ final class StudioModel: ObservableObject {
         return "~/" + target.dropFirst(prefix.count)
     }
 
+    func displayText(_ text: String) -> String {
+        let root = workspace.standardizedFileURL.path
+        guard !root.isEmpty else { return text }
+        var displayed = text.replacingOccurrences(of: root + "/", with: "~/")
+        if displayed == root { displayed = "~" }
+        return displayed
+    }
+
     var progress: Double? { isRunning ? progressValue : nil }
     var isDictionaryBuildRunning: Bool { isRunning && activeAction == .buildDictionary }
     var phase: String {

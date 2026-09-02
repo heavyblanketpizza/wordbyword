@@ -432,6 +432,17 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(model.displayPath("/workspace/wordbyword-copy/lesson.docx"),
                        "/workspace/wordbyword-copy/lesson.docx")
         XCTAssertEqual(model.displayPath("/outside/lesson.docx"), "/outside/lesson.docx")
+        XCTAssertEqual(
+            model.displayText(
+                "Writing /workspace/wordbyword/classroom-printout-studio/output/lesson.docx " +
+                "from /workspace/wordbyword/build-dictionary/output/grade2/15_final_dictionary.jsonl"
+            ),
+            "Writing ~/classroom-printout-studio/output/lesson.docx " +
+            "from ~/build-dictionary/output/grade2/15_final_dictionary.jsonl"
+        )
+        XCTAssertFalse(model.displayText("Saved at /workspace/wordbyword/output/file.pdf").contains("/workspace/wordbyword"))
+        XCTAssertEqual(model.displayText("Outside /workspace/wordbyword-copy/lesson.docx"),
+                       "Outside /workspace/wordbyword-copy/lesson.docx")
     }
 
     @MainActor
