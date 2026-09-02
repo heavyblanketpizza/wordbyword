@@ -20,7 +20,7 @@ from wordbyword.dictionary_build.llm import (
 )
 from wordbyword.dictionary_build.text import clean_example_text
 
-DEFAULT_GENERATED_MEANING_BATCH_SIZE = 40
+DEFAULT_GENERATED_MEANING_BATCH_SIZE = 20
 
 BATCH_GENERATE_MEANING_SYSTEM_PROMPT = """You write concise Korean dictionary meanings for learner vocabulary.
 For each input row, write exactly one meaning for the target canonical_key.
@@ -94,16 +94,19 @@ def build_generated_meaning_dictionary_outputs(
         for indexed_row in batch:
             generated_by_id[indexed_row.row_id] = reviews[indexed_row.row_id].meaning
         if on_batch_complete is not None:
+            snapshot_rows = materialize_generated_meaning_rows(
+                dictionary_entries,
+                row_id_by_index=row_id_by_index,
+                generated_by_id=generated_by_id,
+            )
             on_batch_complete(
                 GeneratedMeaningBatchSnapshot(
                     batch_number=batch_number,
                     attempted_count=len(batch),
-                    generated_count=len(generated_by_id),
-                    rows=materialize_generated_meaning_rows(
-                        dictionary_entries,
-                        row_id_by_index=row_id_by_index,
-                        generated_by_id=generated_by_id,
+                    generated_count=sum(
+                        1 for row in snapshot_rows if bool(row.get("meaning_generated_with_ollama"))
                     ),
+                    rows=snapshot_rows,
                 )
             )
 
@@ -113,11 +116,12 @@ def build_generated_meaning_dictionary_outputs(
         generated_by_id=generated_by_id,
     )
     missing_count = sum(1 for row in rows if not str(row.get("meaning", "")).strip())
+    generated_count = sum(1 for row in rows if bool(row.get("meaning_generated_with_ollama")))
     return GeneratedMeaningOutputs(
         rows=rows,
         reviewed_count=len(indexed_rows),
-        generated_count=len(generated_by_id),
-        preserved_count=len(dictionary_entries) - len(indexed_rows),
+        generated_count=generated_count,
+        preserved_count=len(dictionary_entries) - generated_count,
         missing_count=missing_count,
     )
 
@@ -272,6 +276,8 @@ def materialize_generated_meaning_rows(
             row["meaning_generated_with_ollama"] = True
         else:
             row["meaning"] = str(row.get("meaning", "") or "")
-            row["meaning_generated_with_ollama"] = False
+            row["meaning_generated_with_ollama"] = bool(
+                entry.get("meaning_generated_with_ollama")
+            )
         rows.append(row)
     return rows

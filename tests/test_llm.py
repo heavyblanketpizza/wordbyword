@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import json
 import os
+from threading import Event
 import unittest
 from unittest.mock import patch
 from urllib import error as url_error
@@ -12,6 +14,7 @@ from wordbyword.dictionary_build.llm import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     DEFAULT_TEMPERATURE,
     LLMRequestError,
+    OllamaHealthAwareJsonTransport,
     UrlLibJsonTransport,
     build_dictionary_entry,
     build_provider_client,
@@ -266,6 +269,66 @@ class ProviderClientTest(unittest.TestCase):
             {"model": "llama-test", "keep_alive": 0, "stream": False},
         )
 
+    def test_ollama_stream_waits_past_request_timeout_while_model_is_healthy(self) -> None:
+        release_stream = Event()
+        stream = GatedStreamingResponse(
+            release_stream,
+            [
+                {"message": {"content": "안"}, "done": False},
+                {"message": {"content": "녕"}, "done": False},
+                {"message": {"content": ""}, "done": True, "done_reason": "stop"},
+            ],
+        )
+        health_checks = 0
+
+        def urlopen(http_request, timeout=None):
+            nonlocal health_checks
+            if http_request.full_url.endswith("/api/chat"):
+                return stream
+            self.assertTrue(http_request.full_url.endswith("/api/ps"))
+            health_checks += 1
+            release_stream.set()
+            return JsonHTTPResponse(
+                {"models": [{"name": "gemma4:31b", "model": "gemma4:31b"}]}
+            )
+
+        client = build_provider_client(
+            "ollama",
+            model="gemma4:31b",
+            base_url="http://localhost:11434",
+            timeout_seconds=0.01,
+            transport=OllamaHealthAwareJsonTransport(health_poll_seconds=0.01),
+        )
+        with patch("wordbyword.dictionary_build.llm.request.urlopen", side_effect=urlopen):
+            result = client.complete([ChatMessage("user", "hello")])
+
+        self.assertEqual(result.content, "안녕")
+        self.assertEqual(result.finish_reason, "stop")
+        self.assertGreaterEqual(health_checks, 1)
+
+    def test_ollama_stream_fails_when_health_checks_fail_repeatedly(self) -> None:
+        stream = BlockingStreamingResponse()
+
+        def urlopen(http_request, timeout=None):
+            if http_request.full_url.endswith("/api/chat"):
+                return stream
+            raise url_error.URLError("offline")
+
+        client = build_provider_client(
+            "ollama",
+            model="gemma4:31b",
+            base_url="http://localhost:11434",
+            transport=OllamaHealthAwareJsonTransport(
+                health_poll_seconds=0.01,
+                health_failure_limit=2,
+            ),
+        )
+        with patch("wordbyword.dictionary_build.llm.request.urlopen", side_effect=urlopen):
+            with self.assertRaisesRegex(LLMRequestError, "health checks failed"):
+                client.complete([ChatMessage("user", "hello")])
+
+        self.assertTrue(stream.closed.is_set())
+
 
 class TaskHelperTest(unittest.TestCase):
     def test_rewrite_sentence_normalizes_wrapped_output(self) -> None:
@@ -346,6 +409,55 @@ class FakeTransport:
         self.headers = headers
         self.body = body
         return self.response
+
+
+class JsonHTTPResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
+class GatedStreamingResponse:
+    def __init__(self, gate: Event, chunks: list[dict[str, object]]) -> None:
+        self.gate = gate
+        self.chunks = chunks
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def __iter__(self):
+        self.gate.wait(timeout=1.0)
+        for chunk in self.chunks:
+            yield (json.dumps(chunk, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+class BlockingStreamingResponse:
+    def __init__(self) -> None:
+        self.closed = Event()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def __iter__(self):
+        self.closed.wait(timeout=1.0)
+        return iter(())
+
+    def close(self) -> None:
+        self.closed.set()
 
 
 class StubCompletionClient:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from queue import Empty, Queue
+from threading import Event, Lock, Thread
 from typing import Any, Literal, Mapping, Protocol, Sequence
 from urllib import error, parse, request
 
@@ -28,6 +30,8 @@ DEFAULT_PROVIDER_BASE_URLS: dict[ProviderName, str] = {
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+DEFAULT_OLLAMA_HEALTH_POLL_SECONDS = 5.0
+DEFAULT_OLLAMA_HEALTH_FAILURE_LIMIT = 3
 REDACTED_SECRET = "REDACTED"
 SENSITIVE_QUERY_PARAMETERS = {
     "access_token",
@@ -143,6 +147,238 @@ class UrlLibJsonTransport:
             raise LLMRequestError(f"Request to {redact_url(url)} failed: {exc.reason}") from exc
         except json.JSONDecodeError as exc:
             raise LLMResponseError(f"Provider at {redact_url(url)} returned invalid JSON.") from exc
+
+
+@dataclass(frozen=True)
+class OllamaHealthSnapshot:
+    model_loaded: bool
+
+
+class OllamaHealthAwareJsonTransport(UrlLibJsonTransport):
+    """Stream local Ollama responses and wait while the model service is healthy."""
+
+    def __init__(
+        self,
+        *,
+        health_poll_seconds: float = DEFAULT_OLLAMA_HEALTH_POLL_SECONDS,
+        health_failure_limit: int = DEFAULT_OLLAMA_HEALTH_FAILURE_LIMIT,
+    ) -> None:
+        self.health_poll_seconds = max(0.01, health_poll_seconds)
+        self.health_failure_limit = max(1, health_failure_limit)
+
+    def post_json(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        body: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        if not url.rstrip("/").endswith("/api/chat"):
+            return super().post_json(
+                url=url,
+                headers=headers,
+                body=body,
+                timeout_seconds=timeout_seconds,
+            )
+        return self._post_ollama_chat_json(
+            url=url,
+            headers=headers,
+            body=body,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def _post_ollama_chat_json(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        body: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        streaming_body = {**body, "stream": True}
+        payload = json.dumps(streaming_body, ensure_ascii=False).encode("utf-8")
+        request_headers = {"Content-Type": "application/json", **headers}
+        http_request = request.Request(url, data=payload, headers=request_headers, method="POST")
+        events: Queue[tuple[str, object]] = Queue()
+        stop_event = Event()
+        response_lock = Lock()
+        response_holder: list[object] = []
+
+        def run_request() -> None:
+            try:
+                with request.urlopen(http_request, timeout=None) as response:
+                    with response_lock:
+                        response_holder.append(response)
+                    for raw_line in response:
+                        if stop_event.is_set():
+                            return
+                        line = raw_line.decode("utf-8").strip()
+                        if not line:
+                            continue
+                        chunk = json.loads(line)
+                        if not isinstance(chunk, dict):
+                            raise LLMResponseError("Ollama returned a non-object stream event.")
+                        if chunk.get("error"):
+                            raise LLMRequestError(f"Ollama request failed: {chunk['error']}")
+                        events.put(("chunk", chunk))
+                if not stop_event.is_set():
+                    events.put(("done", {}))
+            except BaseException as exc:  # forwarded to the controlling thread
+                if not stop_event.is_set():
+                    events.put(("error", exc))
+            finally:
+                with response_lock:
+                    response_holder.clear()
+
+        worker = Thread(target=run_request, name="wordbyword-ollama-stream", daemon=True)
+        worker.start()
+
+        chunks: list[dict[str, Any]] = []
+        health_failures = 0
+        model_missing_checks = 0
+        model_seen = False
+        model = str(body.get("model", "")).strip()
+        health_timeout = min(5.0, max(0.1, timeout_seconds))
+
+        while True:
+            try:
+                event_name, event_payload = events.get(timeout=self.health_poll_seconds)
+            except Empty:
+                try:
+                    health = probe_ollama_health(
+                        chat_url=url,
+                        model=model,
+                        timeout_seconds=health_timeout,
+                    )
+                except (LLMRequestError, LLMResponseError) as exc:
+                    health_failures += 1
+                    if health_failures >= self.health_failure_limit:
+                        self._abort_stream(stop_event, response_lock, response_holder)
+                        raise LLMRequestError(
+                            "Ollama inference health checks failed while the model request was still running: "
+                            f"{exc}"
+                        ) from exc
+                    continue
+
+                health_failures = 0
+                if health.model_loaded:
+                    model_seen = True
+                    model_missing_checks = 0
+                elif model_seen:
+                    model_missing_checks += 1
+                    if model_missing_checks >= self.health_failure_limit:
+                        self._abort_stream(stop_event, response_lock, response_holder)
+                        raise LLMRequestError(
+                            f"Ollama stopped serving model '{model}' while inference was still running."
+                        )
+                continue
+
+            if event_name == "chunk":
+                chunks.append(dict(event_payload))  # type: ignore[arg-type]
+                continue
+            if event_name == "error":
+                raise translated_transport_exception(url, event_payload)
+            if event_name == "done":
+                return combine_ollama_stream_chunks(chunks)
+
+    @staticmethod
+    def _abort_stream(stop_event: Event, response_lock: Lock, response_holder: list[object]) -> None:
+        stop_event.set()
+        with response_lock:
+            response = response_holder[0] if response_holder else None
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def probe_ollama_health(
+    *,
+    chat_url: str,
+    model: str,
+    timeout_seconds: float,
+) -> OllamaHealthSnapshot:
+    base_url = chat_url.rstrip("/").removesuffix("/api/chat")
+    health_url = f"{base_url}/api/ps"
+    health_request = request.Request(health_url, method="GET")
+    try:
+        with request.urlopen(health_request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        detail = redact_sensitive_values(read_error_body(exc), health_url)
+        raise LLMRequestError(
+            f"Ollama health check failed with HTTP {exc.code}: {detail}"
+        ) from exc
+    except (error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise LLMRequestError(f"Ollama health check failed: {reason}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMResponseError("Ollama health check returned invalid JSON.") from exc
+
+    models = payload.get("models") if isinstance(payload, Mapping) else None
+    if not isinstance(models, list):
+        raise LLMResponseError("Ollama health check did not include a models list.")
+    return OllamaHealthSnapshot(
+        model_loaded=any(
+            isinstance(row, Mapping) and ollama_model_names_match(model, row)
+            for row in models
+        )
+    )
+
+
+def ollama_model_names_match(requested_model: str, row: Mapping[str, Any]) -> bool:
+    requested = requested_model.strip()
+    if not requested:
+        return False
+    available_names = {
+        str(row.get(field_name, "")).strip()
+        for field_name in ("name", "model")
+        if str(row.get(field_name, "")).strip()
+    }
+    requested_base = requested.split(":", 1)[0]
+    return any(
+        available == requested
+        or available.split(":", 1)[0] == requested_base
+        for available in available_names
+    )
+
+
+def translated_transport_exception(url: str, exc: object) -> Exception:
+    if isinstance(exc, (LLMRequestError, LLMResponseError)):
+        return exc
+    if isinstance(exc, error.HTTPError):
+        detail = redact_sensitive_values(read_error_body(exc), url)
+        return LLMRequestError(
+            f"Request to {redact_url(url)} failed with HTTP {exc.code}: {detail}"
+        )
+    if isinstance(exc, error.URLError):
+        return LLMRequestError(
+            f"Request to {redact_url(url)} failed: {exc.reason}"
+        )
+    if isinstance(exc, json.JSONDecodeError):
+        return LLMResponseError(f"Provider at {redact_url(url)} returned invalid JSON.")
+    return LLMRequestError(f"Request to {redact_url(url)} failed: {exc}")
+
+
+def combine_ollama_stream_chunks(chunks: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    if not chunks:
+        raise LLMResponseError("Ollama stream ended without a response.")
+    if not any(bool(chunk.get("done")) for chunk in chunks):
+        raise LLMResponseError("Ollama stream ended before inference completed.")
+
+    final = dict(chunks[-1])
+    message_rows = [
+        chunk.get("message")
+        for chunk in chunks
+        if isinstance(chunk.get("message"), Mapping)
+    ]
+    last_message = dict(message_rows[-1]) if message_rows else {}
+    last_message["content"] = "".join(
+        str(message.get("content", "") or "")
+        for message in message_rows
+    )
+    final["message"] = last_message
+    return final
 
 
 class BaseChatClient:
@@ -336,6 +572,12 @@ class GoogleChatClient(BaseChatClient):
 
 
 class OllamaChatClient(BaseChatClient):
+    def __init__(self, config: ProviderConfig, transport: JsonTransport | None = None) -> None:
+        super().__init__(
+            config,
+            transport=transport if transport is not None else OllamaHealthAwareJsonTransport(),
+        )
+
     def endpoint_url(self, messages: Sequence[ChatMessage], *, json_mode: bool) -> str:
         return f"{self.config.base_url}/api/chat"
 

@@ -505,6 +505,10 @@ def write_generated_meaning_dictionary_candidates_from_saved(
         ArtifactId.MEANING_DICTIONARY_CANDIDATES,
         target=artifact_filename(ArtifactId.FINAL_DICTIONARY),
     )
+    meaning_rows = resumable_generated_meaning_rows(
+        meaning_rows,
+        generated_meaning_output_path,
+    )
     remove_optional_outputs_from(output_dir, ArtifactId.FINAL_DICTIONARY)
     initialize_jsonl_file(generated_meaning_output_path)
     write_jsonl(
@@ -514,7 +518,9 @@ def write_generated_meaning_dictionary_candidates_from_saved(
                 **migrated_vocabulary_score_row(row),
                 "curation_status": "confirmed",
                 "meaning": str(row.get("meaning", "") or ""),
-                "meaning_generated_with_ollama": False,
+                "meaning_generated_with_ollama": bool(
+                    row.get("meaning_generated_with_ollama")
+                ),
             }
             for row in meaning_rows
         ],
@@ -540,6 +546,35 @@ def write_generated_meaning_dictionary_candidates_from_saved(
         generated_meaning_outputs=generated_meaning_outputs,
     )
     return generated_meaning_outputs
+
+
+def resumable_generated_meaning_rows(
+    meaning_rows: Sequence[Mapping[str, object]],
+    generated_meaning_output_path: Path,
+) -> list[dict[str, object]]:
+    base_rows = [dict(row) for row in meaning_rows]
+    if not generated_meaning_output_path.is_file():
+        return base_rows
+    try:
+        saved_rows = read_jsonl(generated_meaning_output_path)
+    except ValueError:
+        return base_rows
+    if len(saved_rows) != len(base_rows):
+        return base_rows
+    if any(
+        str(base.get("canonical_key", "")) != str(saved.get("canonical_key", ""))
+        for base, saved in zip(base_rows, saved_rows, strict=True)
+    ):
+        return base_rows
+
+    resumed_rows: list[dict[str, object]] = []
+    for base, saved in zip(base_rows, saved_rows, strict=True):
+        saved_meaning = str(saved.get("meaning", "") or "").strip()
+        if bool(saved.get("meaning_generated_with_ollama")) and saved_meaning:
+            base["meaning"] = saved_meaning
+            base["meaning_generated_with_ollama"] = True
+        resumed_rows.append(base)
+    return resumed_rows
 
 
 def remove_stage_thirteen_sidecars_before_meaning_assignment(output_dir: Path) -> None:

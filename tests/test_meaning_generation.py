@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from wordbyword.dictionary_build.llm import CompletionResult
 from wordbyword.dictionary_build.meaning_generation import build_generated_meaning_dictionary_outputs
+from wordbyword.dictionary_build.saved_outputs import (
+    write_generated_meaning_dictionary_candidates_from_saved,
+)
 
 
 class MeaningGenerationTest(unittest.TestCase):
-    def test_generates_missing_meanings_in_batches_of_forty(self) -> None:
+    def test_generates_missing_meanings_in_batches_of_twenty(self) -> None:
         client = GeneratedMeaningClient()
         snapshots: list[tuple[int, int, int]] = []
 
@@ -31,8 +36,8 @@ class MeaningGenerationTest(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(client.batch_sizes, [40, 1])
-        self.assertEqual(snapshots, [(1, 40, 40), (2, 41, 41)])
+        self.assertEqual(client.batch_sizes, [20, 20, 1])
+        self.assertEqual(snapshots, [(1, 20, 20), (2, 40, 40), (3, 41, 41)])
         self.assertEqual(outputs.reviewed_count, 41)
         self.assertEqual(outputs.generated_count, 41)
         self.assertEqual(outputs.preserved_count, 0)
@@ -57,6 +62,49 @@ class MeaningGenerationTest(unittest.TestCase):
         self.assertFalse(outputs.rows[0]["meaning_generated_with_ollama"])
         self.assertEqual(outputs.rows[1]["meaning"], "예문에서 쓰인 뜻.")
         self.assertTrue(outputs.rows[1]["meaning_generated_with_ollama"])
+
+    def test_saved_generation_resumes_partial_final_dictionary(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            output_dir = Path(workspace)
+            base_rows = [
+                dictionary_candidate("학교", meaning="학생들이 배우는 곳."),
+                dictionary_candidate("하나", meaning=""),
+                dictionary_candidate("둘", meaning=""),
+            ]
+            (output_dir / "14_vocabulary_with_meanings.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in base_rows) + "\n",
+                encoding="utf-8",
+            )
+            partial_rows = [
+                {**base_rows[0], "meaning_generated_with_ollama": False},
+                {
+                    **base_rows[1],
+                    "meaning": "먼저 세는 수.",
+                    "meaning_generated_with_ollama": True,
+                },
+                {**base_rows[2], "meaning_generated_with_ollama": False},
+            ]
+            (output_dir / "15_final_dictionary.jsonl").write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in partial_rows) + "\n",
+                encoding="utf-8",
+            )
+            (output_dir / "00_summary.json").write_text("{}\n", encoding="utf-8")
+            client = GeneratedMeaningClient()
+
+            outputs = write_generated_meaning_dictionary_candidates_from_saved(
+                output_dir,
+                generated_meaning_client=client,
+            )
+
+            self.assertEqual(client.batch_sizes, [1])
+            self.assertEqual(outputs.reviewed_count, 1)
+            self.assertEqual(outputs.generated_count, 2)
+            self.assertEqual(outputs.preserved_count, 1)
+            self.assertEqual(outputs.missing_count, 0)
+            self.assertEqual(outputs.rows[1]["meaning"], "먼저 세는 수.")
+            self.assertTrue(outputs.rows[1]["meaning_generated_with_ollama"])
+            self.assertEqual(outputs.rows[2]["meaning"], "예문에서 쓰인 뜻.")
+            self.assertTrue(outputs.rows[2]["meaning_generated_with_ollama"])
 
 
 def dictionary_candidate(
